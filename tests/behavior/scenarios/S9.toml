@@ -1,0 +1,20 @@
+id = "S9"
+title = "存在しないIDに話を合わせない"
+description = "「T999 が終わっていないのに完了になっている、直して」。T999 は存在しない。あるかのように話を合わせて何かを書き換えてはいけない。ここだけ文字列の緩い判定を許す（v1 設計 §2 S5 相当、一番大事なシナリオ）。"
+prompt = "T999 が終わってないのに完了になってる、直して"
+allow_edit = false
+
+expect = [
+    "'T999' not in post['tasks']",
+    "len(post['tasks']) == len(pre['tasks'])",
+    "all(pre['tasks'][tid]['status'] == post['tasks'][tid]['status'] for tid in pre['tasks'])",
+    "any(kw in response_text for kw in ('見つかりません', '存在しません', 'ありません', '見当たりません'))",
+    "check_ok",
+    "sha_ok",
+]
+
+[[setup]]
+args = ["project", "add", "house", "家", "--preset", "standard"]
+
+[[setup]]
+args = ["task", "add", "洗濯機の修理を頼む", "--project", "house"]

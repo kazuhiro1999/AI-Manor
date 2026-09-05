@@ -1,0 +1,58 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "manor 構成図",
+    "quality_profile": "showcase",
+    "viewBox": [1380, 710],
+    "legend": {
+      "entries": {
+        "frontend": { "label": "入力層" },
+        "backend": { "label": "処理" },
+        "database": { "label": "データ" },
+        "cloud": { "label": "生成物" },
+        "security": { "label": "保護・検証" },
+        "external": { "label": "外部" }
+      }
+    },
+    "views": [
+      { "id": "write-path", "label": "書き込みの経路", "focus": ["claude_code", "manor_cli", "core_api", "manor_db", "projections"], "note": "唯一の書き手である core API から SQLite、射影までを追う。" },
+      { "id": "guardrails", "label": "守る仕組み", "focus": ["hooks", "manor_db", "projections", "claude_code", "staff_plugins"], "note": "hooks は読むだけ。射影の直接編集は PreToolUse が拒む。staff は authorizer が自分の表以外を拒む。" },
+      { "id": "outside-world", "label": "外との境界", "focus": ["browser", "v1_import", "night", "web_api"], "note": "ブラウザ・スマホ（Tailscale）・v1 の import・夜勤の headless claude。" }
+    ]
+  },
+  "components": [
+    { "id": "claude_code", "type": "frontend", "label": "Claude Code", "sublabel": "執事／担当", "pos": [40, 40], "size": [170, 64] },
+    { "id": "hooks", "type": "security", "label": "hooks.py", "sublabel": "SessionStart/PreToolUse/Stop/PreCompact", "tag": "読むだけ", "pos": [430, 30], "size": [270, 74] },
+    { "id": "web_api", "type": "backend", "label": "Web API（FastAPI）", "sublabel": "manor web serve 8789／board 8788（別名）", "pos": [910, 30], "size": [270, 74] },
+    { "id": "browser", "type": "external", "label": "ブラウザ・スマホ", "sublabel": "主人（Tailscale）", "pos": [1210, 35], "size": [160, 64] },
+    { "id": "manor_cli", "type": "backend", "label": "manor CLI", "sublabel": "cli.py", "pos": [40, 300], "size": [160, 64] },
+    { "id": "core_api", "type": "backend", "label": "core API 関数", "sublabel": "task/decision/project/handoff/rule 等", "pos": [320, 290], "size": [280, 74] },
+    { "id": "staff_plugins", "type": "backend", "label": "staff プラグイン", "sublabel": "chef/housekeeper/secretary/steward", "pos": [720, 300], "size": [220, 64] },
+    { "id": "night", "type": "external", "label": "claude -p（headless）", "sublabel": "夜勤・振る舞い試験・関門（gate.py）", "pos": [40, 560], "size": [230, 74] },
+    { "id": "v1_import", "type": "external", "label": "v1 QUEUE.md/PROJECTS.md", "sublabel": "import-v1／--sync", "pos": [370, 560], "size": [210, 64] },
+    { "id": "manor_db", "type": "database", "label": "SQLite", "sublabel": "home/manor.db", "tag": "唯一の書き手が書く", "pos": [690, 560], "size": [210, 64] },
+    { "id": "projections", "type": "cloud", "label": "射影", "sublabel": "QUEUE/PROJECTS/STATE.md", "pos": [1010, 560], "size": [210, 64] }
+  ],
+  "boundaries": [
+    { "kind": "region", "label": "home/（②④・git 管理外）", "wraps": ["manor_db", "projections"] },
+    { "kind": "region", "label": "リポジトリ（①③・git 管理）", "wraps": ["manor_cli", "core_api", "hooks", "staff_plugins", "web_api"] }
+  ],
+  "connections": [
+    { "id": "cc-to-cli", "from": "claude_code", "to": "manor_cli", "label": "manor <group> <verb>", "variant": "emphasis", "fromSide": "bottom", "toSide": "top" },
+    { "id": "hooks-to-cc", "from": "hooks", "to": "claude_code", "label": "SessionStart 注入・PreToolUse deny・DB は直読み", "variant": "security", "fromSide": "left", "toSide": "right", "labelAt": [406, 118] },
+    { "id": "night-to-cli", "from": "night", "to": "manor_cli", "label": "uv run manor …（許可ツール限定）", "variant": "dashed", "fromSide": "top", "toSide": "bottom" },
+    { "id": "cli-to-core", "from": "manor_cli", "to": "core_api", "label": "関数呼び出し", "fromSide": "right", "toSide": "left", "labelAt": [224, 378] },
+    { "id": "v1-to-core", "from": "v1_import", "to": "core_api", "label": "import-v1／--sync（唯一の直接 INSERT 例外）", "variant": "security", "fromSide": "left", "toSide": "bottom" },
+    { "id": "core-to-db", "from": "core_api", "to": "manor_db", "label": "1トランザクションで書き込み/読み取り", "variant": "emphasis", "fromSide": "bottom", "toSide": "top", "labelAt": [500, 450] },
+    { "id": "core-to-proj", "from": "core_api", "to": "projections", "label": "render() が書く（sha256 を meta に記録）", "fromSide": "right", "toSide": "top" },
+    { "id": "staff-to-core", "from": "staff_plugins", "to": "core_api", "label": "task.add 等（authorizer が自表以外を拒否）", "fromSide": "left", "toSide": "right", "labelAt": [770, 378] },
+    { "id": "web-to-core", "from": "web_api", "to": "core_api", "label": "task.status/decision.rule 等（CLI と同じ関数）", "variant": "emphasis", "fromSide": "left", "toSide": "top", "via": [[800, 67], [800, 150], [460, 150]], "labelAt": [800, 118] },
+    { "id": "browser-to-web", "from": "browser", "to": "web_api", "label": "GET/POST /api/v1/…", "fromSide": "left", "toSide": "right", "labelAt": [1196, 118] }
+  ],
+  "cards": [
+    { "dot": "emerald", "title": "唯一の書き手", "items": ["core API 関数（task.py 等）だけが SQLite に書く", "CLI・Web API・staff プラグインは全部この関数を通る", "書き込みは1トランザクション。途中で失敗したら何も残らない"] },
+    { "dot": "rose", "title": "守る仕組み", "items": ["hooks は DB を直読みするだけ。core API を経由せず、書き換えない", "PreToolUse が home/projections/** と *.db への直接編集を deny する", "staff_guard（authorizer）が部下の書き込みを自分の表だけに絞る", "render() が sha256 を meta に記録し、check.py の C7 が手編集を検出する"] },
+    { "dot": "amber", "title": "唯一の例外", "items": ["import-v1／--sync だけが node.id を保つため conn.execute で直接 INSERT する", "v1 の id をそのまま使う必要があるため（ids.py の採番を経由できない）", "辺は必ず graph.link() を使う"] }
+  ]
+}

@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>manor board — ダッシュボード</title>
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="topbar-main">
+    <button id="nav-toggle" class="btn btn-icon" type="button" title="サイドバーの表示">☰</button>
+    <h1>manor board</h1>
+    <span class="subtitle">AI執事 v2 ダッシュボード</span>
+  </div>
+  <div class="topbar-meta">
+    <span id="today" class="chip"></span>
+    <span id="sync" class="chip chip-sync">接続中…</span>
+    <button id="reload" class="btn btn-ghost" type="button" title="今すぐ再読み込み">再読込</button>
+    <button id="settings-toggle" class="btn btn-icon" type="button" title="表示の設定">⚙</button>
+  </div>
+</header>
+
+<div id="settings-panel" class="settings-panel" hidden>
+  <h2>表示の設定</h2>
+  <div class="setting-row">
+    <span class="setting-label">配色</span>
+    <div class="seg" role="group" aria-label="配色">
+      <button class="seg-btn" type="button" data-theme="system" aria-pressed="true">端末に合わせる</button>
+      <button class="seg-btn" type="button" data-theme="light" aria-pressed="false">明るい</button>
+      <button class="seg-btn" type="button" data-theme="dark" aria-pressed="false">暗い</button>
+    </div>
+  </div>
+  <p class="setting-note">この設定はこのブラウザにだけ残ります（サーバへは送りません）。</p>
+</div>
+
+<div class="shell">
+  <nav class="sidenav" id="sidenav" aria-label="画面の切り替え">
+    <button class="nav-item" type="button" data-view="judge">
+      <span class="nav-key">1</span>
+      <span class="nav-text">要対応<small>判断待ち・裁定する</small></span>
+      <span class="nav-badges"><span class="nav-alert" data-alert="judge" hidden></span><span class="nav-count" data-count="judge">–</span></span>
+    </button>
+    <button class="nav-item" type="button" data-view="running">
+      <span class="nav-key">2</span>
+      <span class="nav-text">AIの進行中<small>実行中・完了・プロジェクト別</small></span>
+      <span class="nav-badges"><span class="nav-count" data-count="running">–</span></span>
+    </button>
+    <button class="nav-item" type="button" data-view="plan">
+      <span class="nav-key">3</span>
+      <span class="nav-text">計画<small>タイムライン・プロジェクト</small></span>
+      <span class="nav-badges"><span class="nav-count" data-count="plan">–</span></span>
+    </button>
+    <button class="nav-item" type="button" data-view="log">
+      <span class="nav-key">4</span>
+      <span class="nav-text">記録<small>現在地・裁定済み・整合</small></span>
+      <span class="nav-badges"><span class="nav-count" data-count="log">–</span></span>
+    </button>
+    <button class="nav-item" type="button" data-view="house">
+      <span class="nav-key">5</span>
+      <span class="nav-text">家<small>料理長・家政婦・家令・秘書</small></span>
+    </button>
+    <p class="nav-hint">サイドバーの件数は他の画面を見ていても更新されます。</p>
+  </nav>
+
+  <div class="content">
+    <div id="banner" class="banner" hidden></div>
+
+    <main>
+      <!-- ========== 1. 要対応 ========== -->
+      <div class="view" id="view-judge">
+        <section class="panel panel-primary" id="panel-judge">
+          <div class="panel-head"><h2>対応が必要な件</h2><span class="count" id="pending-count"></span></div>
+          <p class="panel-note">open な decision の一覧。滞留3日以上は赤く警告します。裁定するとこの場で task が section B へ戻ります。</p>
+          <div id="pending-list" class="cards"></div>
+        </section>
+      </div>
+
+      <!-- ========== 2. AIの進行中 ========== -->
+      <div class="view" id="view-running" hidden>
+        <div id="running-summary" class="summary"></div>
+        <section class="panel" id="panel-running">
+          <div class="panel-head">
+            <h2>AIが今なにをしているか</h2>
+            <span class="count" id="running-count"></span>
+            <div class="seg" role="group" aria-label="タスクの並べ方">
+              <button class="seg-btn" type="button" data-mode="list" aria-pressed="true">ステータス別</button>
+              <button class="seg-btn" type="button" data-mode="tree" aria-pressed="false">プロジェクト別</button>
+            </div>
+          </div>
+          <div id="running-list" class="status-groups"></div>
+          <div id="running-tree" class="tree" hidden></div>
+        </section>
+        <section class="panel" id="panel-relay">
+          <div class="panel-head"><h2>伝達キュー</h2><span class="count" id="relay-count"></span></div>
+          <p class="panel-note">下位エージェント・プロジェクトへの伝達（v1 PROJECTS.md「伝達キュー」＝manor では note）。</p>
+          <div id="relay-list" class="rows"></div>
+        </section>
+      </div>
+
+      <!-- ========== 3. 計画 ========== -->
+      <div class="view" id="view-plan" hidden>
+        <div class="seg log-tabs" id="plan-tabs" role="tablist" aria-label="計画の種類">
+          <button class="seg-btn plan-tab" type="button" role="tab" data-plan-tab="timeline" aria-selected="true">タイムライン</button>
+          <button class="seg-btn plan-tab" type="button" role="tab" data-plan-tab="projects" aria-selected="false">プロジェクト俯瞰</button>
+          <button class="seg-btn plan-tab" type="button" role="tab" data-plan-tab="milestones" aria-selected="false">マイルストーン</button>
+        </div>
+
+        <section class="panel panel-primary" id="panel-timeline">
+          <div class="panel-head">
+            <h2>タイムライン</h2>
+            <span class="count" id="timeline-count"></span>
+            <div class="seg" role="group" aria-label="表示する期間">
+              <button class="seg-btn" type="button" data-span="7" aria-pressed="true">1週間</button>
+              <button class="seg-btn" type="button" data-span="35" aria-pressed="false">1ヶ月</button>
+            </div>
+          </div>
+          <div id="timeline" class="timeline"></div>
+          <div id="timeline-detail" class="tl-detail" hidden></div>
+          <div id="timeline-loose" class="tl-loose"></div>
+        </section>
+
+        <section class="panel" id="panel-projects" hidden>
+          <div class="panel-head"><h2>プロジェクト俯瞰</h2><span class="count" id="projects-count"></span></div>
+          <p class="panel-note">残日数は本日基準（14日以内=赤 / 35日以内=橙）。</p>
+          <div class="table-scroll">
+            <table id="projects-table" class="grid">
+              <thead><tr><th>code</th><th>プロジェクト</th><th>種別</th><th>優先度</th><th>preset</th><th>状態</th><th>次の一手</th><th>期限</th><th>残日数</th></tr></thead>
+              <tbody></tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="panel" id="panel-milestones" hidden>
+          <div class="panel-head"><h2>マイルストーン</h2><span class="count" id="milestones-count"></span></div>
+          <div id="milestone-list" class="rows"></div>
+        </section>
+      </div>
+
+      <!-- ========== 4. 記録 ========== -->
+      <div class="view" id="view-log" hidden>
+        <div class="seg log-tabs" id="log-tabs" role="tablist" aria-label="記録の種類">
+          <button class="seg-btn log-tab" type="button" role="tab" data-log-tab="state" aria-selected="true">執事の現在地</button>
+          <button class="seg-btn log-tab" type="button" role="tab" data-log-tab="decided" aria-selected="false">裁定済み</button>
+          <button class="seg-btn log-tab" type="button" role="tab" data-log-tab="handoff" aria-selected="false">委譲</button>
+          <button class="seg-btn log-tab" type="button" role="tab" data-log-tab="check" aria-selected="false">整合</button>
+          <button class="seg-btn log-tab" type="button" role="tab" data-log-tab="history" aria-selected="false">履歴</button>
+          <button class="seg-btn log-tab" type="button" role="tab" data-log-tab="night" aria-selected="false">夜勤</button>
+        </div>
+
+        <section class="panel" id="panel-state">
+          <div class="panel-head"><h2>執事の現在地</h2></div>
+          <div id="state-body" class="state-body"></div>
+        </section>
+
+        <section class="panel" id="panel-decided" hidden>
+          <div class="panel-head"><h2>裁定済み</h2><span class="count" id="decided-count"></span></div>
+          <div id="decided-list" class="rows"></div>
+        </section>
+
+        <section class="panel" id="panel-handoff" hidden>
+          <div class="panel-head"><h2>委譲</h2><span class="count" id="handoff-count"></span></div>
+          <p class="panel-note">指示書（brief）と報告（report）を読めます。押すと展開します。</p>
+          <div id="handoff-list" class="rows"></div>
+        </section>
+
+        <section class="panel" id="panel-check" hidden>
+          <div class="panel-head"><h2>整合</h2><span class="count" id="check-count"></span></div>
+          <p class="panel-note"><code>manor check</code> と同じ検査（C1〜C9）。確実に判定できるものだけを見ています。</p>
+          <div id="check-body"></div>
+        </section>
+
+        <section class="panel" id="panel-history" hidden>
+          <div class="panel-head"><h2>履歴</h2><span class="count" id="history-count"></span></div>
+          <p class="panel-note">直近の task_event 50件。</p>
+          <div id="history-list" class="rows"></div>
+        </section>
+
+        <section class="panel" id="panel-night" hidden>
+          <div class="panel-head">
+            <h2>夜勤の作業報告</h2>
+            <select id="night-date-select" class="ruling-input" style="flex:0 0 auto; max-width:170px;"></select>
+          </div>
+          <p class="panel-note">別の担当（夜勤の仕組み）が書いた <code>home/night/reports/&lt;日付&gt;.md</code> を読んで表示するだけです（読み取り専用。ここから書き込みはしません）。</p>
+          <div id="night-body"></div>
+        </section>
+      </div>
+
+      <!-- ========== 5. 家 ========== -->
+      <div class="view" id="view-house" hidden>
+        <div class="seg log-tabs" id="house-tabs" role="tablist" aria-label="家の担当">
+          <button class="seg-btn house-tab" type="button" role="tab" data-house-tab="chef" aria-selected="true">料理長</button>
+          <button class="seg-btn house-tab" type="button" role="tab" data-house-tab="house" aria-selected="false">家政婦</button>
+          <button class="seg-btn house-tab" type="button" role="tab" data-house-tab="money" aria-selected="false">家令</button>
+          <button class="seg-btn house-tab" type="button" role="tab" data-house-tab="sec" aria-selected="false">秘書</button>
+        </div>
+
+        <section class="panel" id="panel-house-chef">
+          <div class="panel-head"><h2>料理長</h2></div>
+          <div id="chef-body"></div>
+        </section>
+
+        <section class="panel" id="panel-house-house" hidden>
+          <div class="panel-head"><h2>家政婦</h2></div>
+          <div id="house-body"></div>
+        </section>
+
+        <section class="panel" id="panel-house-money" hidden>
+          <div class="panel-head"><h2>家令</h2></div>
+          <p class="panel-note"><strong>「支払い済」の記録は支払いの実行ではありません。</strong> 主人が払ったと言ったときの記録です。</p>
+          <div id="money-body"></div>
+        </section>
+
+        <section class="panel" id="panel-house-sec" hidden>
+          <div class="panel-head"><h2>秘書</h2></div>
+          <div id="sec-body"></div>
+        </section>
+      </div>
+    </main>
+
+    <footer class="footer">
+      <div id="paths"></div>
+      <p>このダッシュボードは manor の SQLite を読み書きするだけのローカル道具です。LLM API は呼びません／外部ネットワークへ送信しません。</p>
+    </footer>
+  </div>
+</div>
+
+<div id="modal-root"></div>
+
+<script src="/static/md.js"></script>
+<script src="/static/app.js"></script>
+</body>
+</html>

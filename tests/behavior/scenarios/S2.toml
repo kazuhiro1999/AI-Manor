@@ -1,0 +1,18 @@
+id = "S2"
+title = "状態変更: todo -> doing"
+description = "「T1 を進行中にして」から manor task status T1 doing を選べるか。"
+prompt = "T1 を進行中にして"
+allow_edit = false
+
+expect = [
+    "task('T1')['status'] == 'doing'",
+    "any(e['from_status'] == 'todo' and e['to_status'] == 'doing' for e in task_events('T1'))",
+    "check_ok",
+    "sha_ok",
+]
+
+[[setup]]
+args = ["project", "add", "house", "家", "--preset", "standard"]
+
+[[setup]]
+args = ["task", "add", "洗濯機の修理を頼む", "--project", "house"]

@@ -1,0 +1,28 @@
+# policy-as-code（ADR-001 §6）。
+# `manor.policy` がここを読む。散文で書いた規則の一部を、ここでは値として持つ。
+
+[levels]
+order = ["L0", "L1", "L2", "L3", "HG"]
+
+[classes]           # 行動クラス → 既定レベル。キーは英語の識別子、label は日本語
+workspace_md        = { label = "ワークスペース内 Markdown の更新",       default = "L3" }
+research            = { label = "情報収集・調査",                         default = "L3" }
+overview            = { label = "全体像の再構成",                         default = "L2" }
+self_config         = { label = "執事自身の設定変更",                     default = "L2" }
+local_experiment    = { label = "ローカルの可逆な実験",                   default = "L2" }
+external_ticket     = { label = "外部チケットの起票・更新",               default = "L1" }
+general             = { label = "一般の作業（上のどれにも当たらない）",   default = "L2" }
+external_send       = { label = "外部への送信・公開",                     default = "HG", fixed = true }
+auth_billing_pii    = { label = "認証・課金・個人情報の外部共有",         default = "HG", fixed = true }
+irreversible_delete = { label = "不可逆な削除",                           default = "HG", fixed = true }
+git_push_default    = { label = "既定ブランチへの直接 push / マージ",      default = "HG", fixed = true }
+
+[presets]           # プロジェクトのプリセットが既定を何段ずらすか
+careful  = -1
+standard = 0
+fast     = 1
+
+[axes]              # handoff が7軸に展開するときの表
+careful  = { autonomy = "LOW",    risk = "HIGH",   verification = "HIGH",   approval = "HIGH",   scope = "STRICT",   research_freedom = "MEDIUM", escalation = "CONSERVATIVE" }
+standard = { autonomy = "MEDIUM", risk = "MEDIUM", verification = "MEDIUM", approval = "MEDIUM", scope = "BOUNDED",  research_freedom = "MEDIUM", escalation = "BALANCED" }
+fast     = { autonomy = "HIGH",   risk = "LOW",    verification = "MEDIUM", approval = "LOW",    scope = "FLEXIBLE", research_freedom = "HIGH",   escalation = "BALANCED" }

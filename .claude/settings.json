@@ -1,0 +1,132 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "_comment": "manor: hooks は ADR-001 §7 の契約どおり `python -m manor.hooks <event>` を uv 経由で呼ぶ。DB は読むだけで書き換えない。",
+  "_comment_autoMemory": "記憶の正本は home/ と DB だけにする（AI執事 v1 の裁定を継承）。Claude Code の自動メモリは既定で有効だが、第二の記憶を作ると『情報は1箇所にだけ持つ』の規約に反するため止める。",
+  "autoMemoryEnabled": false,
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|resume|clear",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "uv",
+            "args": ["run", "--no-sync", "--project", "${CLAUDE_PROJECT_DIR}", "python", "-m", "manor.hooks", "session-start"],
+            "timeout": 30,
+            "statusMessage": "射影を読んでいます…"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "uv",
+            "args": ["run", "--no-sync", "--project", "${CLAUDE_PROJECT_DIR}", "python", "-m", "manor.hooks", "pre-tool-use"],
+            "timeout": 20
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "uv",
+            "args": ["run", "--no-sync", "--project", "${CLAUDE_PROJECT_DIR}", "python", "-m", "manor.hooks", "stop"],
+            "timeout": 20
+          }
+        ]
+      }
+    ],
+    "PreCompact": [
+      {
+        "matcher": "manual|auto",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "uv",
+            "args": ["run", "--no-sync", "--project", "${CLAUDE_PROJECT_DIR}", "python", "-m", "manor.hooks", "pre-compact"],
+            "timeout": 20
+          }
+        ]
+      }
+    ]
+  },
+  "permissions": {
+    "allow": [
+      "Read",
+      "Glob",
+      "Grep",
+      "Edit",
+      "Write",
+      "WebSearch",
+      "WebFetch",
+      "Bash(ls:*)",
+      "Bash(ls *)",
+      "Bash(cat:*)",
+      "Bash(cat *)",
+      "Bash(head:*)",
+      "Bash(head *)",
+      "Bash(tail:*)",
+      "Bash(tail *)",
+      "Bash(find:*)",
+      "Bash(find *)",
+      "Bash(grep:*)",
+      "Bash(grep *)",
+      "Bash(rg:*)",
+      "Bash(rg *)",
+      "Bash(wc:*)",
+      "Bash(wc *)",
+      "Bash(date:*)",
+      "Bash(date *)",
+      "Bash(echo:*)",
+      "Bash(echo *)",
+      "Bash(mkdir:*)",
+      "Bash(mkdir *)",
+      "Bash(uv run:*)",
+      "Bash(uv run *)",
+      "Bash(uv sync:*)",
+      "Bash(uv sync *)",
+      "Bash(git status:*)",
+      "Bash(git status *)",
+      "Bash(git log:*)",
+      "Bash(git log *)",
+      "Bash(git diff:*)",
+      "Bash(git diff *)",
+      "Bash(git show:*)",
+      "Bash(git show *)",
+      "Bash(git add:*)",
+      "Bash(git add *)",
+      "Bash(git commit:*)",
+      "Bash(git commit *)",
+      "Bash(git branch:*)",
+      "Bash(git branch *)",
+      "Bash(git checkout -b:*)",
+      "Bash(git checkout -b *)"
+    ],
+    "deny": [
+      "Bash(rm -rf:*)",
+      "Bash(rm -rf *)",
+      "Bash(git push:*)",
+      "Bash(git push *)",
+      "Bash(git remote add:*)",
+      "Bash(git remote add *)",
+      "Bash(git reset --hard:*)",
+      "Bash(git reset --hard *)",
+      "Bash(git rebase:*)",
+      "Bash(git rebase *)",
+      "Bash(curl:*)",
+      "Bash(curl *)",
+      "Bash(ssh:*)",
+      "Bash(ssh *)",
+      "Bash(scp:*)",
+      "Bash(scp *)"
+    ]
+  },
+  "language": "japanese"
+}

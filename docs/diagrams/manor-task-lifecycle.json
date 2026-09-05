@@ -1,0 +1,51 @@
+{
+  "schema_version": 1,
+  "diagram_type": "lifecycle",
+  "meta": {
+    "title": "task の状態機械",
+    "quality_profile": "showcase",
+    "viewBox": [980, 630],
+    "legend": {
+      "entries": {
+        "start": { "label": "起点" },
+        "active": { "label": "進行中" },
+        "waiting": { "label": "待ち" },
+        "decision": { "label": "門" },
+        "success": { "label": "完了" },
+        "failure": { "label": "終端・取り下げ" }
+      }
+    },
+    "views": [
+      { "id": "main-rail", "label": "起票から完了まで", "focus": ["todo", "doing", "hg_gate", "done"], "note": "task.py の ALLOWED_TRANSITIONS が許す主経路。level=HG は必ず HG の門を通る。" },
+      { "id": "wait-and-resume", "label": "待ち・保留からの再開", "focus": ["doing", "wait_hold"], "note": "waiting/hold は note 必須。depends_on を張ると todo は自動で waiting になる。委譲の却下も owner=butler で hold へ着地する。" },
+      { "id": "exit", "label": "終端", "focus": ["todo", "withdrawn", "done"], "note": "withdrawn/done はどちらも終端。以後の遷移は無い。" }
+    ]
+  },
+  "lanes": [
+    { "id": "main", "label": "主経路" },
+    { "id": "wait", "label": "待ち・保留" },
+    { "id": "terminal", "label": "完了・終端" }
+  ],
+  "states": [
+    { "id": "todo", "type": "start", "label": "起票", "sublabel": "todo", "lane": "main", "col": 0 },
+    { "id": "doing", "type": "active", "label": "進行", "sublabel": "doing", "lane": "main", "col": 1 },
+    { "id": "hg_gate", "type": "decision", "label": "HG の門", "sublabel": "decided_by の可否", "lane": "main", "col": 2 },
+    { "id": "wait_hold", "type": "waiting", "label": "待ち/保留", "sublabel": "waiting・hold（note 必須）", "lane": "wait", "col": 0 },
+    { "id": "done", "type": "success", "label": "完了", "sublabel": "done", "lane": "terminal", "col": 1 },
+    { "id": "withdrawn", "type": "failure", "label": "取り下げ", "sublabel": "withdrawn", "lane": "terminal", "col": 2 }
+  ],
+  "transitions": [
+    { "id": "todo-doing", "from": "todo", "to": "doing", "label": "着手", "variant": "emphasis", "route": "straight" },
+    { "id": "doing-gate", "from": "doing", "to": "hg_gate", "label": "done を試みる", "variant": "emphasis", "labelAt": [325, 202] },
+    { "id": "gate-done", "from": "hg_gate", "to": "done", "label": "非HGまたは承認/修正 decision あり", "variant": "emphasis", "fromSide": "bottom", "toSide": "top", "via": [[402, 210], [556, 210]], "labelAt": [479, 202] },
+    { "id": "gate-doing", "from": "hg_gate", "to": "doing", "label": "未承認: ManorError で拒否", "variant": "security", "route": "top-channel" },
+    { "id": "doing-wait", "from": "doing", "to": "wait_hold", "label": "待ち・保留に入る（note 必須）", "fromSide": "bottom", "toSide": "top", "via": [[248, 225], [402, 225]], "labelAt": [380, 225] },
+    { "id": "wait-doing", "from": "wait_hold", "to": "doing", "label": "再開", "variant": "emphasis", "fromSide": "top", "toSide": "bottom", "via": [[402, 258], [248, 258]], "labelAt": [325, 258] },
+    { "id": "todo-withdrawn", "from": "todo", "to": "withdrawn", "label": "重複を解消", "variant": "dashed", "fromSide": "bottom", "toSide": "bottom", "via": [[94, 540], [710, 540]] }
+  ],
+  "cards": [
+    { "dot": "emerald", "title": "主経路は機械が守る", "items": ["ALLOWED_TRANSITIONS に無い遷移は ManorError で拒否", "level=HG の done は承認/修正済み decision が無いと通らない"] },
+    { "dot": "amber", "title": "待ち・保留は note が必須", "items": ["waiting/hold へ入るとき --note が無いと拒否される"] },
+    { "dot": "rose", "title": "委譲の却下も hold へ戻す", "items": ["handoff.reject() は task を owner=butler・hold へ戻す"] }
+  ]
+}

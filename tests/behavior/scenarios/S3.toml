@@ -1,0 +1,22 @@
+id = "S3"
+title = "状態変更: doing -> done"
+description = "「T1 は終わったよ」から manor task done / status done を選べるか。done_at が入るか。"
+prompt = "T1 は終わったよ"
+allow_edit = false
+
+expect = [
+    "task('T1')['status'] == 'done'",
+    "bool(task('T1')['done_at'])",
+    "any(e['from_status'] == 'doing' and e['to_status'] == 'done' for e in task_events('T1'))",
+    "check_ok",
+    "sha_ok",
+]
+
+[[setup]]
+args = ["project", "add", "house", "家", "--preset", "standard"]
+
+[[setup]]
+args = ["task", "add", "洗濯機の修理を頼む", "--project", "house"]
+
+[[setup]]
+args = ["task", "status", "T1", "doing"]

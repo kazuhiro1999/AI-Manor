@@ -1,0 +1,22 @@
+id = "S8"
+title = "挨拶だけでは DB を書かない"
+description = "「こんにちは」に対して、射影を読んで応答はするが、manor task/project/decision の書き込み系コマンドは一切呼ばないはず。S1 と並んで3回まわす安定性チェック対象。"
+prompt = "こんにちは"
+allow_edit = false
+repeat = 3
+
+expect = [
+    "no_write",
+    "len(write_commands_attempted) == 0",
+    "check_ok",
+    "sha_ok",
+]
+
+[[setup]]
+args = ["project", "add", "house", "家", "--preset", "standard"]
+
+[[setup]]
+args = ["task", "add", "洗濯機の修理を頼む", "--project", "house"]
+
+[[setup]]
+args = ["task", "status", "T1", "doing"]

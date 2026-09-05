@@ -1,0 +1,249 @@
+<title>執事</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root {
+    --bg: #f7f7f5; --fg: #2f2f2c; --dim: #8a8a84;
+    --line: #dedeD8; --accent: #7a6a52; --alert: #a8563f;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #1c1c1a; --fg: #e6e4de; --dim: #8f8d86;
+      --line: #33322f; --accent: #b9a583; --alert: #d08063;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body {
+    background: var(--bg); color: var(--fg);
+    font-family: "Yu Gothic UI", "Meiryo", system-ui, sans-serif;
+    display: flex; flex-direction: column; align-items: center; justify-content: flex-end;
+    padding: 10px 12px 12px; user-select: none; cursor: pointer; overflow: hidden;
+  }
+  /* 姿。canvas は器いっぱいに広げ、余白は body の背景色が透ける */
+  .figure { flex: 1; width: 100%; position: relative; min-height: 0; }
+  #stage { width: 100%; height: 100%; display: block; }
+  /* VRM が読めないとき（home/face/model.vrm が無いとき）だけ出る、輪郭だけの控え */
+  .fallback { position: absolute; inset: 0; display: none; place-items: center; }
+  .fallback.on { display: grid; }
+  .fallback svg { width: 76px; height: auto; animation: breathe 5.5s ease-in-out infinite; }
+  @keyframes breathe { 0%, 100% { transform: translateY(0) scale(1); } 50% { transform: translateY(-1.5px) scale(1.012); } }
+  .silhouette { fill: var(--accent); opacity: .62; }
+  .note { font-size: 9px; color: var(--dim); opacity: .7; letter-spacing: .04em; min-height: 12px; }
+  .state { width: 100%; border-top: 1px solid var(--line); padding-top: 9px; margin-top: 6px; }
+  .line { display: flex; justify-content: space-between; align-items: baseline; font-size: 12px; margin: 3px 0; }
+  .label { color: var(--dim); }
+  .value { font-variant-numeric: tabular-nums; }
+  .value.alert { color: var(--alert); font-weight: 700; }
+  .foot { font-size: 10px; color: var(--dim); margin-top: 9px; text-align: center; line-height: 1.5; }
+  .quiet { opacity: .5; }
+</style>
+
+<div class="figure">
+  <canvas id="stage"></canvas>
+  <div class="fallback" id="fallback">
+    <svg viewBox="0 0 120 150" role="img" aria-label="執事">
+      <circle class="silhouette" cx="60" cy="42" r="26"/>
+      <path class="silhouette" d="M60 74c-24 0-40 15-44 38-1 6 3 11 9 11h70c6 0 10-5 9-11-4-23-20-38-44-38z"/>
+    </svg>
+  </div>
+</div>
+<div class="note" id="note"></div>
+
+<div class="state">
+  <div class="line"><span class="label">要対応</span><span class="value" id="pending">—</span></div>
+  <div class="line"><span class="label">実行中</span><span class="value" id="doing">—</span></div>
+  <div class="line"><span class="label">直近の完了</span><span class="value" id="done">—</span></div>
+</div>
+<div class="foot"><span id="foot" class="quiet">読み込んでいます</span></div>
+
+<script type="importmap">
+{ "imports": { "three": "/static/vendor/three.module.js" } }
+</script>
+
+<script type="module">
+// ---- 姿（VRM）。無ければ3行だけ（fallback） -----------------------------
+// v1 apps/butler-face の face.html を移植（通話・自撮り・口パク・ピン留めは
+// このスコープでは持ち込まない。姿勢の作り方だけを引き継ぐ）。
+import * as THREE from 'three';
+import { GLTFLoader } from '/static/vendor/loaders/GLTFLoader.js';
+import { VRMLoaderPlugin, VRMUtils } from '/static/vendor/three-vrm.module.js';
+
+const $ = (id) => document.getElementById(id);
+const canvas = $('stage');
+const note = $('note');
+
+let renderer, scene, camera, vrm, clock;
+let blinkAt = 0, nextBlink = 2 + Math.random() * 4;
+
+function showFallback(msg) {
+  $('fallback').classList.add('on');
+  canvas.style.display = 'none';
+  note.textContent = msg;
+}
+
+function fit() {
+  if (!renderer) return;
+  const box = canvas.parentElement.getBoundingClientRect();
+  const w = Math.max(1, Math.floor(box.width));
+  const h = Math.max(1, Math.floor(box.height));
+  renderer.setSize(w, h, false);
+  camera.aspect = w / h;
+  camera.updateProjectionMatrix();
+}
+
+const POSE = { upperArmDown: 1.44, upperArmIn: 0.10, lowerArmBend: 0.30, handIn: 0.15 };
+
+function restPose() {
+  const h = vrm.humanoid;
+  const g = (n) => h.getNormalizedBoneNode(n);
+  const lu = g('leftUpperArm'), ru = g('rightUpperArm');
+  const ll = g('leftLowerArm'), rl = g('rightLowerArm');
+  const lh = g('leftHand'), rh = g('rightHand');
+  if (lu) { lu.rotation.z = -POSE.upperArmDown; lu.rotation.x = POSE.upperArmIn; }
+  if (ru) { ru.rotation.z = POSE.upperArmDown; ru.rotation.x = POSE.upperArmIn; }
+  if (ll) ll.rotation.y = -POSE.lowerArmBend;
+  if (rl) rl.rotation.y = POSE.lowerArmBend;
+  if (lh) lh.rotation.y = -POSE.handIn;
+  if (rh) rh.rotation.y = POSE.handIn;
+}
+
+let restHipsY = null;
+function idle(t) {
+  const h = vrm.humanoid;
+  const hips = h.getNormalizedBoneNode('hips');
+  const spine = h.getNormalizedBoneNode('spine');
+  const neck = h.getNormalizedBoneNode('neck');
+  if (hips && restHipsY === null) restHipsY = hips.position.y;
+  const sway = Math.sin(t * (Math.PI * 2) / 11);
+  if (hips) {
+    hips.rotation.y = sway * 0.028;
+    hips.rotation.z = sway * 0.013;
+    hips.position.y = restHipsY - Math.abs(sway) * 0.004;
+  }
+  if (spine) spine.rotation.y = -sway * 0.010;
+  if (neck) neck.rotation.y = Math.sin(t * (Math.PI * 2) / 17 + 1.1) * 0.012;
+}
+
+function loop() {
+  setTimeout(() => requestAnimationFrame(loop), 50);
+  if (document.hidden || !vrm) return;
+  const dt = clock.getDelta();
+  const t = clock.elapsedTime;
+  idle(t);
+  const chest = vrm.humanoid.getNormalizedBoneNode('chest') || vrm.humanoid.getNormalizedBoneNode('spine');
+  if (chest) chest.rotation.x = Math.sin(t * (Math.PI * 2) / 5.5) * 0.010;
+  if (vrm.expressionManager) {
+    if (t > nextBlink) { blinkAt = t; nextBlink = t + 3 + Math.random() * 4; }
+    const since = t - blinkAt;
+    const v = (since >= 0 && since < 0.12) ? Math.sin((since / 0.12) * Math.PI) : 0;
+    vrm.expressionManager.setValue('blink', v);
+  }
+  vrm.update(dt);
+  renderer.render(scene, camera);
+}
+
+async function boot() {
+  if (!window.WebGLRenderingContext) { showFallback('この環境では3D表示ができません'); return; }
+  try {
+    renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: true });
+  } catch (e) {
+    showFallback('3Dを初期化できませんでした'); return;
+  }
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.5));
+  scene = new THREE.Scene();
+  camera = new THREE.PerspectiveCamera(24, 1, 0.1, 20);
+  clock = new THREE.Clock();
+  scene.add(new THREE.AmbientLight(0xffffff, 1.5));
+  const key = new THREE.DirectionalLight(0xffffff, 1.1);
+  key.position.set(0.6, 1.4, 1.2);
+  scene.add(key);
+
+  const loader = new GLTFLoader();
+  loader.register((parser) => new VRMLoaderPlugin(parser));
+
+  note.textContent = '姿を読み込んでいます…';
+  let gltf;
+  try {
+    gltf = await loader.loadAsync('/face/model.vrm');
+  } catch (e) {
+    showFallback('姿はまだ置かれていません（home/face/model.vrm）');
+    return;
+  }
+  vrm = gltf.userData.vrm;
+  if (!vrm) { showFallback('VRM として読めませんでした'); return; }
+
+  VRMUtils.removeUnnecessaryVertices(gltf.scene);
+  VRMUtils.combineSkeletons(gltf.scene);
+  vrm.scene.traverse((o) => { o.frustumCulled = false; });
+  scene.add(vrm.scene);
+  restPose();
+  vrm.update(0.016);
+  scene.updateMatrixWorld(true);
+
+  const head = vrm.humanoid.getNormalizedBoneNode('head');
+  const p = new THREE.Vector3();
+  if (head) head.getWorldPosition(p); else p.set(0, 1.4, 0);
+
+  const box = new THREE.Box3().setFromObject(vrm.scene);
+  const height = Math.max(0.5, box.max.y - box.min.y);
+  const top = box.max.y + 0.04;
+  const bottom = box.max.y - height * 0.32;
+  const half = Math.max(0.15, (top - bottom) / 2);
+  const fovRad = camera.fov * Math.PI / 180;
+  const aimY = (top + bottom) / 2;
+  const camZ = p.z + half / Math.tan(fovRad / 2);
+  camera.position.set(0, aimY, camZ);
+  camera.lookAt(0, aimY, p.z);
+
+  // 伏し目にする（[[執事の外見仕様]]「正面を見ない」）。首をわずかに下げるだけ
+  const neck = vrm.humanoid.getNormalizedBoneNode('neck');
+  if (neck) neck.rotation.x += 0.10;
+  if (head) head.rotation.x += 0.06;
+  if (vrm.expressionManager) vrm.expressionManager.setValue('neutral', 1.0);
+
+  note.textContent = '';
+  fit();
+  loop();
+}
+
+window.addEventListener('resize', fit);
+boot();
+</script>
+
+<script>
+// ---- 状態3行（3Dとは独立に動く。姿が出せなくても状態は出す） --------------
+(function () {
+  var $ = function (id) { return document.getElementById(id); };
+
+  function paint(d) {
+    var counts = d.counts || {};
+    var pending = counts.pending || 0;
+    var el = $('pending');
+    el.textContent = pending === 0 ? 'なし' : pending + ' 件';
+    el.className = 'value' + (pending > 0 ? ' alert' : '');
+    $('doing').textContent = (counts.doing || 0) === 0 ? 'なし' : counts.doing + ' 件';
+    var latest = (d.recent_done || [])[0];
+    $('done').textContent = latest ? latest.id : '—';
+    $('foot').textContent = (d.today || '') + ' 現在';
+    $('foot').className = '';
+  }
+
+  function tick() {
+    fetch('/api/board', { cache: 'no-store' })
+      .then(function (r) { return r.ok ? r.json() : Promise.reject(r.status); })
+      .then(paint)
+      .catch(function () {
+        $('foot').textContent = 'ダッシュボードに接続できません';
+        $('foot').className = 'quiet';
+      });
+  }
+  tick();
+  setInterval(tick, 15000);
+
+  // 押すとダッシュボードへ。名前付きの窓にして、押すたびに増えないようにする
+  document.body.addEventListener('click', function () {
+    var w = window.open('/', 'manor-board');
+    if (w) { try { w.focus(); } catch (e) { /* 別ウィンドウの focus は拒まれることがある */ } }
+  });
+})();
+</script>

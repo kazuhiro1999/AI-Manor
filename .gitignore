@@ -1,0 +1,30 @@
+# =============================================================
+#  manor リポジトリ — 追跡するのは「執事そのもの」だけ
+#  境界の定義は CLAUDE.md「関心の分離」を参照
+# =============================================================
+
+# ── ② 主人の情報・DB・成果物（home/README.md だけは道具の目録なので追跡する） ──
+home/*
+!home/README.md
+
+# ── ④ 環境固有（PC・パス・サービスID・シークレット） ──
+.claude/settings.local.json
+**/config.local.toml
+
+# ── 生成物・キャッシュ ──
+.venv/
+__pycache__/
+.pytest_cache/
+*.pyc
+*.bak
+*.tmp
+
+# ── DB 本体と WAL（真実は home/manor.db だが、迷い込んだ場所にも網をかける） ──
+*.db
+*.db-wal
+*.db-shm
+
+# ── フロントエンド（web/）の生成物・依存・撮影物 ──
+web/node_modules/
+web/dist/
+web/shots/

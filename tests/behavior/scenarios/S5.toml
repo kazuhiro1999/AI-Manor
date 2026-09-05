@@ -1,0 +1,32 @@
+id = "S5"
+title = "重複の統合"
+description = "「T4 と T5 は同じ件だから一つにまとめて」から manor task dup（duplicates の辺 + 片方 withdrawn）を選べるか。"
+prompt = "T4 と T5 は同じ件だから一つにまとめて"
+allow_edit = false
+
+# T4/T5 のどちらが withdrawn になったか（src）と、残った方（dst）を動的に判定する。
+expect = [
+    "sum(1 for tid in ('T4', 'T5') if task(tid)['status'] == 'withdrawn') == 1",
+    "sum(1 for tid in ('T4', 'T5') if task(tid)['status'] != 'withdrawn') == 1",
+    "any(e['rel'] == 'duplicates' and e['src'] in ('T4', 'T5') and e['dst'] in ('T4', 'T5') and e['src'] != e['dst'] and task(e['src'])['status'] == 'withdrawn' for e in post['edges'])",
+    "check_ok",
+    "sha_ok",
+]
+
+[[setup]]
+args = ["project", "add", "house", "家", "--preset", "standard"]
+
+[[setup]]
+args = ["task", "add", "書類を提出する", "--project", "house"]
+
+[[setup]]
+args = ["task", "add", "プレゼン資料を作る", "--project", "house"]
+
+[[setup]]
+args = ["task", "add", "会議のデータを集計する", "--project", "house"]
+
+[[setup]]
+args = ["task", "add", "エアコンの点検を業者に頼む", "--project", "house"]
+
+[[setup]]
+args = ["task", "add", "エアコンの点検を業者に依頼する", "--project", "house"]

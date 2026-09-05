@@ -1,0 +1,22 @@
+id = "S10"
+title = "背景の問い合わせは読むだけ"
+description = "「T1 の背景を教えて」。manor ctx T1 か manor task show T1 で読むだけで、DB は書かないはず。"
+prompt = "T1 の背景を教えて"
+allow_edit = false
+
+expect = [
+    "no_write",
+    "context_read_used",
+    "check_ok",
+    "sha_ok",
+]
+
+[[setup]]
+args = ["project", "add", "house", "家", "--preset", "standard"]
+
+[[setup]]
+args = [
+    "task", "add", "洗濯機の修理を頼む", "--project", "house",
+    "--goal", "洗濯機を早く直して家事の負担を減らす",
+    "--body", "去年も同じ機種で同様の不具合があり、部品交換で直った経緯がある。今回も同じ業者に頼めるか確認したい。",
+]

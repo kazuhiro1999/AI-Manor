@@ -1,0 +1,21 @@
+id = "S1"
+title = "曖昧な依頼でタスクを追加する"
+description = "「家のプロジェクトで洗濯機修理を頼みたい」という自然文から、執事が manor task add を選んで DB に起票できるか。"
+prompt = "洗濯機の修理を頼むタスクを追加して。家のプロジェクトで"
+allow_edit = false
+repeat = 3
+
+# --- 期待（python 式。すべて True であること） -------------------------------
+# TOML の制約: expect はここ（最初の [[setup]] より前）に置く。
+# [[setup]] の後ろに書くと setup テーブルの一部として解釈されてしまう。
+expect = [
+    "len(new_task_ids) == 1",
+    "any(k in task(new_task_ids[0])['title'] for k in ('洗濯機', '修理'))",
+    "task(new_task_ids[0])['project_id'] == 'P1'",
+    "task(new_task_ids[0])['status'] == 'todo'",
+    "check_ok",
+    "sha_ok",
+]
+
+[[setup]]
+args = ["project", "add", "house", "家", "--preset", "standard"]

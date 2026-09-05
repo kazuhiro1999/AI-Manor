@@ -1,0 +1,33 @@
+[project]
+name = "manor"
+version = "0.1.0"
+description = "manor -- AI執事 v2 の core。SQLite を唯一の書き手にする執事の基盤"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn>=0.30",
+    "python-multipart>=0.0.9",
+    # Windows は OS が IANA の時刻帯辞書を持たないので、これが無いと標準ライブラリの
+    # zoneinfo が UTC すら解決できない（2026-09-05 実機で確認: ZoneInfoNotFoundError）。
+    # コードを持たないデータのみの配布物（CPython の中の人が保守）で、ADR-012 D4
+    # 「ICS を解くための外部ライブラリを入れない」が禁じている類の依存ではない。
+    # 環境マーカーは付けない——Linux/macOS では OS の辞書が優先されるので害が無く、
+    # どの環境でも同じ振る舞いになる方が良い（ADR-012 §2 D4 改訂・2026-09-05）。
+    "tzdata",
+]
+
+[project.scripts]
+manor = "manor.cli:main"
+
+[dependency-groups]
+dev = ["pytest>=8.0", "httpx>=0.27"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/manor"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

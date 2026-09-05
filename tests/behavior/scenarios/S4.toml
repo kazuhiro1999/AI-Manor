@@ -1,0 +1,25 @@
+id = "S4"
+title = "依存関係の表現: waiting + depends_on"
+description = "「T2 は T3 が終わるまで待ち」から waiting への遷移（status_note 必須）と depends_on の辺を張れるか。"
+prompt = "T2 は T3 が終わるまで待ち"
+allow_edit = false
+
+expect = [
+    "task('T2')['status'] == 'waiting'",
+    "task('T2')['status_note'].strip() != ''",
+    "any(e['src'] == 'T2' and e['rel'] == 'depends_on' and e['dst'] == 'T3' for e in post['edges'])",
+    "check_ok",
+    "sha_ok",
+]
+
+[[setup]]
+args = ["project", "add", "house", "家", "--preset", "standard"]
+
+[[setup]]
+args = ["task", "add", "書類を提出する", "--project", "house"]
+
+[[setup]]
+args = ["task", "add", "プレゼン資料を作る", "--project", "house"]
+
+[[setup]]
+args = ["task", "add", "会議のデータを集計する", "--project", "house"]

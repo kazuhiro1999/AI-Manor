@@ -1,0 +1,60 @@
+{
+  "schema_version": 1,
+  "diagram_type": "dataflow",
+  "meta": {
+    "title": "manor 更新のパイプライン",
+    "quality_profile": "showcase",
+    "viewBox": [1080, 602],
+    "legend": {
+      "entries": {
+        "default": { "label": "通常" },
+        "emphasis": { "label": "主経路" },
+        "security": { "label": "拒否・例外" },
+        "dashed": { "label": "自動反映" },
+        "database": { "label": "データ置き場" }
+      }
+    },
+    "views": [
+      { "id": "main-path", "label": "主経路", "focus": ["master_voice", "butler_cli", "core_api", "state_gate", "db", "render_projections", "hook_inject"], "note": "主人の発話から次回起動時の射影注入までの一本道。" },
+      { "id": "web-branch", "label": "Web も同じ関数へ", "focus": ["web_api", "core_api", "state_gate"], "note": "Web の POST も core API 関数を経由する。書き手は増えない。" },
+      { "id": "exception-branches", "label": "拒む・迂回する経路", "focus": ["md_edit_attempt", "pretooluse_gate", "auto_writers", "db"], "note": "MD 直編集は PreToolUse が deny。v1 import だけが検証を経ずに直接 INSERT する。" }
+    ]
+  },
+  "stages": [
+    { "label": "入力" },
+    { "label": "呼び出し" },
+    { "label": "検証" },
+    { "label": "SQLite" },
+    { "label": "反映" }
+  ],
+  "nodes": [
+    { "id": "master_voice", "type": "external", "label": "主人（自然言語）", "sublabel": "チャットの指示", "width": 150, "stage": 0, "row": 0 },
+    { "id": "md_edit_attempt", "type": "external", "label": "直接 Markdown 編集", "sublabel": "Edit/Write（禁じ手）", "width": 150, "stage": 0, "row": 2 },
+    { "id": "butler_cli", "type": "backend", "label": "執事が CLI を選ぶ", "sublabel": "manor task/decision 等", "width": 150, "stage": 1, "row": 0 },
+    { "id": "web_api", "type": "backend", "label": "Web 操作 → POST", "sublabel": "/api/v1/…（api_v1/*）", "width": 150, "stage": 1, "row": 1 },
+    { "id": "pretooluse_gate", "type": "security", "label": "PreToolUse hook", "sublabel": "hooks.py（deny）", "tag": "拒否して終端", "width": 130, "stage": 1, "row": 2 },
+    { "id": "auto_writers", "type": "external", "label": "夜勤／v1 import", "sublabel": "claude -p ／ --sync", "width": 160, "stage": 1, "row": 3 },
+    { "id": "core_api", "type": "backend", "label": "core API 関数", "sublabel": "task.py / decision.py 等", "width": 150, "stage": 2, "row": 1 },
+    { "id": "state_gate", "type": "security", "label": "状態機械・HG の門", "sublabel": "遷移・class→level を検証", "width": 160, "stage": 2, "row": 2 },
+    { "id": "db", "type": "database", "label": "SQLite", "sublabel": "1トランザクション", "width": 130, "stage": 3, "row": 1 },
+    { "id": "render_projections", "type": "cloud", "label": "render.py が書く", "sublabel": "3つの .md ＋ sha256", "width": 160, "stage": 4, "row": 0 },
+    { "id": "hook_inject", "type": "frontend", "label": "次回起動時に反映", "sublabel": "SessionStart 注入／Web 再取得", "width": 150, "stage": 4, "row": 1 }
+  ],
+  "flows": [
+    { "id": "voice-to-cli", "from": "master_voice", "to": "butler_cli", "label": "発話を CLI コマンドへ翻訳", "classification": "指示", "variant": "emphasis", "labelDy": 68 },
+    { "id": "edit-to-gate", "from": "md_edit_attempt", "to": "pretooluse_gate", "label": "home/projections/** への書き込み", "classification": "禁じ手", "variant": "security", "labelDy": 68 },
+    { "id": "cli-to-core", "from": "butler_cli", "to": "core_api", "label": "manor task 等", "classification": "CLI 経由", "variant": "emphasis" },
+    { "id": "web-to-core", "from": "web_api", "to": "core_api", "label": "CLI と同じ関数へ", "classification": "Web 経由", "variant": "emphasis", "channelX": 450, "labelAt": [520, 215] },
+    { "id": "auto-to-core", "from": "auto_writers", "to": "core_api", "label": "夜勤: uv run manor …（絞った道具立て）", "classification": "夜勤経由", "labelAt": [423, 428] },
+    { "id": "auto-to-db", "from": "auto_writers", "to": "db", "label": "v1: 検証を経ず直接 INSERT（唯一の例外）", "classification": "例外", "variant": "security", "route": "bottom-channel", "channelY": 530 },
+    { "id": "core-to-gate", "from": "core_api", "to": "state_gate", "label": "遷移・HG 承認・class→level を検証", "classification": "検証" },
+    { "id": "gate-to-db", "from": "state_gate", "to": "db", "label": "許可分のみ", "classification": "書き込み", "variant": "emphasis", "labelDy": 130, "labelDx": -15 },
+    { "id": "db-to-render", "from": "db", "to": "render_projections", "label": "commit 後に自動実行", "classification": "自動反映", "labelAt": [843, 200] },
+    { "id": "render-to-hook", "from": "render_projections", "to": "hook_inject", "label": "active_text() を注入／Web は再取得", "classification": "起動時", "labelAt": [960, 314] }
+  ],
+  "cards": [
+    { "dot": "emerald", "title": "書き手は一本化", "items": ["主人の発話も Web の操作も、最後は同じ core API 関数を呼ぶ", "射影は手で編集しない。manor task set / manor project set から"] },
+    { "dot": "rose", "title": "MD 直編集は拒まれる", "items": ["home/projections/** と STATE.md への Edit/Write は PreToolUse hook が deny する"] },
+    { "dot": "amber", "title": "門は機械が守る・例外は1つ", "items": ["ALLOWED_TRANSITIONS が許さない遷移は ManorError で拒否", "v1 import だけが検証を経ずに直接 INSERT する（v1 の id を保つため）"] }
+  ]
+}

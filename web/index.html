@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#0f1218" />
+  <meta name="description" content="AI Manor — 家庭用 Web アプリ" />
+  <link rel="manifest" href="./manifest.webmanifest" />
+  <!-- 主人が用意した icon（2026-09-05）。`.ico` は 16〜256 の7層を持つので、
+       タブ・ブックマーク・タスクバーのどれでもぼやけない。PNG は PWA として
+       入れたときのホーム画面用（`.ico` は webmanifest では扱いが揃わない）。 -->
+  <link rel="icon" href="./favicon.ico" sizes="any" />
+  <link rel="apple-touch-icon" href="./icon-192.png" />
+  <title>AI Manor</title>
+  <!-- 担当の一覧が姿（VRM）を焼くときに使う vendor の解決先（ADR-011 D3）。
+       `three-vrm.module.js` などは中で bare specifier の `from "three"` を使うので、
+       **import map が無いと解決できない**。以前これをソースの文字列置換＋Blob URL で
+       代用していたが、実機で `ERR_NAME_NOT_RESOLVED` になり姿が1枚も出なかった
+       （2026-09-04 実測）。標準の仕組みで解くほうが短く、壊れ方も分かりやすい。
+       **import map は最初のモジュール読み込みより前に置く必要がある**ので head に。 -->
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "/face-static/vendor/three.module.js",
+        "three/": "/face-static/vendor/"
+      }
+    }
+  </script>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="module" src="/src/main.tsx"></script>
+  <script>
+    if ("serviceWorker" in navigator) {
+      window.addEventListener("load", () => {
+        navigator.serviceWorker.register("./sw.js").catch(() => {
+          /* service worker が登録できなくても画面は使える */
+        });
+      });
+    }
+  </script>
+</body>
+</html>

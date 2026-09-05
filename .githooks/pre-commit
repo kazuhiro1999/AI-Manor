@@ -1,0 +1,81 @@
+#!/usr/bin/env bash
+# manor: コミット前の個人情報リーク検査（機構層）
+#
+# 語彙リストはワークスペース外に置く（リスト自体が個人情報のため git に載せない）。
+#   ~/.manor/git-leak-terms.txt   1行1語 / # はコメント / 大文字小文字は無視
+#
+# 見つかったらコミットを止める。意図的に通すときだけ git commit --no-verify。
+set -u
+
+TERMS="$HOME/.manor/git-leak-terms.txt"
+
+if [ ! -f "$TERMS" ]; then
+  echo "x リーク検査の語彙リストがありません: $TERMS" >&2
+  echo "  作成するか、意図的に飛ばす場合は git commit --no-verify を使ってください。" >&2
+  exit 1
+fi
+
+files=$(git diff --cached --name-only --diff-filter=ACM)
+[ -z "$files" ] && exit 0
+
+# BOM と CR を除去してから読む（メモ帳等で編集されても壊れないように）
+clean=$(sed -e '1s/^\xEF\xBB\xBF//' -e 's/\r$//' "$TERMS")
+
+hits=0
+while IFS= read -r term; do
+  case "$term" in ''|\#*) continue ;; esac
+  while IFS= read -r f; do
+    [ -f "$f" ] || continue
+    if grep -Iqi -e "$term" "$f" 2>/dev/null; then
+      echo "x 個人情報の疑い: $f に「$term」" >&2
+      hits=$((hits+1))
+    fi
+  done <<< "$files"
+done <<< "$clean"
+
+if [ "$hits" -gt 0 ]; then
+  echo "" >&2
+  echo "コミットを中止しました（$hits 件）。該当箇所を一般化してから再実行してください。" >&2
+  exit 1
+fi
+
+# ---------------------------------------------------------------------------
+# home/ 境界の検査（ADR-001 D5。② は home/ に集約し、git には載せない）
+#
+# .gitignore が home/* を外しているので通常は起きないが、
+# `git add -f` で強制追跡された場合や、將来 .gitignore が壊れた場合に備えて
+# コミット直前でもう一度機構で見る。home/README.md（道具の目録）だけは例外。
+# ---------------------------------------------------------------------------
+home_hits=0
+
+while IFS= read -r f; do
+  case "$f" in
+    home/README.md) continue ;;
+    home/*) ;;
+    *) continue ;;
+  esac
+  echo "x home/ 配下は追跡しません: $f" >&2
+  home_hits=$((home_hits+1))
+done <<< "$files"
+
+if [ "$home_hits" -gt 0 ]; then
+  echo "" >&2
+  echo "コミットを中止しました（home/ 配下 $home_hits 件）。git rm --cached で外してください。" >&2
+  echo "  意図的に通すときだけ git commit --no-verify" >&2
+  exit 1
+fi
+
+# ---------------------------------------------------------------------------
+# 振る舞い試験の関門（ADR-006 §1 D2）。①層の変更に対応するシナリオだけ回す。
+# `manor gate` が `cli.py` にまだ配線されていなくても pre-commit を壊さないよう、
+# 先に --help が通るかだけ見る（通らなければ黙って飛ばす）。
+# MANOR_GATE=off は gate 側（manor.gate）が見る。claude が無い場合も gate 側が
+# 理由を出して 0 で抜ける（塞ぐのは変更の質であって、環境の有無ではない）。
+# ---------------------------------------------------------------------------
+if command -v uv >/dev/null 2>&1; then
+  if uv run --no-sync manor gate --help >/dev/null 2>&1; then
+    uv run --no-sync manor gate --staged || exit 1
+  fi
+fi
+
+exit 0

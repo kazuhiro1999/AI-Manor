@@ -1,0 +1,637 @@
+<title>__AGENT_LABEL__</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- 題名は担当の名前のまま（ピン留めが題名で窓を探すため。ADR-011 D7）。絵だけ揃える。 -->
+<link rel="icon" href="/favicon.ico" sizes="any">
+<style>
+  :root {
+    --bg: #f7f7f5; --fg: #2f2f2c; --dim: #8a8a84;
+    --line: #dedeD8; --accent: #7a6a52; --alert: #a8563f;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #1c1c1a; --fg: #e6e4de; --dim: #8f8d86;
+      --line: #33322f; --accent: #b9a583; --alert: #d08063;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body {
+    background: var(--bg); color: var(--fg);
+    font-family: "Yu Gothic UI", "Meiryo", system-ui, sans-serif;
+    display: flex; flex-direction: column; align-items: center; justify-content: flex-end;
+    padding: 10px 12px 12px; user-select: none; cursor: pointer; overflow: hidden;
+    position: relative;
+  }
+  /* 担当名（題と同じ文言）。窓の隅に小さく出すだけ——主役は姿の方 */
+  .agent-name {
+    position: absolute; top: 6px; left: 8px; font-size: 10px; color: var(--dim);
+    letter-spacing: .04em; opacity: .8;
+  }
+  /* 姿。canvas は器いっぱいに広げ、余白は body の背景色が透ける */
+  .figure { flex: 1; width: 100%; position: relative; min-height: 0; }
+  #stage { width: 100%; height: 100%; display: block; }
+  /* VRM が読めないとき（home/face/<agent>.vrm が無いとき）だけ出る、輪郭だけの控え */
+  .fallback { position: absolute; inset: 0; display: none; place-items: center; }
+  .fallback.on { display: grid; }
+  .fallback svg { width: 76px; height: auto; animation: breathe 5.5s ease-in-out infinite; }
+  @keyframes breathe { 0%, 100% { transform: translateY(0) scale(1); } 50% { transform: translateY(-1.5px) scale(1.012); } }
+  .silhouette { fill: var(--accent); opacity: .62; }
+  .note { font-size: 9px; color: var(--dim); opacity: .7; letter-spacing: .04em; min-height: 12px; }
+  .state { width: 100%; border-top: 1px solid var(--line); padding-top: 9px; margin-top: 6px; }
+  .line { display: flex; justify-content: space-between; align-items: baseline; font-size: 12px; margin: 3px 0; }
+  .label { color: var(--dim); }
+  .value { font-variant-numeric: tabular-nums; }
+  .value.alert { color: var(--alert); font-weight: 700; }
+  .foot { font-size: 10px; color: var(--dim); margin-top: 9px; text-align: center; line-height: 1.5; }
+  .quiet { opacity: .5; }
+
+  /* 通話（☎）。ADR-008 §8 D16-D20（v1 apps/butler-board/…/face.html を移植）。
+     押すまで何も起きない。**v1 と同じく左上に置く**——右上はピン留め（ADR-011 D7 で
+     取り戻した。以前ここに「ピン留めは manor に無いので右上」と書いていたのは、
+     ピン留めを移し戻す前だけの事情だった） */
+  .call {
+    position: fixed; top: 6px; left: 6px; width: 26px; height: 26px;
+    display: flex; align-items: center; justify-content: center;
+    border: 0; border-radius: 6px; background: transparent; cursor: pointer;
+    color: var(--dim); opacity: .35; transition: opacity .15s, color .15s;
+    padding: 0; line-height: 0; z-index: 4;
+  }
+  .call:hover { opacity: .85; }
+  .call.on { opacity: 1; color: var(--accent); }
+  .call svg { width: 15px; height: 15px; }
+  .call[hidden] { display: none; }
+
+  /* 通話の口が無い（バックエンド未マージ・古い manor など）ときだけ出る、控えめな断り書き。
+     ボタンとは同じ位置——出し分けなので重ならない */
+  .call-status {
+    position: fixed; top: 6px; left: 6px; font-size: 9px; color: var(--dim);
+    opacity: .75; z-index: 4; max-width: 96px; text-align: left; line-height: 1.3;
+  }
+  .call-status[hidden] { display: none; }
+
+  /* ピン留め（最前面に固定）。ADR-011 D7（v1 apps/butler-board/…/face.html を移植）。
+     既定は留めない（[[INTENT]]「そこに居るが邪魔をしない」）。`supported`（Windows）の
+     ときだけ JS が `.ready` を足して出す——できない環境ではボタンごと出さない */
+  .pin {
+    position: fixed; top: 6px; right: 6px; width: 26px; height: 26px;
+    display: none; align-items: center; justify-content: center;
+    border: 0; border-radius: 6px; background: transparent; cursor: pointer;
+    color: var(--dim); opacity: .25; transition: opacity .15s, color .15s;
+    padding: 0; line-height: 0; z-index: 4;
+  }
+  .pin.ready { display: flex; }
+  .pin:hover { opacity: .8; }
+  .pin.on { opacity: 1; color: var(--accent); }
+  .pin svg { width: 14px; height: 14px; }
+  .pin.on svg { transform: rotate(-45deg); }
+
+  /* 話しかけている間は背後の状態3行を隠す。小窓は 280x340 しかなく両方は並ばない
+     （v1 face.html の同じ工夫。`visibility` なのは、消すと .figure の大きさが変わるため） */
+  body.talking .state, body.talking .foot { visibility: hidden; }
+
+  /* 下部のオーバーレイ。`position: fixed` なので**窓そのものは大きくならない**——
+     開いている間は状態3行の上に重なるだけ。閉じれば元に戻る */
+  .talk {
+    position: fixed; left: 0; right: 0; bottom: 0; z-index: 3;
+    background: var(--bg); border-top: 1px solid var(--line);
+    padding: 8px 10px 9px; box-shadow: 0 -6px 18px rgba(0, 0, 0, .10);
+    user-select: text;   /* 返事は写し取れるようにする（body は none） */
+  }
+  .talk[hidden] { display: none; }
+  /* 残り回数（ADR-008 D17: 隠さない）。unavailable のときはここが唯一の説明になる */
+  .talk-status { font-size: 10px; color: var(--dim); margin-bottom: 5px; }
+  .talk-status.blocked { color: var(--alert); }
+  .log { max-height: 128px; overflow-y: auto; font-size: 11px; line-height: 1.55; }
+  .log p { margin: 0 0 5px; white-space: pre-wrap; word-break: break-word; }
+  .log .you { color: var(--dim); }
+  .log .you::before { content: "▸ "; }
+  .log .warn { color: var(--alert); }
+  .row { display: flex; gap: 5px; align-items: center; margin-top: 6px; }
+  .row[hidden] { display: none; }
+  .row input {
+    flex: 1; min-width: 0; font: inherit; font-size: 11px; cursor: text;
+    color: var(--fg); background: transparent;
+    border: 1px solid var(--line); border-radius: 999px; padding: 5px 9px;
+  }
+  .row input:focus { outline: none; border-color: var(--accent); }
+  .row input:disabled { opacity: .5; }
+  .row button {
+    flex: 0 0 auto; width: 24px; height: 24px; border: 0; border-radius: 50%;
+    background: var(--accent); color: var(--bg); cursor: pointer;
+    font-size: 13px; line-height: 1; padding: 0;
+  }
+  .row button:disabled { opacity: .35; cursor: default; }
+</style>
+
+<div class="agent-name" id="agentName">__AGENT_LABEL__</div>
+
+<button class="call" id="call" type="button" title="話しかける" aria-expanded="false" aria-label="話しかける">
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+       stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+    <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6A19.79 19.79 0 0 1 2.12 4.18 2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.13.96.36 1.9.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.9.34 1.85.57 2.81.7A2 2 0 0 1 22 16.92z"/>
+  </svg>
+</button>
+<div class="call-status" id="callStatus" hidden></div>
+
+<button class="pin" id="pin" type="button" title="最前面に固定" aria-pressed="false" aria-label="最前面に固定">
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+       stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+    <path d="M12 17v5"/>
+    <path d="M9 10.76V5h6v5.76a2 2 0 0 0 .59 1.42L17 13.6V17H7v-3.4l1.41-1.42A2 2 0 0 0 9 10.76z"/>
+  </svg>
+</button>
+
+<div class="figure">
+  <canvas id="stage"></canvas>
+  <div class="fallback" id="fallback">
+    <svg viewBox="0 0 120 150" role="img" aria-label="__AGENT_LABEL__">
+      <circle class="silhouette" cx="60" cy="42" r="26"/>
+      <path class="silhouette" d="M60 74c-24 0-40 15-44 38-1 6 3 11 9 11h70c6 0 10-5 9-11-4-23-20-38-44-38z"/>
+    </svg>
+  </div>
+</div>
+<div class="note" id="note"></div>
+
+<div class="state">
+  <div class="line"><span class="label">要対応</span><span class="value" id="pending">—</span></div>
+  <div class="line"><span class="label">実行中</span><span class="value" id="doing">—</span></div>
+  <div class="line"><span class="label">直近の完了</span><span class="value" id="done">—</span></div>
+</div>
+<div class="foot"><span id="foot" class="quiet">読み込んでいます</span></div>
+
+<div class="talk" id="talk" hidden>
+  <div class="talk-status" id="talkStatus"></div>
+  <div class="log" id="talkLog" aria-live="polite"></div>
+  <div class="row" id="talkRow">
+    <input id="talkInput" type="text" maxlength="600" autocomplete="off"
+           spellcheck="false" placeholder="ご用件をどうぞ" aria-label="ご用件">
+    <button id="talkSend" type="button" aria-label="送る">&#8593;</button>
+  </div>
+</div>
+
+<script type="importmap">
+{ "imports": { "three": "/face-static/vendor/three.module.js" } }
+</script>
+
+<script type="module">
+// ---- 姿（VRM）。無ければ3行だけ（fallback） -----------------------------
+// v1 apps/butler-face の face.html を移植（自撮りはこのスコープでは持ち込まない。
+// 姿勢の作り方だけを引き継ぐ）。通話は別ブロック（ADR-008 §8）。口パク（ADR-011 D6）は
+// window.__face.mouth() という窓口だけをここに置き、動かすのは別ファイル
+// （/face-static/face-mouth.js）。ピン留め（ADR-011 D7）は別ブロック。
+// ADR-008 D3: 担当は自分のページの query string（?agent=）から採る。既定は butler。
+import * as THREE from 'three';
+import { GLTFLoader } from '/face-static/vendor/loaders/GLTFLoader.js';
+import { VRMLoaderPlugin, VRMUtils } from '/face-static/vendor/three-vrm.module.js';
+
+const $ = (id) => document.getElementById(id);
+const canvas = $('stage');
+const note = $('note');
+const agent = new URLSearchParams(location.search).get('agent') || 'butler';
+
+let renderer, scene, camera, vrm, clock;
+let blinkAt = 0, nextBlink = 2 + Math.random() * 4;
+
+function showFallback(msg) {
+  $('fallback').classList.add('on');
+  canvas.style.display = 'none';
+  note.textContent = msg;
+}
+
+function fit() {
+  if (!renderer) return;
+  const box = canvas.parentElement.getBoundingClientRect();
+  const w = Math.max(1, Math.floor(box.width));
+  const h = Math.max(1, Math.floor(box.height));
+  renderer.setSize(w, h, false);
+  camera.aspect = w / h;
+  camera.updateProjectionMatrix();
+}
+
+const POSE = { upperArmDown: 1.44, upperArmIn: 0.10, lowerArmBend: 0.30, handIn: 0.15 };
+
+function restPose() {
+  const h = vrm.humanoid;
+  const g = (n) => h.getNormalizedBoneNode(n);
+  const lu = g('leftUpperArm'), ru = g('rightUpperArm');
+  const ll = g('leftLowerArm'), rl = g('rightLowerArm');
+  const lh = g('leftHand'), rh = g('rightHand');
+  if (lu) { lu.rotation.z = -POSE.upperArmDown; lu.rotation.x = POSE.upperArmIn; }
+  if (ru) { ru.rotation.z = POSE.upperArmDown; ru.rotation.x = POSE.upperArmIn; }
+  if (ll) ll.rotation.y = -POSE.lowerArmBend;
+  if (rl) rl.rotation.y = POSE.lowerArmBend;
+  if (lh) lh.rotation.y = -POSE.handIn;
+  if (rh) rh.rotation.y = POSE.handIn;
+}
+
+let restHipsY = null;
+function idle(t) {
+  const h = vrm.humanoid;
+  const hips = h.getNormalizedBoneNode('hips');
+  const spine = h.getNormalizedBoneNode('spine');
+  const neck = h.getNormalizedBoneNode('neck');
+  if (hips && restHipsY === null) restHipsY = hips.position.y;
+  const sway = Math.sin(t * (Math.PI * 2) / 11);
+  if (hips) {
+    hips.rotation.y = sway * 0.028;
+    hips.rotation.z = sway * 0.013;
+    hips.position.y = restHipsY - Math.abs(sway) * 0.004;
+  }
+  if (spine) spine.rotation.y = -sway * 0.010;
+  if (neck) neck.rotation.y = Math.sin(t * (Math.PI * 2) / 17 + 1.1) * 0.012;
+}
+
+function loop() {
+  setTimeout(() => requestAnimationFrame(loop), 50);
+  if (document.hidden || !vrm) return;
+  const dt = clock.getDelta();
+  const t = clock.elapsedTime;
+  idle(t);
+  const chest = vrm.humanoid.getNormalizedBoneNode('chest') || vrm.humanoid.getNormalizedBoneNode('spine');
+  if (chest) chest.rotation.x = Math.sin(t * (Math.PI * 2) / 5.5) * 0.010;
+  if (vrm.expressionManager) {
+    if (t > nextBlink) { blinkAt = t; nextBlink = t + 3 + Math.random() * 4; }
+    const since = t - blinkAt;
+    const v = (since >= 0 && since < 0.12) ? Math.sin((since / 0.12) * Math.PI) : 0;
+    vrm.expressionManager.setValue('blink', v);
+  }
+  vrm.update(dt);
+  renderer.render(scene, camera);
+}
+
+async function boot() {
+  if (!window.WebGLRenderingContext) { showFallback('この環境では3D表示ができません'); return; }
+  try {
+    renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: true });
+  } catch (e) {
+    showFallback('3Dを初期化できませんでした'); return;
+  }
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.5));
+  scene = new THREE.Scene();
+  camera = new THREE.PerspectiveCamera(24, 1, 0.1, 20);
+  clock = new THREE.Clock();
+  scene.add(new THREE.AmbientLight(0xffffff, 1.5));
+  const key = new THREE.DirectionalLight(0xffffff, 1.1);
+  key.position.set(0.6, 1.4, 1.2);
+  scene.add(key);
+
+  const loader = new GLTFLoader();
+  loader.register((parser) => new VRMLoaderPlugin(parser));
+
+  note.textContent = '姿を読み込んでいます…';
+  let gltf;
+  try {
+    gltf = await loader.loadAsync('/face/model.vrm?agent=' + encodeURIComponent(agent));
+  } catch (e) {
+    // 姿の実体は passcode の門の内側（②の資産。ADR-008 D2）。cookie が無い・切れたときは
+    // 「置かれていない」ではなく「ログインしてください」と出す——原因が違えば直し方も違う。
+    let unauthorized = false;
+    try {
+      const probe = await fetch('/face/model.vrm?agent=' + encodeURIComponent(agent), { method: 'HEAD' });
+      unauthorized = probe.status === 401;
+    } catch (e2) { /* 通信できないときは「置かれていない」側の案内でよい */ }
+    if (unauthorized) {
+      showFallback('ログインしてください（この画面を開いたブラウザで manor にログイン）');
+    } else {
+      showFallback('姿はまだ置かれていません（home/face/' + agent + '.vrm）');
+    }
+    return;
+  }
+  vrm = gltf.userData.vrm;
+  if (!vrm) { showFallback('VRM として読めませんでした'); return; }
+
+  VRMUtils.removeUnnecessaryVertices(gltf.scene);
+  VRMUtils.combineSkeletons(gltf.scene);
+  vrm.scene.traverse((o) => { o.frustumCulled = false; });
+  scene.add(vrm.scene);
+  restPose();
+  vrm.update(0.016);
+  scene.updateMatrixWorld(true);
+
+  const head = vrm.humanoid.getNormalizedBoneNode('head');
+  const p = new THREE.Vector3();
+  if (head) head.getWorldPosition(p); else p.set(0, 1.4, 0);
+
+  const box = new THREE.Box3().setFromObject(vrm.scene);
+  const height = Math.max(0.5, box.max.y - box.min.y);
+  const top = box.max.y + 0.04;
+  const bottom = box.max.y - height * 0.32;
+  const half = Math.max(0.15, (top - bottom) / 2);
+  const fovRad = camera.fov * Math.PI / 180;
+  const aimY = (top + bottom) / 2;
+  const camZ = p.z + half / Math.tan(fovRad / 2);
+  camera.position.set(0, aimY, camZ);
+  camera.lookAt(0, aimY, p.z);
+
+  // 伏し目にする（[[執事の外見仕様]]「正面を見ない」）。首をわずかに下げるだけ
+  const neck = vrm.humanoid.getNormalizedBoneNode('neck');
+  if (neck) neck.rotation.x += 0.10;
+  if (head) head.rotation.x += 0.06;
+  if (vrm.expressionManager) vrm.expressionManager.setValue('neutral', 1.0);
+
+  note.textContent = '';
+  fit();
+  loop();
+}
+
+// 口を動かすための窓口（ADR-011 D6）。**動かすのは別ファイル**（/face-static/face-mouth.js）。
+// ここに置くのは「重みを1つ入れる」だけ——次の vrm.update(dt) が拾う。VRM が読めていない
+// 間は false を返すだけで、3D の起動そのものを妨げない。
+window.__face = {
+  mouth(name, weight) {
+    if (!vrm || !vrm.expressionManager) { return false; }
+    vrm.expressionManager.setValue(name, Math.max(0, Math.min(1, weight || 0)));
+    return true;
+  },
+};
+
+window.addEventListener('resize', fit);
+boot();
+</script>
+
+<script>
+// ---- 状態3行（3Dとは独立に動く。姿が出せなくても状態は出す） --------------
+(function () {
+  var $ = function (id) { return document.getElementById(id); };
+
+  function paint(d) {
+    var counts = d.counts || {};
+    var pending = counts.pending || 0;
+    var el = $('pending');
+    el.textContent = pending === 0 ? 'なし' : pending + ' 件';
+    el.className = 'value' + (pending > 0 ? ' alert' : '');
+    $('doing').textContent = (counts.doing || 0) === 0 ? 'なし' : counts.doing + ' 件';
+    var latest = (d.recent_done || [])[0];
+    $('done').textContent = latest ? latest.id : '—';
+    $('foot').textContent = (d.today || '') + ' 現在';
+    $('foot').className = '';
+  }
+
+  function tick() {
+    fetch('/api/v1/tasks/board', { cache: 'no-store' })
+      .then(function (r) { return r.ok ? r.json() : Promise.reject(r.status); })
+      .then(paint)
+      .catch(function () {
+        $('foot').textContent = 'ダッシュボードに接続できません';
+        $('foot').className = 'quiet';
+      });
+  }
+  tick();
+  setInterval(tick, 15000);
+
+  // 押すとダッシュボードへ。名前付きの窓にして、押すたびに増えないようにする
+  document.body.addEventListener('click', function () {
+    // 話しかけている最中は開かない。**入力欄の外を押しただけでダッシュボードが
+    // 出てくると、書きかけの用件を見失う**（v1 と同じ理由）
+    if (window.__talk && window.__talk.open) { return; }
+    var w = window.open('/', 'manor-web');
+    if (w) { try { w.focus(); } catch (e) { /* 別ウィンドウの focus は拒まれることがある */ } }
+  });
+})();
+</script>
+
+<script>
+// ---- 通話（☎）。ADR-008 §8 D16-D20（v1 apps/butler-board/…/face.html の通話を移植）。
+// **別のブロックにしてある。** ここが壊れても、姿も状態3行も無事。
+//
+// やること: ☎ を押す → /talk/open で挨拶か「押せない理由」を受け取る → 送ると
+//           /talk で1往復（実測7秒前後、その間は入力を止める）
+// やらないこと: 会話をどこにも保存しない。**窓を閉じたら忘れる**（履歴はこの変数の中だけ。D17）
+(function () {
+  var $ = function (id) { return document.getElementById(id); };
+  var btn = $('call'), callStatusEl = $('callStatus');
+  var panel = $('talk'), statusLine = $('talkStatus'), log = $('talkLog'), row = $('talkRow');
+  var input = $('talkInput'), send = $('talkSend');
+  // ADR-008 D3 / ADR-011 D11: このブロックは module script（姿）とは別スコープなので、
+  // 担当を自分でも query string（?agent=）から採る。既定は butler。
+  var agent = new URLSearchParams(location.search).get('agent') || 'butler';
+
+  var isOpen = false, busy = false, waitTimer = null, last = null;
+  // 直近3往復ぶんだけ。バックエンドの形式は {role, content}（v1の {you, butler} とは違う）
+  var history = [];
+
+  // 小窓の本体（body の click でダッシュボードを開く）が、話しかけ中かを見る
+  window.__talk = { get open() { return isOpen; }, get busy() { return busy; } };
+
+  function say(kind, text) {
+    var p = document.createElement('p');
+    p.className = kind || '';
+    p.textContent = text || '';
+    log.appendChild(p);
+    log.scrollTop = log.scrollHeight;
+    return p;
+  }
+
+  /** 歯止めの状態を画面に出す。**残り回数を隠さない**（D17）。unavailable のときは
+   * 入力欄を出さず、say() で載せた message/text だけを見せる */
+  function showState(s) {
+    if (s) { last = s; }
+    if (!last) { statusLine.textContent = ''; return; }
+    var limit = last.limit, used = last.used, remaining = last.remaining;
+    var blocked = (last.available === false) || (typeof remaining === 'number' && remaining <= 0);
+    statusLine.textContent = '本日 ' + (used == null ? '—' : used) + '/' + (limit == null ? '—' : limit)
+      + (remaining == null ? '' : '（残り' + remaining + '）');
+    statusLine.classList.toggle('blocked', blocked);
+    row.hidden = blocked;
+    if (!blocked) { input.disabled = busy; send.disabled = busy; }
+  }
+
+  /** 待っている間の表示。**7秒は黙って待つには長い**ので、動いていることを見せる */
+  function waitLine() {
+    var p = say('', '…');
+    var n = 0, t0 = Date.now();
+    waitTimer = setInterval(function () {
+      n = (n + 1) % 4;
+      var sec = Math.floor((Date.now() - t0) / 1000);
+      p.textContent = '…' + '・・・'.slice(0, n) + (sec >= 5 ? '（' + sec + '秒）' : '');
+      log.scrollTop = log.scrollHeight;
+    }, 400);
+    return p;
+  }
+  function stopWait() { if (waitTimer) { clearInterval(waitTimer); waitTimer = null; } }
+
+  function submit() {
+    var text = (input.value || '').trim();
+    if (!text || busy) { return; }
+    input.value = '';
+    say('you', text);
+    busy = true;
+    input.disabled = true; send.disabled = true;
+    var pending = waitLine();
+    var sendHistory = history.slice(-6);   // 直近3往復（ユーザー・執事で1組=2要素）
+
+    fetch('/api/v1/face/talk', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      // ADR-011 D11: 返事は窓の担当の声で話す。`agent` はページ冒頭で query string から
+      // 採っている（?agent=。既定は butler）ので、そのまま乗せるだけでよい。
+      body: JSON.stringify({ text: text, history: sendHistory, agent: agent })
+    })
+      .then(function (r) { return r.ok ? r.json() : Promise.reject('HTTP ' + r.status); })
+      .then(function (d) {
+        stopWait();
+        pending.textContent = d.reply || '';
+        pending.className = d.ok ? '' : 'warn';
+        if (d.ok) {
+          history.push({ role: 'user', content: text });
+          history.push({ role: 'assistant', content: d.reply || '' });
+          while (history.length > 6) { history.shift(); }
+        }
+        busy = false;
+        showState(d);
+      })
+      .catch(function (e) {
+        // **黙って何も起きないのが一番困る**（D17）。理由を画面に出す
+        stopWait();
+        pending.textContent = '返事を受け取れませんでした（' + e + '）';
+        pending.className = 'warn';
+        busy = false;
+        showState(null);
+      })
+      .then(function () {
+        log.scrollTop = log.scrollHeight;
+        if (isOpen && !input.disabled) { try { input.focus(); } catch (e) {} }
+      });
+  }
+
+  function openPanel() {
+    isOpen = true;
+    panel.hidden = false;
+    document.body.classList.add('talking');   // 背後の状態3行を隠す（重なって見える）
+    btn.classList.add('on');
+    btn.setAttribute('aria-expanded', 'true');
+    log.innerHTML = ''; history = []; input.value = '';
+    statusLine.textContent = '';
+    setTimeout(function () { try { input.focus(); } catch (e) {} }, 30);
+
+    // 挨拶か、押せない理由。**LLM は呼ばない**（決まり文句を1つ喋るだけ。1往復に数えない）
+    // 担当を乗せる（ADR-011 D11）——挨拶もその窓の担当の声で話す。
+    fetch('/api/v1/face/talk/open', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ agent: agent })
+    })
+      .then(function (r) { return r.ok ? r.json() : Promise.reject('HTTP ' + r.status); })
+      .then(function (d) {
+        say(d.available === false ? 'warn' : '', d.text || d.message || '');
+        showState(d);
+      })
+      .catch(function () {
+        say('warn', '繋がりませんでした。時間をおいてお試しください');
+        row.hidden = true;
+      });
+  }
+
+  function closePanel() {
+    if (!isOpen) { return; }
+    isOpen = false; busy = false;
+    panel.hidden = true;
+    document.body.classList.remove('talking');
+    btn.classList.remove('on');
+    btn.setAttribute('aria-expanded', 'false');
+    stopWait();
+    log.innerHTML = ''; history = [];   // **窓を閉じたら忘れる**（D17。localStorage 等には一切書かない）
+    // 声のエンジンを片付ける（自分で起こしたときだけ止まる。D20）
+    fetch('/api/v1/face/talk/close', { method: 'POST' }).catch(function () {});
+  }
+
+  // 小窓ごと閉じられたときも片付ける。beforeunload は返事を待てないので sendBeacon を使う
+  // （対応していない環境だけ keepalive 付きの fetch にする。失敗しても実害はない）
+  window.addEventListener('beforeunload', function () {
+    if (!isOpen) { return; }
+    try {
+      if (navigator.sendBeacon) { navigator.sendBeacon('/api/v1/face/talk/close'); }
+      else { fetch('/api/v1/face/talk/close', { method: 'POST', keepalive: true }).catch(function () {}); }
+    } catch (e) { /* 窓を閉じる動作そのものは邪魔しない */ }
+  });
+
+  btn.addEventListener('click', function (ev) {
+    ev.stopPropagation();   // 小窓本体の click（ダッシュボードを開く）に伝えない
+    if (isOpen) { closePanel(); } else { openPanel(); }
+  });
+  panel.addEventListener('click', function (ev) { ev.stopPropagation(); });
+  send.addEventListener('click', function (ev) { ev.stopPropagation(); submit(); });
+
+  input.addEventListener('keydown', function (ev) {
+    // **日本語入力の変換確定で送らない。** IME 中の Enter は isComposing / keyCode 229
+    if (ev.key === 'Enter') {
+      if (ev.isComposing || ev.keyCode === 229) { return; }
+      ev.preventDefault();
+      submit();
+    }
+  });
+  document.addEventListener('keydown', function (ev) {
+    if (ev.key === 'Escape' && isOpen) { ev.preventDefault(); closePanel(); }
+  });
+
+  // 起動時に一度だけ状態を見る。**404 なら（この manor にはまだ通話が無い）** ボタンごと隠して
+  // 理由を出す——約束できない機能を出しておくよりは、隠して正直に言うほうがいい。
+  // それ以外の失敗（繋がらない等）は v1 と同じくボタンは出しておき、押した時に理由を見せる
+  // （「黙って何も起きない」を避けつつ、一時的な通信不調でボタンごと消さない）。
+  fetch('/api/v1/face/talk', { cache: 'no-store' })
+    .then(function (r) {
+      if (r.status === 404) {
+        btn.hidden = true;
+        if (callStatusEl) { callStatusEl.hidden = false; callStatusEl.textContent = '通話は利用できません'; }
+        return null;
+      }
+      return r.ok ? r.json() : null;
+    })
+    .then(function (d) {
+      if (!d) { return; }
+      last = d;
+      var blocked = d.available === false;
+      btn.title = blocked
+        ? (d.message || '話しかけ: 本日は利用できません')
+        : ('話しかける（本日 ' + (d.used == null ? '—' : d.used) + '/' + (d.limit == null ? '—' : d.limit)
+           + '、残り' + (d.remaining == null ? '—' : d.remaining) + '）');
+    })
+    .catch(function () { /* 繋がらなくてもボタンは出しておく。押せば理由が出る */ });
+})();
+</script>
+
+<script>
+// ---- ピン留め（最前面に固定）。ADR-011 D7（v1 apps/butler-board/…/face.html の移植）。
+// **別のブロックにしてある。** ここが壊れても、姿・状態3行・通話は無事。
+// Windows 以外では `supported: false` が返るだけ——ボタンは `.ready` を足さないままなので
+// 出てこない（できないものは出さない。src/manor/face_pin.py 参照）。
+(function () {
+  var $ = function (id) { return document.getElementById(id); };
+  var pinBtn = $('pin');
+  var agent = new URLSearchParams(location.search).get('agent') || 'butler';
+
+  function showPin(state) {
+    if (!state || !state.supported) { pinBtn.classList.remove('ready'); return; }
+    pinBtn.classList.add('ready');
+    pinBtn.classList.toggle('on', !!state.pinned);
+    pinBtn.setAttribute('aria-pressed', state.pinned ? 'true' : 'false');
+    pinBtn.title = state.pinned ? '固定を解除する' : '最前面に固定する';
+  }
+
+  function readPin() {
+    fetch('/api/v1/face/pin?agent=' + encodeURIComponent(agent), { cache: 'no-store' })
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(showPin)
+      .catch(function () {});
+  }
+
+  pinBtn.addEventListener('click', function (ev) {
+    ev.stopPropagation();   // 小窓本体の click（ダッシュボードを開く）に伝えない
+    var next = !pinBtn.classList.contains('on');
+    fetch('/api/v1/face/pin', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ agent: agent, pinned: next })
+    })
+      .then(function (r) { return r.ok ? r.json() : Promise.reject(r.status); })
+      .then(showPin)
+      .catch(function () { pinBtn.title = '固定を切り替えられませんでした'; });
+  });
+
+  readPin();
+  setInterval(readPin, 15000);
+})();
+</script>
+
+<!-- 口パク（ADR-011 D6）。**別ファイルにしてある**——ここが壊れても3Dの描画・状態3行・
+     通話・ピン留めには影響しない（v1 と同じ理由。face_speech.py の docstring参照）。
+     defer は v1 に倣う（このファイルの読み込みで描画を妨げない） -->
+<script src="/face-static/face-mouth.js" defer></script>

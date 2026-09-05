@@ -1,0 +1,67 @@
+{
+  "schema_version": 1,
+  "diagram_type": "sequence",
+  "meta": {
+    "title": "裁定の一往復",
+    "quality_profile": "showcase",
+    "column_fit": "spread",
+    "viewBox": [1080, 640],
+    "legend": {
+      "entries": {
+        "default": { "label": "呼び出し" },
+        "emphasis": { "label": "主要呼び出し" },
+        "security": { "label": "検証" },
+        "dashed": { "label": "自動処理" },
+        "return": { "label": "戻り" }
+      }
+    },
+    "views": [
+      { "id": "ask-path", "label": "起票から声かけまで", "focus": ["butler", "db", "stop_hook", "notify", "master"], "note": "task.add --class … --recommendation が開いた判断待ちが、Stop hook 経由で声になる。" },
+      { "id": "ruling-path", "label": "裁定から反映まで", "focus": ["master", "web", "db", "render"], "note": "Web で承認すると task が B へ戻り、射影が更新される。" }
+    ]
+  },
+  "participants": [
+    { "id": "butler", "type": "backend", "label": "執事", "sublabel": "Claude Code" },
+    { "id": "db", "type": "database", "label": "SQLite", "sublabel": "home/manor.db" },
+    { "id": "stop_hook", "type": "security", "label": "Stop hook", "sublabel": "hooks.py" },
+    { "id": "notify", "type": "messagebus", "label": "notify.py", "sublabel": "声" },
+    { "id": "master", "type": "external", "label": "主人" },
+    { "id": "web", "type": "backend", "label": "Web アプリ", "sublabel": "/tasks/judge" },
+    { "id": "render", "type": "backend", "label": "render.py" }
+  ],
+  "segments": [
+    { "from": 160, "to": 212, "label": "起票" },
+    { "from": 216, "to": 320, "label": "声かけ" },
+    { "from": 324, "to": 540, "label": "裁定と反映" }
+  ],
+  "messages": [
+    { "id": "task-add", "from": "butler", "to": "db", "y": 170, "label": "manor task add --class external_send --recommendation …", "variant": "emphasis" },
+    { "id": "task-add-return", "from": "db", "to": "butler", "y": 198, "label": "task 作成 + decision 自動起票（section=A）を返す", "variant": "return" },
+    { "id": "stop-read", "from": "stop_hook", "to": "db", "y": 226, "label": "v_open_decisions を読む（読むだけ）", "variant": "default" },
+    { "id": "stop-count", "from": "db", "to": "stop_hook", "y": 254, "label": "open な件数", "variant": "return" },
+    { "id": "stop-to-notify", "from": "stop_hook", "to": "notify", "y": 282, "label": "notify.run()（Stop hook から）", "variant": "default" },
+    { "id": "notify-to-master", "from": "notify", "to": "master", "y": 310, "label": "声をかける「要対応の件が、N件ございます」", "variant": "emphasis", "note": "増えた時だけ" },
+    { "id": "master-to-web", "from": "master", "to": "web", "y": 338, "label": "/tasks/judge を開き「承認」を押す", "variant": "default" },
+    { "id": "web-to-db", "from": "web", "to": "db", "y": 366, "label": "POST /api/v1/tasks/decision/{id}/rule", "variant": "emphasis" },
+    { "id": "db-to-web", "from": "db", "to": "web", "y": 394, "label": "decision を更新し、section A→B へ戻す", "variant": "return" },
+    { "id": "web-to-render", "from": "web", "to": "render", "y": 422, "label": "commit 後に render() を呼ぶ", "variant": "default" },
+    { "id": "render-write", "from": "render", "to": "db", "y": 450, "label": "射影を書き、sha256 を meta に記録", "variant": "dashed" },
+    { "id": "butler-done", "from": "butler", "to": "db", "y": 478, "label": "作業完了後: task.status(id, 'done')（authorized_by は decision id を自動補完）", "variant": "emphasis" },
+    { "id": "done-return", "from": "db", "to": "butler", "y": 506, "label": "task_event.authorized_by に decision id を記録", "variant": "return" },
+    { "id": "next-session", "from": "db", "to": "butler", "y": 534, "label": "（次回 SessionStart）active_text() を文脈へ注入", "variant": "return", "note": "hooks.session_start() 経由" }
+  ],
+  "activations": [
+    { "participant": "db", "from": 165, "to": 203, "type": "database" },
+    { "participant": "stop_hook", "from": 221, "to": 287, "type": "security" },
+    { "participant": "notify", "from": 277, "to": 315, "type": "messagebus" },
+    { "participant": "web", "from": 333, "to": 427, "type": "backend" },
+    { "participant": "db", "from": 361, "to": 399, "type": "database" },
+    { "participant": "render", "from": 417, "to": 455, "type": "backend" },
+    { "participant": "db", "from": 473, "to": 511, "type": "database" }
+  ],
+  "cards": [
+    { "dot": "emerald", "title": "起票は執事が積む", "items": ["--class --recommendation が level=HG のとき decision.ask() を自動で呼ぶ"] },
+    { "dot": "violet", "title": "声は沈黙が既定", "items": ["notify.py は open な decision の件数が増えた時だけ鳴らす。hook 自身は DB を書き換えない"] },
+    { "dot": "rose", "title": "裁定と完了は別の記録", "items": ["decision.rule() は section=A の task を B へ戻すだけ。authorized_by は done への遷移だけに記録される"] }
+  ]
+}
