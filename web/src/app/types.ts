@@ -476,6 +476,9 @@ export interface FaceModelEntry {
   size: number | null;
   updated_at: string | null;
   legacy: boolean;
+  /** 同梱の既定アバター（`assets/face/default.vrm`）で出ている。**主人の持ち物ではない**
+   * ので消せない。差し替えれば `home/face/<担当>.vrm` が優先される（2026-09-05）。 */
+  bundled: boolean;
 }
 
 /* ---------- settings ---------- */

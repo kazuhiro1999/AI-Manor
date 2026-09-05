@@ -10,6 +10,11 @@ staff. The staff cover the kitchen, the chores, the money, and the calendar: the
 shopping list, watch what's running low, record what you spend, and lay out your day. Everything is kept in a
 database on your machine and shown in a local web app. **Nothing is sent anywhere.**
 
+![Dashboard](docs/screenshots/dashboard.png)
+
+*The screen you open first thing: pending approvals, what's due today, what's coming.
+Every screenshot here is from `manor init --demo` — a **fictional household**.*
+
 ## Things you can ask for
 
 | You say | What happens |
@@ -23,6 +28,18 @@ database on your machine and shown in a local web app. **Nothing is sent anywher
 
 Anything with consequences outside your machine — sending, publishing, deleting, spending — is **not done on
 its own**. It's queued for your approval, waiting for you when you next open the app.
+
+## Screens
+
+| | |
+|---|---|
+| ![Kitchen](docs/screenshots/kitchen.png) | ![Tasks](docs/screenshots/tasks.png) |
+| **Kitchen** — pantry by expiry, shopping list by aisle, meals kept as a log | **Tasks** — anything needing a decision waits for you, and you approve, amend or reject it in place |
+| ![Staff](docs/screenshots/agents.png) | ![Architecture](docs/diagrams/png/manor-architecture.png) |
+| **Staff** — who looks after what. Anyone with a VRM shows their face | **Architecture** — the butler and staff, the local database, and the web app |
+
+Open `docs/diagrams/*.html` for an interactive version with search, focus and a theme toggle
+(labels inside the diagrams are in Japanese). The full set is in [`docs/diagrams/`](docs/diagrams/).
 
 ## Quick start
 
@@ -44,14 +61,6 @@ Then open this folder in **Claude Code** — from that point on it acts as your 
 
 For your own household, drop `--demo`. Opening the app with nothing in it starts **first-run setup**, which
 asks what to call you, which features you want, and your first project and task — every step can be skipped.
-
-## What it looks like
-
-![AI Manor architecture](docs/diagrams/png/manor-architecture.png)
-
-The butler and staff, the local database, and the web app. Open `docs/diagrams/*.html` for an interactive
-version with search, focus and a theme toggle (labels inside the diagrams are in Japanese). The full set is in
-[`docs/diagrams/`](docs/diagrams/).
 
 ## Who handles what
 

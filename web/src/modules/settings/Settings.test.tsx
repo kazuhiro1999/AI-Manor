@@ -51,13 +51,13 @@ function baseSetupInfo(): SetupInfo {
 // ADR-008 §7 D14: butler は未設置、chef だけ姿が置かれている見本(削除ボタンの有無を試せるように)。
 function baseFaceModels(): FaceModelEntry[] {
   return [
-    { agent: "butler", label: "執事", has_model: false, size: null, updated_at: null, legacy: false },
-    { agent: "chef", label: "料理長", has_model: true, size: 245000, updated_at: "2026-09-01T00:00:00", legacy: false },
-    { agent: "housekeeper", label: "家政婦", has_model: false, size: null, updated_at: null, legacy: false },
-    { agent: "steward", label: "家令", has_model: false, size: null, updated_at: null, legacy: false },
-    { agent: "secretary", label: "秘書", has_model: false, size: null, updated_at: null, legacy: false },
-    { agent: "qa", label: "検分", has_model: false, size: null, updated_at: null, legacy: false },
-    { agent: "auditor", label: "監査", has_model: false, size: null, updated_at: null, legacy: false },
+    { agent: "butler", label: "執事", has_model: false, size: null, updated_at: null, legacy: false, bundled: false },
+    { agent: "chef", label: "料理長", has_model: true, size: 245000, updated_at: "2026-09-01T00:00:00", legacy: false, bundled: false },
+    { agent: "housekeeper", label: "家政婦", has_model: false, size: null, updated_at: null, legacy: false, bundled: false },
+    { agent: "steward", label: "家令", has_model: false, size: null, updated_at: null, legacy: false, bundled: false },
+    { agent: "secretary", label: "秘書", has_model: false, size: null, updated_at: null, legacy: false, bundled: false },
+    { agent: "qa", label: "検分", has_model: false, size: null, updated_at: null, legacy: false, bundled: false },
+    { agent: "auditor", label: "監査", has_model: false, size: null, updated_at: null, legacy: false, bundled: false },
   ];
 }
 
@@ -108,11 +108,12 @@ function mockFetchFor(handlers: {
           size: 12345,
           updated_at: "2026-09-04T00:00:00",
           legacy: false,
+    bundled: false,
         });
         return { ok: true, status: 200, json };
       }
       if (method === "DELETE") {
-        const json = async () => ({ agent: "chef", label: "料理長", has_model: false, size: null, updated_at: null, legacy: false });
+        const json = async () => ({ agent: "chef", label: "料理長", has_model: false, size: null, updated_at: null, legacy: false, bundled: false });
         return { ok: true, status: 200, json };
       }
     }

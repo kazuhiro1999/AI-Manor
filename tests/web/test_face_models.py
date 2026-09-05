@@ -36,11 +36,17 @@ def test_list_models_covers_every_valid_agent(home: Path) -> None:
     body = res.json()
     assert {row["agent"] for row in body} == _ALL_AGENTS
     for row in body:
+        assert row["label"]  # 日本語表示名
+        assert row["legacy"] is False
+        # 執事だけは同梱の既定アバターで `has_model` が立つ（2026-09-05）。ここで見たいのは
+        # 「**主人が置いたもの**は無い」なので、同梱かどうかで分けて確かめる。
+        if row["agent"] == "butler":
+            assert row["bundled"] is True
+            continue
         assert row["has_model"] is False
+        assert row["bundled"] is False
         assert row["size"] is None
         assert row["updated_at"] is None
-        assert row["legacy"] is False
-        assert row["label"]  # 日本語表示名
 
 
 def test_list_models_reflects_uploaded_model(home: Path) -> None:
@@ -69,6 +75,7 @@ def test_upload_writes_file_and_is_served_by_face_model_vrm(home: Path) -> None:
         "size": len(_VALID_VRM),
         "updated_at": body["updated_at"],
         "legacy": False,
+        "bundled": False,
     }
     assert (home / "face" / "chef.vrm").read_bytes() == _VALID_VRM
 

@@ -412,6 +412,7 @@ export const en: { [K in TranslationKey]: MirrorEntry<K> } = {
   "settings.faceModels.hintMiddle": "by hand. \"Open face window\" opens a window in the bottom-right corner (a fallback). The real thing is running",
   "settings.faceModels.hintCommand": "manor face --agent <name>",
   "settings.faceModels.hintSuffix": "on your machine (opens in Chrome app mode).",
+  "settings.faceModels.bundled": "Bundled default avatar (you can replace it)",
   "settings.faceModels.notSet": "Not set",
   "settings.faceModels.legacyNotePrefix": "Stored under the old name (",
   "settings.faceModels.legacyNotePath": "home/face/model.vrm",

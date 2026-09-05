@@ -299,7 +299,11 @@ function FaceModelRow({ entry, onChanged }: { entry: FaceModelEntry; onChanged: 
     <div className="row-item face-model-row" data-agent={entry.agent}>
       <span className="row-title">{label}</span>
       <span className="row-id">
-        {entry.has_model ? `${fmtBytes(entry.size)} / ${fmtDateTime(entry.updated_at)}` : t("settings.faceModels.notSet")}
+        {entry.bundled
+          ? t("settings.faceModels.bundled")
+          : entry.has_model
+            ? `${fmtBytes(entry.size)} / ${fmtDateTime(entry.updated_at)}`
+            : t("settings.faceModels.notSet")}
       </span>
       {entry.legacy && (
         <span className="panel-note">
@@ -319,9 +323,12 @@ function FaceModelRow({ entry, onChanged }: { entry: FaceModelEntry; onChanged: 
         aria-label={t("settings.faceModels.fileInputAria", { label })}
       />
       <button className="btn" type="button" disabled={busy || !file} onClick={doUpload}>
-        {entry.has_model ? t("settings.faceModels.replace") : t("settings.faceModels.set")}
+        {entry.has_model && !entry.bundled
+          ? t("settings.faceModels.replace")
+          : t("settings.faceModels.set")}
       </button>
-      {entry.has_model && !entry.legacy && (
+      {/* 同梱物は主人の持ち物ではないので消させない（消す先が home/ に無い）。 */}
+      {entry.has_model && !entry.legacy && !entry.bundled && (
         <button className="btn" type="button" disabled={busy} onClick={doDelete}>
           {t("settings.faceModels.delete")}
         </button>

@@ -76,3 +76,31 @@ def test_missing_bundle_is_a_404_not_a_crash(
     monkeypatch.setattr(face_mod, "bundled_default_model", lambda: None)
 
     assert make_client(home).get("/face/model.vrm?agent=butler").status_code == 404
+
+
+def test_model_list_reports_the_bundled_avatar_for_butler(home: Path) -> None:
+    """`/face/models` の答えと、`/face/model.vrm` が実際に配るものを揃える。
+
+    同梱を足したとき（2026-09-05）ここを直し忘れ、**小窓には執事が出るのに担当一覧は
+    輪郭**という食い違いが出た。デモの画面を撮ろうとして気づいた——画面を見なければ
+    分からない種類の抜けだった。
+    """
+    rows = {r["agent"]: r for r in make_client(home).get("/api/v1/face/models").json()}
+
+    assert rows["butler"]["has_model"] is True
+    assert rows["butler"]["bundled"] is True, "同梱で出ていることが分からない"
+    assert rows["butler"]["legacy"] is False
+    for agent in ("chef", "housekeeper", "steward", "secretary"):
+        assert rows[agent]["has_model"] is False
+        assert rows[agent]["bundled"] is False
+
+
+def test_your_own_vrm_is_not_reported_as_bundled(home: Path) -> None:
+    """自分で置いたら `bundled` は下りる（設定画面が削除ボタンを出せるように）。"""
+    (home / "face").mkdir(parents=True, exist_ok=True)
+    (home / "face" / "butler.vrm").write_bytes(b"glTF" + b"\x00" * 32)
+
+    rows = {r["agent"]: r for r in make_client(home).get("/api/v1/face/models").json()}
+
+    assert rows["butler"]["has_model"] is True
+    assert rows["butler"]["bundled"] is False

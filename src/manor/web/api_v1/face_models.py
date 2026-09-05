@@ -26,6 +26,7 @@ from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 
 from ...agent_meta import agent_label, valid_agents
 from .._common import WebContext, require_writable
+from .. import face as face_mod
 from ..face import _require_agent, _resolved_under
 
 #: VRM の実体は glTF バイナリ。先頭4バイトの魔法数（D14）。
@@ -47,7 +48,7 @@ def _face_dir_for_write(ctx: WebContext) -> Path:
     return d
 
 
-def _stat_entry(agent: str, path: Path, *, legacy: bool) -> dict[str, object]:
+def _stat_entry(agent: str, path: Path, *, legacy: bool, bundled: bool = False) -> dict[str, object]:
     st = path.stat()
     return {
         "agent": agent,
@@ -56,6 +57,9 @@ def _stat_entry(agent: str, path: Path, *, legacy: bool) -> dict[str, object]:
         "size": st.st_size,
         "updated_at": datetime.fromtimestamp(st.st_mtime).isoformat(timespec="seconds"),
         "legacy": legacy,
+        # `bundled` は**主人の持ち物ではない**という印（`assets/face/default.vrm`）。
+        # 消せないし、差し替えても同梱物は残る。画面はこれを見て削除ボタンを出さない。
+        "bundled": bundled,
     }
 
 
@@ -75,6 +79,13 @@ def _model_info(ctx: WebContext, agent: str) -> dict[str, object]:
         if legacy is not None and legacy.is_file():
             return _stat_entry(agent, legacy, legacy=True)
 
+        # 同梱の既定アバター（2026-09-05）。**`/face/model.vrm` が実際に配るもの**と
+        # ここの答えを揃える——揃えないと、小窓には姿が出るのに担当一覧は輪郭、という
+        # 食い違いになる（実際にそうなっていた）。
+        bundled = face_mod.bundled_default_model()
+        if bundled is not None:
+            return _stat_entry(agent, bundled, legacy=False, bundled=True)
+
     return {
         "agent": agent,
         "label": agent_label(agent),
@@ -82,6 +93,7 @@ def _model_info(ctx: WebContext, agent: str) -> dict[str, object]:
         "size": None,
         "updated_at": None,
         "legacy": False,
+        "bundled": False,
     }
 
 

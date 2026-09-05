@@ -412,6 +412,7 @@ export const ja = {
   "settings.faceModels.hintMiddle": "を手で操作する必要はありません。「小窓を開く」は画面の右下に窓を開きます（次善策）。本命は端末で",
   "settings.faceModels.hintCommand": "manor face --agent <name>",
   "settings.faceModels.hintSuffix": "を実行することです（Chrome のアプリモードで開きます）。",
+  "settings.faceModels.bundled": "同梱の既定アバター（差し替えられます）",
   "settings.faceModels.notSet": "未設置",
   "settings.faceModels.legacyNotePrefix": "旧い名前（",
   "settings.faceModels.legacyNotePath": "home/face/model.vrm",
