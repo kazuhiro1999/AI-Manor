@@ -10,6 +10,7 @@ import pytest
 from manor import db as db_mod
 from manor import i18n as i18n_mod
 from manor import secrets as secrets_mod
+from manor import slack as slack_mod
 from manor import shortcut as shortcut_mod
 
 
@@ -44,12 +45,24 @@ def home_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     同じ理由で `manor shortcut`（ADR-011 D8）の置き場も一時ディレクトリへ向ける——
     `profile.apply_setup` は既定で `shortcut: True` を扱うので、これを隔離しないと
     `manor setup` を通す試験が実マシンの Desktop / `%LOCALAPPDATA%\\manor` に触れてしまう。
+
+    **禁止語リスト（`~/.manor/git-leak-terms.txt`）も同じ**。`slack.scan_for_leak_terms` は
+    リストが読めないと「送らない」側へ倒れる（fail-closed。正しい設計）ので、隔離しないと
+    **開発機にリストがあるかどうかで結果が変わる**——手元では通り、CI の素の環境では落ちた
+    （2026-09-05 実測）。合成の語を1つ置いて、どこで回しても同じ結果にする。
     """
     h = tmp_path / "home"
     monkeypatch.setenv("MANOR_HOME", str(h))
     monkeypatch.setenv(secrets_mod.ENV_OVERRIDE, str(tmp_path / "manor-secrets"))
     monkeypatch.setenv(shortcut_mod.ENV_SHORTCUT_DIR, str(tmp_path / "manor-shortcut"))
     monkeypatch.setenv(shortcut_mod.ENV_DESKTOP_DIR, str(tmp_path / "desktop"))
+
+    leak_terms = tmp_path / "git-leak-terms.txt"
+    leak_terms.write_text(
+        "# 試験用の合成リスト（実在の人名は入れない）\nzzz-synthetic-leak-term-zzz\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv(slack_mod.LEAK_TERMS_ENV, str(leak_terms))
     monkeypatch.delenv("MANOR_HOOKS", raising=False)
     monkeypatch.delenv("MANOR_NOW", raising=False)
     monkeypatch.delenv("MANOR_TODAY", raising=False)

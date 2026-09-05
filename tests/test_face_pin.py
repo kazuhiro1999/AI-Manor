@@ -6,6 +6,8 @@ Windows の実物（`ctypes.windll`）は一切呼ばない——`_user32` を�
 
 from __future__ import annotations
 
+import sys
+
 from unittest.mock import Mock
 
 import pytest
@@ -236,6 +238,11 @@ class _FakeEnumUser32:
         return 1
 
 
+@pytest.mark.skipif(
+    sys.platform != "win32",
+    reason="窓の列挙は ctypes.wintypes / WINFUNCTYPE を使う（Windows にしか無い）。"
+    "sys.platform の差し替えでは代用できない",
+)
 def test_find_window_falls_back_to_enumeration_when_exact_match_fails(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -272,6 +279,10 @@ def test_find_window_enumeration_rejects_different_window_with_same_prefix(
     assert face_pin._find_window("執事") is None
 
 
+@pytest.mark.skipif(
+    sys.platform != "win32",
+    reason="窓の列挙は ctypes.wintypes / WINFUNCTYPE を使う（Windows にしか無い）",
+)
 def test_find_window_enumeration_prefers_shortest_title_among_matches(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

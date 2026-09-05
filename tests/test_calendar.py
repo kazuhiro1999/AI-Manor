@@ -15,7 +15,9 @@ from __future__ import annotations
 import json
 import urllib.error
 import urllib.request
+from datetime import datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -170,7 +172,13 @@ def test_sync_keeps_single_event_beyond_90_day_window(home: Path, conn, monkeypa
 
     row = conn.execute("SELECT title, start FROM secretary_event WHERE source = 'ics'").fetchone()
     assert row["title"] == "家族旅行"
-    assert row["start"] == "2027-01-05T09:00:00"
+
+    # **壁掛け時計の文字列で見ない。** 保存されるのは実機のタイムゾーンのローカル時刻なので、
+    # 日本で回せば 09:00、UTC の CI で回せば 00:00 になる（2026-09-05 に CI で実測）。
+    # ここで見たいのは「窓の外の単発予定が消えないこと」なので、**同じ瞬間か**で検算する。
+    # 変換そのものは tests/test_ics.py が local_tz を明示して確かめている。
+    stored = datetime.fromisoformat(str(row["start"])).astimezone()
+    assert stored == datetime(2027, 1, 5, 9, 0, tzinfo=ZoneInfo("Asia/Tokyo"))
 
 
 # --- sync: 冪等性（同じ内容で2回流しても増えない） ------------------------------------------

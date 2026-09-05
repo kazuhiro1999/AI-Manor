@@ -13,6 +13,14 @@ from manor import util
 from manor.web import app as web_app_mod
 
 
+#: `web/dist`（`manor web build` の成果物）が要る試験に付ける。リポジトリには入らないので、
+#: ビルドしていない環境（CI の python ジョブなど）では成り立たない——**飛ばす理由を明示する**。
+needs_built_web = pytest.mark.skipif(
+    not (web_app_mod.DIST_DIR / "index.html").is_file(),
+    reason="web/dist が無い（`manor web build` 前）。殻と favicon はビルドの成果物",
+)
+
+
 def make_client(home: Path) -> TestClient:
     return TestClient(web_app_mod.create_app(home))
 
@@ -81,6 +89,7 @@ def test_unknown_api_path_is_404_not_index(home: Path, dist_dir: Path) -> None:
     assert "app shell" not in res.text
 
 
+@needs_built_web
 def test_favicon_serves_the_real_icon(home: Path) -> None:
     """主人が用意した icon（2026-09-05）を実体で返す。
 
@@ -118,6 +127,7 @@ def test_missing_asset_is_404_not_the_app_shell(home: Path) -> None:
     assert "<!doctype html" not in res.text.lower()
 
 
+@needs_built_web
 def test_unknown_path_without_an_extension_still_serves_the_shell(home: Path) -> None:
     """画面の行き先（`/tasks` 等）はこれまでどおり殻を返す——ハッシュで持つ経路の保険。"""
     client = make_client(home)

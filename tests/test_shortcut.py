@@ -7,6 +7,8 @@
 
 from __future__ import annotations
 
+import sys
+
 import json
 from pathlib import Path
 
@@ -103,6 +105,10 @@ def test_windows_lnk_script_targets_wscript_with_vbs_argument_and_hidden_style()
     assert f'`"{vbs}`"' in script
 
 
+@pytest.mark.skipif(
+    sys.platform != "win32",
+    reason="wscript.exe は Windows にしか無い（他OSのランチャーは .command / .sh）",
+)
 def test_wscript_exe_path_is_absolute_under_system32() -> None:
     path = shortcut_mod._wscript_exe_path()
     assert path.lower().endswith(r"system32\wscript.exe")

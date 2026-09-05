@@ -7,6 +7,8 @@ DB に触れないため。`needs_db=False`）。
 
 from __future__ import annotations
 
+import sys
+
 import argparse
 import json
 from pathlib import Path
@@ -83,7 +85,10 @@ def test_load_config_fills_defaults(home_path: Path):
     assert cfg.host == "127.0.0.1"
     assert cfg.port == 50021
     assert cfg.speaker == 13
-    assert str(cfg.engine_path).endswith("run.exe")
+    # 既定のエンジンの場所は OS ごとに違う（Windows は run.exe、他は run）。
+    # 「拡張子が .exe か」ではなく「run を指しているか」を見る——ここで見たいのは
+    # 「engine_path を書かなくても既定が埋まる」ことであって、Windows の作法ではない。
+    assert Path(str(cfg.engine_path)).stem == "run"
 
 
 def test_load_config_custom_engine_path(home_path: Path):
