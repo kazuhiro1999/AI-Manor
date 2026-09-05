@@ -15,7 +15,7 @@ from manor import shortcut as shortcut_mod
 
 
 @pytest.fixture(autouse=True)
-def _default_cli_language():
+def _default_cli_language(monkeypatch: pytest.MonkeyPatch):
     """CLI の言語解決(`manor.i18n.current_language()`)はプロセス内キャッシュを持つ
     （CLI の1回の起動につき1回だけ解決するという ADR-012 D11 の設計どおり）。
 
@@ -28,6 +28,16 @@ def _default_cli_language():
     固定する。言語そのものを検算する試験（`tests/test_i18n.py`）は自分で
     `set_language()`/`reset_cache()` を呼ぶので、ここでの固定とは独立に動く。
     """
+    # **環境変数まで固定する。** `set_language()` はキャッシュを差し替えるだけで、
+    # `cli.main()` は起動のたびに言語を**引き直す**（D11 の順番）。引き直しの入口を
+    # 押さえないと、OS ロケールが英語の機械（GitHub Actions の windows-latest）では
+    # `manor ...` の出力が英語になり、日本語を検算している試験が9件落ちた
+    # （2026-09-05 実測）。`MANOR_LANG` は D11 の最優先の入力なので、ここを固定すれば
+    # `set_language()` と引き直しの両方が同じ結論になる。
+    #
+    # 言語そのものを検算する試験（`tests/test_i18n.py`）は自分で `setenv`/`delenv` するので、
+    # そちらが勝つ（後から呼んだ monkeypatch が優先される）。
+    monkeypatch.setenv("MANOR_LANG", "ja")
     i18n_mod.set_language("ja")
     yield
     i18n_mod.reset_cache()
