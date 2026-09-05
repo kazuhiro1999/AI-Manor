@@ -274,10 +274,14 @@ def test_windows_lnk_creation_failure_returns_reason_without_raising(
 ) -> None:
     monkeypatch.setattr(shortcut_mod.sys, "platform", "win32")
 
-    def fake_run(cmd, *a, **kw):  # type: ignore[no-untyped-def]
-        raise OSError("powershell が見つかりません（テスト用の偽の失敗）")
-
-    monkeypatch.setattr(shortcut_mod.subprocess, "run", fake_run)
+    # PowerShell は `winps.run` 経由になった（2026-09-05。英語ロケールで日本語が `?` に
+    # 落ちるのを避けるため `-EncodedCommand` を使う）。`winps.run` は例外を投げず
+    # `(-1, "", 理由)` を返す約束なので、失敗はその形で作る。
+    monkeypatch.setattr(
+        shortcut_mod.winps,
+        "run",
+        lambda script, *, timeout: (-1, "", "PowerShell を呼べませんでした（テスト用の偽の失敗）"),
+    )
 
     result = shortcut_mod.create()  # must not raise
     assert result["ok"] is False
@@ -302,15 +306,17 @@ def test_cli_create_failure_prints_reason_and_exits_1(
 ) -> None:
     monkeypatch.setattr(shortcut_mod.sys, "platform", "win32")
 
-    def fake_run(cmd, *a, **kw):  # type: ignore[no-untyped-def]
-        raise OSError("偽の失敗")
-
-    monkeypatch.setattr(shortcut_mod.subprocess, "run", fake_run)
+    monkeypatch.setattr(
+        shortcut_mod.winps,
+        "run",
+        # `winps.run` が呼べなかったときに実際に返す形（**生の理由**）に合わせる。
+        lambda script, *, timeout: (-1, "", "[WinError 2] 指定されたファイルが見つかりません。"),
+    )
 
     rc = cli.main(["shortcut", "create"])
     out = capsys.readouterr().out
     assert rc == 1
-    assert "PowerShell" in out
+    assert "WinError 2" in out, "失敗の理由が主人に伝わっていない"
 
 
 # --- profile.apply_setup との連携（ADR-007 × ADR-011 D8） --------------------------------------

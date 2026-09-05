@@ -39,7 +39,6 @@ import argparse
 import json
 import os
 import stat
-import subprocess
 import sys
 from pathlib import Path
 from typing import Any
@@ -47,17 +46,19 @@ from typing import Any
 from . import branding
 from . import i18n
 from . import util
+from . import winps
 
 #: `manor web serve` の既定ポート（`src/manor/web/__init__.py` と同じ値。`face.py` と
 #: 同じ理由でここでも複製する——web パッケージの依存を強制しないため）。
 DEFAULT_PORT = 8789
 
 #: デスクトップに出す名前（ADR-011 D8）。拡張子は OS ごとに変わる。
-SHORTCUT_LABEL = f"{branding.APP_NAME} を開く"
+#: 主人の指示（2026-09-05）で「を開く」を外した——机の上のアイコンは名前だけでよい。
+SHORTCUT_LABEL = branding.APP_NAME
 
-#: 以前の表示名で作られたショートカット。**改名しても古い方が残ると机に2つ並ぶ**ので、
+#: 以前の名前で作られたショートカット。**改名しても古い方が残ると机に2つ並ぶ**ので、
 #: `create` のたびに片付ける（主人の机の上のものに触るので、ここに挙げた名前だけ）。
-LEGACY_SHORTCUT_LABELS = ("manor を開く", "AI Monor を開く")
+LEGACY_SHORTCUT_LABELS = ("manor を開く", "AI Monor を開く", "AI Manor を開く")
 
 #: `.lnk` に持たせる絵のファイル名。ランチャーと同じ場所へ複製してから指す——
 #: リポジトリの中を指すと、フォルダを動かした瞬間に机の上の絵が壊れる。
@@ -134,20 +135,10 @@ def _desktop_dir_windows() -> Path:
     PowerShell が呼べない・失敗したときは `USERPROFILE\\Desktop` へ落ちる。
     """
     try:
-        proc = subprocess.run(
-            [
-                "powershell",
-                "-NoProfile",
-                "-NonInteractive",
-                "-Command",
-                "[Environment]::GetFolderPath('Desktop')",
-            ],
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-        out = (proc.stdout or "").strip()
-        if proc.returncode == 0 and out:
+        # 戻り値に日本語の利用者名が入りうるので `winps` 経由（出力を UTF-8 に固定する）。
+        code, out, _err = winps.run("[Environment]::GetFolderPath('Desktop')", timeout=10)
+        out = out.strip()
+        if code == 0 and out:
             return Path(out)
     except Exception:  # noqa: BLE001 - フォールバックへ落ちるだけ。ここで止めない
         pass
@@ -495,17 +486,11 @@ def _create(*, port: int, dry_run: bool) -> dict[str, Any]:
         vpath.write_text(vbs_script, encoding="utf-16", newline="")
         icon = _install_icon()
         ps = _windows_lnk_script(lnk_path=spath, vbs_path=vpath, workdir=repo, icon=icon)
-        try:
-            proc = subprocess.run(
-                ["powershell", "-NoProfile", "-NonInteractive", "-Command", ps],
-                capture_output=True,
-                text=True,
-                timeout=20,
-            )
-        except OSError as exc:
-            return {"ok": False, "reason": f"PowerShell を呼べませんでした: {exc}"}
-        if proc.returncode != 0 or not spath.is_file():
-            detail = (proc.stderr or proc.stdout or "").strip()[:400] or "理由不明"
+        # **`-Command` に渡さない。** ショートカットの名前に日本語が入るので、英語ロケールの
+        # Windows では `?` に落ちてファイル名として不正になる（`winps` の docstring 参照）。
+        code, out, err = winps.run(ps, timeout=20)
+        if code != 0 or not spath.is_file():
+            detail = (err or out).strip()[:400] or "理由不明"
             return {"ok": False, "reason": f"ショートカットの作成に失敗しました: {detail}"}
     elif kind == "darwin":
         spath.write_text(_macos_shortcut_script(launcher=lpath), encoding="utf-8")

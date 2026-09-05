@@ -51,6 +51,7 @@ from . import face_speech
 from . import i18n
 from . import notify as notify_mod
 from . import util
+from . import winps
 
 CONFIG_FILE_NAME = "config.toml"
 VOICE_DIRNAME = "voice"
@@ -595,7 +596,9 @@ def _play(path: Path) -> bool:
     if sys.platform.startswith("win"):
         escaped = str(path).replace("'", "''")
         script = f"(New-Object Media.SoundPlayer '{escaped}').PlaySync()"
-        argv = ["powershell", "-NoProfile", "-Command", script]
+        # パスに日本語（利用者名など）が入りうるので `-Command` に渡さない（`winps` 参照）。
+        code, _out, _err = winps.run(script, timeout=120)
+        return code == 0
     elif sys.platform == "darwin":
         argv = ["afplay", str(path)]
     else:
