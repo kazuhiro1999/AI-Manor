@@ -554,7 +554,9 @@ def run(
         if sleep_back_after and result and result.get("status") != "locked":
             sb = sleep_back(dry_run=dry_run)
             NightLog(home, echo=echo).write(
-                "INFO", "眠りへ戻します" if sb.get("slept") else f"眠りません: {sb.get('reason')}"
+                "INFO",
+                f"スリープを要求しました（{sb.get('reason')}）" if sb.get("requested")
+                else f"眠りません: {sb.get('reason')}",
             )
             result["sleep_back"] = sb
             _write_last_run(home, result)
@@ -736,13 +738,24 @@ def _run_impl(
 #: `powercfg /lastwake` と `SetSuspendState` を呼ぶときの待ち時間（秒）。
 SLEEP_BACK_TIMEOUT = 30
 
+#: **人がいると見なす無操作の短さ（分）。** これより最近に入力があれば眠らせない。
+SLEEP_BACK_IDLE_MINUTES = 15
+
+#: `SetSuspendState` を投げたあと、生死を確かめるまでの待ち（秒）。
+#: 成功していればこの時点でプロセスは**まだ生きている**（機械が眠るまで戻らないため）。
+SLEEP_BACK_POLL_SECONDS = 2.0
+
 
 def woken_by_task(task_name: str = DEFAULT_TASK_NAME) -> dict[str, Any]:
     """直近の復帰が、このタスクのウェイクタイマーによるものか（`powercfg /lastwake`）。
 
     **タスク名で判定する。** `powercfg` の文言は OS の言語で変わる（v1 は日本語の
     文言に依存していた）が、タスク名は変わらない——`NT TASK\\manor-night` の形で
-    必ず出る。読めなかったときは `None`（＝分からない）を返し、**眠らせない**。
+    **出るはず**。⚠ **実際のタイマー復帰でまだ確かめていない**（2026-09-06 時点。
+    手元では復帰履歴が 0 件の状態でしか回せていない）。裏を取る材料は
+    `home/night/last-run.json` の `sleep_back.detail` に生のまま残るようにしてある。
+
+    読めなかったときは `None`（＝分からない）を返し、**眠らせない**。
     """
     if not sys.platform.startswith("win"):
         return {"woken": None, "reason": "windows 以外では判定しません"}
@@ -752,22 +765,107 @@ def woken_by_task(task_name: str = DEFAULT_TASK_NAME) -> dict[str, Any]:
     return {"woken": task_name.lower() in out.lower(), "detail": out.strip()[:400]}
 
 
-def sleep_back(
-    *, task_name: str = DEFAULT_TASK_NAME, dry_run: bool = False
-) -> dict[str, Any]:
-    """**自分のウェイクタイマーで起きたときだけ** PC をスリープへ戻す。
+#: `GetLastInputInfo` を呼ぶ PowerShell。`Add-Type` の C# はここに畳んである
+#: （`-MemberDefinition` では構造体を同じ型に入れられないため、型ごと定義する）。
+#: `TickCount` は約24.9日で一周するが、`uint` の引き算は一周をまたいでも正しい差を返す。
+_IDLE_SCRIPT = """Add-Type @"
+using System;
+using System.Runtime.InteropServices;
+public class ManorIdle {
+  [StructLayout(LayoutKind.Sequential)]
+  struct LASTINPUTINFO { public uint cbSize; public uint dwTime; }
+  [DllImport("user32.dll")] static extern bool GetLastInputInfo(ref LASTINPUTINFO plii);
+  public static long IdleMs() {
+    LASTINPUTINFO lii = new LASTINPUTINFO();
+    lii.cbSize = (uint)Marshal.SizeOf(lii);
+    if (!GetLastInputInfo(ref lii)) { return -1; }
+    return (long)((uint)Environment.TickCount - lii.dwTime);
+  }
+}
+"@
+[ManorIdle]::IdleMs()
+"""
 
-    主人が自分で起こしていた PC を勝手に眠らせない——だから電源設定そのものは触らず、
-    毎回 `powercfg /lastwake` を見る（v1 の判断をそのまま引き継いだ）。
+
+def idle_seconds() -> dict[str, Any]:
+    """最後の入力からの経過秒数（`GetLastInputInfo`）。分からなければ `None`。
+
+    **`powercfg /lastwake` は「どう起きたか」しか言わない。** 02:00 にタイマーで起き、
+    主人が 06:00 に起きて使い始め、夜勤が 06:30 に終わる——このとき `/lastwake` は
+    まだ「タスクが起こした」と答えるので、それだけを見ると**主人の手元で画面が落ちる**。
+    「いま人がいるか」は別に見なければならない（検分 S1・2026-09-06）。
+    """
+    if not sys.platform.startswith("win"):
+        return {"seconds": None, "reason": "windows 以外では判定しません"}
+    code, out, err = winps.run(_IDLE_SCRIPT, timeout=SLEEP_BACK_TIMEOUT)
+    if code != 0:
+        return {"seconds": None, "reason": f"GetLastInputInfo を読めません: {(err or out).strip()[:200]}"}
+    try:
+        ms = int(out.strip().splitlines()[-1])
+    except (ValueError, IndexError):
+        return {"seconds": None, "reason": f"無操作時間を読み取れません: {out.strip()[:120]}"}
+    if ms < 0:
+        return {"seconds": None, "reason": "GetLastInputInfo が失敗を返しました"}
+    return {"seconds": ms / 1000.0}
+
+
+def sleep_back(
+    *,
+    task_name: str = DEFAULT_TASK_NAME,
+    dry_run: bool = False,
+    idle_minutes: float = SLEEP_BACK_IDLE_MINUTES,
+) -> dict[str, Any]:
+    """PC をスリープへ戻す。**門は2つあり、どちらも通ったときだけ眠らせる。**
+
+    1. **自分のウェイクタイマーで起きたか**（`powercfg /lastwake`）——主人が自分で
+       起こした PC を勝手に眠らせない。v1 から引き継いだ判断
+    2. **いま人がいないか**（`GetLastInputInfo`）——1 だけでは足りない。タイマーで
+       起きた朝に主人が使い始めていても、`/lastwake` の答えは変わらないため
+
+    どちらで止まったかが後から分かるように、**止まった理由は別々の文字列**で返す。
+
+    戻り値の `requested` は「**要求した**」であって「眠った」ではない。眠ったことは
+    この場では確かめられない（確かめられるなら、それは眠っていない）——できるのは
+    「要求を出したプロセスが、出した直後にまだ生きている」ことの確認まで。
 
     **休止（hibernate）ではなくスリープ（S3）。** 休止するとウェイクタイマーが効かず、
     翌日の夜勤が動かない。
     """
+    checks: dict[str, Any] = {}
+
     probe = woken_by_task(task_name)
+    checks["woken"] = probe
     if probe.get("woken") is not True:
-        return {"slept": False, "reason": probe.get("reason", "この復帰は執事のタスクによるものではありません"), **probe}
+        return {
+            "requested": False,
+            "reason": probe.get("reason", "この復帰は執事のタスクによるものではありません"),
+            "checks": checks,
+            "detail": probe.get("detail", ""),
+        }
+
+    idle = idle_seconds()
+    checks["idle"] = idle
+    if idle.get("seconds") is None:
+        return {
+            "requested": False,
+            "reason": f"人がいるか分からないので眠りません（{idle.get('reason', '')}）",
+            "checks": checks,
+            "detail": probe.get("detail", ""),
+        }
+    if float(idle["seconds"]) < idle_minutes * 60:
+        return {
+            "requested": False,
+            "reason": f"{int(float(idle['seconds']))} 秒前に操作があります（{idle_minutes:g} 分未満なので眠りません）",
+            "checks": checks,
+            "detail": probe.get("detail", ""),
+        }
+
     if dry_run:
-        return {"slept": False, "reason": "dry-run のため眠りません", **probe}
+        return {
+            "requested": False, "reason": "dry-run のため眠りません",
+            "checks": checks, "detail": probe.get("detail", ""),
+        }
+
     script = (
         "Add-Type -Namespace Manor -Name Power -MemberDefinition '"
         '[DllImport(\\"powrprof.dll\\", SetLastError = true)] '
@@ -775,23 +873,46 @@ def sleep_back(
         "bool disableWakeEvent);'\n"
         "[Manor.Power]::SetSuspendState($false, $false, $false)\n"
     )
-    # **待たない。** `SetSuspendState` は機械が起きるまで戻らないので、`winps.run`
-    # （＝`subprocess.run` ＋ timeout）で呼ぶと、翌朝に必ず「時間切れ」で失敗したことに
-    # なってしまう——実際には眠れているのに。投げたら離す。
+    # **完了は待たない。** `SetSuspendState` は機械が起きるまで戻らないので、
+    # `subprocess.run` ＋ timeout で呼ぶと、実際には眠れているのに翌朝「時間切れで失敗」と
+    # 記録されてしまう。かわりに**少しだけ待って生死を見る**——成功していればプロセスは
+    # まだ生きている。すぐ非0で終わっていたら、それは失敗（検分 S2）。
     argv = [
         "powershell", "-NoProfile", "-NonInteractive",
         "-EncodedCommand", winps.encode_command(script),
     ]
     try:
-        subprocess.Popen(  # noqa: S603 — argv 固定。文字列をシェルに渡していない
+        proc = subprocess.Popen(  # noqa: S603 — argv 固定。文字列をシェルに渡していない
             argv,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             stdin=subprocess.DEVNULL,
         )
     except Exception as exc:  # noqa: BLE001 — 眠れないことは、夜勤の失敗ではない
-        return {"slept": False, "reason": f"スリープ要求を出せませんでした: {exc}", **probe}
-    return {"slept": True, "detail": probe.get("detail", "")}
+        return {
+            "requested": False, "reason": f"スリープ要求を出せませんでした: {exc}",
+            "checks": checks, "detail": probe.get("detail", ""),
+        }
+
+    time.sleep(SLEEP_BACK_POLL_SECONDS)
+    code = proc.poll()
+    if code is not None and code != 0:
+        err = ""
+        try:
+            err = (proc.stderr.read() or b"").decode("utf-8", errors="replace").strip()
+        except Exception:  # noqa: BLE001
+            pass
+        return {
+            "requested": False,
+            "reason": f"スリープ要求が失敗しました (exit={code}): {err[:300]}",
+            "checks": checks, "detail": probe.get("detail", ""),
+        }
+    return {
+        "requested": True,
+        "reason": "スリープを要求しました（眠ったかどうかは、この場では確かめられません）",
+        "checks": checks,
+        "detail": probe.get("detail", ""),
+    }
 
 
 def _write_last_run(home: Path, result: dict[str, Any]) -> None:

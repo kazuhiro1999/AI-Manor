@@ -90,6 +90,21 @@ runner.run(home, *, repo_root=None, deadline="06:30", min_minutes=20, grace_minu
 `schtasks` が落ちても成功と報告し、終了コードも 0 でした——**夜勤が丸ごと動かない朝**を
 作る形です。いまは `ok`（真偽）を結果に持ち、失敗なら理由と終了コード1で止まります。
 
+### 表示されるコマンドは **cmd.exe に貼る形**です
+
+`/TR` の中の `\"` は cmd.exe の作法なので、**PowerShell にそのまま貼ると通りません**——
+`&&` が別の引数として切り出され、`エラー: 無効な引数またはオプションです - '&&'` で
+落ちます（2026-09-06 に実測。`manor web install` も同じ）。
+
+PowerShell から流したいときは、**`schtasks` の直後に `--%` を挟みます**（以降を
+PowerShell に解釈させない印。同日に実測して登録できることを確かめました）:
+
+```powershell
+schtasks --% /Create /SC DAILY /ST 02:00 /TN "manor-night" /TR "cmd /c cd /d \"...\" && \"...\" -m manor.night run --sleep-back" /F
+```
+
+貼らずに `--yes` を渡すのがいちばん簡単です（`install` が自分で cmd.exe 経由で叩きます）。
+
 ## `--sleep-back` — 終わったら眠りへ戻す（2026-09-06 に追加。T6）
 
 v1 `apps/night-shift/sleep-back.ps1` の移植。**自分のウェイクタイマーで起きたときだけ**
