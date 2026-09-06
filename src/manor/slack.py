@@ -1011,15 +1011,15 @@ def parse_when(rest: str, *, today: str | None = None) -> dict[str, Any]:
     # 全角スペースでも切れるようにする（日本語入力では普通に混ざる）
     tokens = (rest or "").replace("　", " ").split()
     if not tokens:
-        return {"ok": False, "reason": "日付と本文がありません"}
+        return {"ok": False, "code": "no_date", "reason": "日付と本文がありません"}
 
     try:
         base = date.fromisoformat(today) if today else date.fromisoformat(util.today())
         on = sec_ops.resolve_date(tokens[0], base)
     except ManorError:
-        return {"ok": False, "reason": f"日付として読めません: {tokens[0]!r}"}
+        return {"ok": False, "code": "no_date", "reason": f"日付として読めません: {tokens[0]!r}"}
     except ValueError:
-        return {"ok": False, "reason": "今日の日付を読めません"}
+        return {"ok": False, "code": "no_date", "reason": "今日の日付を読めません"}
 
     at: str | None = None
     body_from = 1
@@ -1031,7 +1031,7 @@ def parse_when(rest: str, *, today: str | None = None) -> dict[str, Any]:
 
     text = " ".join(tokens[body_from:]).strip()
     if not text:
-        return {"ok": False, "reason": "本文がありません（日付のあとに内容を続けてください）"}
+        return {"ok": False, "code": "no_text", "reason": "本文がありません（日付のあとに内容を続けてください）"}
     return {"ok": True, "on": on.isoformat(), "at": at, "text": text}
 
 
@@ -1217,6 +1217,12 @@ def intake(home: Path, *, dry_run: bool = False) -> dict[str, Any]:
             when: dict[str, Any] | None = None
             if kind in ("cal", "remind"):
                 when = parse_when(body)
+                if kind == "cal" and _looks_unparsed(when):
+                    # **自由文も受ける**（v1 の `#cal <自由文（日時を含む）>`）。
+                    # 決め打ちで読めたものは読み取りに回さない——速く・無料で・ぶれない。
+                    # **本文が無いだけのとき（`#cal 明日`）は落とさない**——読み取りに
+                    # 回しても件名は生えてこないので、書き方の案内をそのまま返す。
+                    when = _extract_when(body)
                 if not when["ok"]:
                     reply_lines.append(_intake_when_guidance(kind, str(when["reason"])))
                     taken.append({"ts": ts, "kind": "", "node_id": None, "reason": when["reason"]})
@@ -1228,6 +1234,9 @@ def intake(home: Path, *, dry_run: bool = False) -> dict[str, Any]:
             if not dry_run:
                 node_id = _create_from_intake(conn, kind=kind, body=body, when=when)
                 if kind == "cal" and when:
+                    # **どう解釈したかは、押し出しの成否と切り離す。** 登録できなくても
+                    # 「終日として読んだ」は主人に伝わるべきもの。
+                    when["how"] = _calendar_slots(when)["how"]
                     # **手元へ保存したあとで**カレンダーへ押し出す。この順なら、
                     # 押し出しが失敗しても主人の言葉は消えない。
                     when["pushed"] = _push_to_calendar(home, when)
@@ -1297,6 +1306,10 @@ def _intake_when_guidance(kind: str, reason: str) -> str:
     return f"・`#{kind}` を受け取りましたが{reason}。例: {_INTAKE_EXAMPLES[kind]}"
 
 
+#: 返信で「どこへ入れたか」を言うための呼び名（v1 の安全網③。主人の私用側は触らない）。
+INTAKE_CALENDAR_LABEL = "「AI執事」"
+
+
 def _format_when(when: dict[str, Any]) -> str:
     """**解いた絶対日付を必ず返す。**
 
@@ -1314,9 +1327,13 @@ def _intake_ack(
     if kind == "cal" and when:
         pushed = when.get("pushed") or {}
         if pushed.get("ok"):
-            # **登録まで済んでいる。** 送るのは確認・修正用のリンク（その予定そのものへ飛ぶ）。
+            # **登録まで済んでいる。** v1 の「安全網を保存前から保存後へ移す」（§6）に従い、
+            # ①予定へのリンク ②執事がどう解釈したか ③どのカレンダーか、の3つを必ず出す。
+            place = f"／場所: {when['place']}" if when.get("place") else ""
             return (
-                f"・{_format_when(when)} 「{when['text']}」をカレンダーに登録しました\n"
+                f"・{_format_when(when)} 「{when['text']}」を"
+                f"{INTAKE_CALENDAR_LABEL}カレンダーに登録しました"
+                f"（{when.get('how', '')}{place}）\n"
                 f"　確認・修正: {pushed['html_link']}"
             )
         # 登録できなかったとき。**手元には入っている**ので、押せば端末で追加できる
@@ -1335,25 +1352,105 @@ def _intake_ack(
     return f"・{marker} として{label}: {head}"
 
 
-def _push_to_calendar(home: Path, when: dict[str, Any]) -> dict[str, object]:
-    """`#cal` を Google カレンダーへ登録する（`calendar.push_event`）。
+#: 決め打ちの解釈が**取りこぼした時刻**の匂い。件名の側にこれが残っていたら、
+#: 読めたつもりでも読めていない。
+_TIME_SMELL_RE = re.compile(r"\d\s*時|\d{1,2}:\d{2}|半ば?から|から\d|〜|～")
 
-    時刻が無い（終日の）予定も、コネクタは開始・終了を求めるので**その日の 00:00〜23:59**
-    として渡す。**例外は投げない**——ここが失敗しても予定は手元に入っている。
+
+def _looks_unparsed(when: dict[str, Any]) -> bool:
+    """自由文の読み取りへ落とすべきか。
+
+    落とす場合は2つ:
+
+    1. **日付が読めなかった**（`#cal 9/9の14時から対面で予備審査`）
+    2. **読めたつもりで、時刻を取りこぼしている**（`#cal 9/3 18時半 歯医者`）——
+       `18時半` は `HH:MM` ではないので件名の側へ流れ、**終日の「18時半 歯医者」**という
+       誤った予定になる。決め打ちが「成功」してしまうぶん、こちらのほうが危ない
+       （2026-09-06 に実測して見つけた）。
+
+    **本文が無いだけのとき（`#cal 明日`）は落とさない**——読み取りに回しても件名は
+    生えてこないので、書き方の案内をそのまま返す。
+    """
+    if not when.get("ok"):
+        return when.get("code") == "no_date"
+    if when.get("at"):
+        return False  # 時刻まで読めている
+    return bool(_TIME_SMELL_RE.search(str(when.get("text") or "")))
+
+
+def _extract_when(body: str) -> dict[str, Any]:
+    """決め打ちで読めなかった `#cal` の本文を、自由文として読み取る。
+
+    `parse_when` と**同じ形**を返す（`on` / `at` / `text` ＋ `end_on` / `end_at` / `place`）
+    ので、呼び出し側は経路を意識しない。
     """
     from . import calendar as calendar_mod
 
-    on, at = str(when["on"]), when.get("at")
-    if at:
-        start = f"{on}T{at}:00+09:00"
-        end_dt = datetime.strptime(f"{on} {at}", "%Y-%m-%d %H:%M") + timedelta(
-            minutes=INTAKE_EVENT_MINUTES
-        )
-        end = end_dt.strftime("%Y-%m-%dT%H:%M:00+09:00")
-    else:
-        start, end = f"{on}T00:00:00+09:00", f"{on}T23:59:00+09:00"
+    got = calendar_mod.extract_event(body, today=util.today())
+    if not got.get("ok"):
+        return {"ok": False, "reason": str(got.get("reason") or "日付として読めません")}
+    return {
+        "ok": True,
+        "on": str(got["date"]),
+        "at": got.get("start"),
+        "end_on": got.get("end_date"),
+        "end_at": got.get("end"),
+        "place": got.get("location") or "",
+        "text": str(got["title"]),
+        "freeform": True,
+    }
+
+
+def _calendar_slots(when: dict[str, Any]) -> dict[str, Any]:
+    """v1 の既定の規則（`03_design/カレンダー書き込みの設計` §6）をそのまま当てる。
+
+    | 書かれたもの | 登録の形 |
+    |---|---|
+    | 日付＋開始＋終了 | そのまま |
+    | 日付＋開始のみ | 開始＋**60分** |
+    | **日付のみ** | **終日** |
+    | **日付の範囲** | **終日・複数日** |
+
+    v1 の但し書きもそのまま:「**『未確定』の印は付けない。** 終日であること自体が
+    『時刻はまだ決まっていない』という意味になる」。
+    """
+    on = str(when["on"])
+    at = when.get("at")
+    end_on = when.get("end_on")
+    end_at = when.get("end_at")
+
+    if not at:
+        # 終日。**終わりは「翌日」**（Google の終日の決まり）。範囲なら最終日の翌日。
+        last = str(end_on or on)
+        end = (date.fromisoformat(last) + timedelta(days=1)).isoformat()
+        return {"start": on, "end": end, "all_day": True,
+                "how": "終日" + ("・複数日" if end_on else "")}
+    start = f"{on}T{at}:00+09:00"
+    if end_at:
+        end_day = str(end_on or on)
+        return {"start": start, "end": f"{end_day}T{end_at}:00+09:00", "all_day": False,
+                "how": "書かれたとおり"}
+    end_dt = datetime.strptime(f"{on} {at}", "%Y-%m-%d %H:%M") + timedelta(
+        minutes=INTAKE_EVENT_MINUTES
+    )
+    return {"start": start, "end": end_dt.strftime("%Y-%m-%dT%H:%M:00+09:00"), "all_day": False,
+            "how": f"終わりが無いので{INTAKE_EVENT_MINUTES}分"}
+
+
+def _push_to_calendar(home: Path, when: dict[str, Any]) -> dict[str, object]:
+    """`#cal` を Google カレンダーへ登録する（`calendar.push_event`）。
+
+    **例外は投げない**——ここが失敗しても予定は手元に入っている。
+    """
+    from . import calendar as calendar_mod
+
+    slots = _calendar_slots(when)
     try:
-        return calendar_mod.push_event(home, start=start, end=end, title=str(when["text"]))
+        return calendar_mod.push_event(
+            home, start=str(slots["start"]), end=str(slots["end"]),
+            title=str(when["text"]), all_day=bool(slots["all_day"]),
+            location=str(when.get("place") or ""),
+        )
     except Exception as exc:  # noqa: BLE001 — 登録できないことは、取り込みの失敗ではない
         return {"ok": False, "html_link": "", "reason": str(exc)}
 

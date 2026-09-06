@@ -120,6 +120,12 @@ def _setup(
         slack_mod, "_push_to_calendar",
         lambda home, when: push or {"ok": False, "html_link": "", "reason": "（試験）押し出さない"},
     )
+    # **自由文の読み取りも既定では本物の claude を呼ばせない。**
+    # 差し替え忘れがあると、試験が実際にモデルを叩いて遅くなる（実測 62秒）。
+    monkeypatch.setattr(
+        slack_mod, "_extract_when",
+        lambda body: {"ok": False, "code": "no_date", "reason": "日付として読めません"},
+    )
     return posted
 
 
@@ -609,3 +615,148 @@ def test_push_needs_a_configured_calendar(home: Path) -> None:
 
     assert result["ok"] is False
     assert "write_calendar_id" in str(result["reason"])
+
+
+# --- v1 の既定の規則（03_design/カレンダー書き込みの設計 §6）------------------------------
+
+
+@pytest.mark.parametrize(
+    ("when", "expect_start", "expect_end", "expect_all_day", "expect_how"),
+    [
+        # 日付＋開始＋終了 → そのまま
+        ({"on": "2026-09-09", "at": "14:00", "end_at": "15:30"},
+         "2026-09-09T14:00:00+09:00", "2026-09-09T15:30:00+09:00", False, "書かれたとおり"),
+        # 日付＋開始のみ → 開始＋60分
+        ({"on": "2026-09-09", "at": "14:00"},
+         "2026-09-09T14:00:00+09:00", "2026-09-09T15:00:00+09:00", False, "60分"),
+        # 日付のみ → 終日（終わりは翌日）
+        ({"on": "2026-09-09", "at": None},
+         "2026-09-09", "2026-09-10", True, "終日"),
+        # 日付の範囲 → 終日・複数日（終わりは最終日の翌日）
+        ({"on": "2026-10-01", "at": None, "end_on": "2026-10-02"},
+         "2026-10-01", "2026-10-03", True, "終日・複数日"),
+    ],
+)
+def test_v1_default_rules(when, expect_start, expect_end, expect_all_day, expect_how) -> None:
+    """v1 の表をそのまま当てる。**「未確定」の印は付けない**（終日であること自体が意味）。"""
+    slots = slack_mod._calendar_slots(dict(when))
+
+    assert slots["start"] == expect_start
+    assert slots["end"] == expect_end
+    assert slots["all_day"] is expect_all_day
+    assert expect_how in slots["how"]
+
+
+def test_free_text_is_accepted_when_the_strict_parse_fails(
+    home: Path, conn, monkeypatch: pytest.MonkeyPatch, leak_terms
+) -> None:
+    """**自由文も受ける**（v1 の `#cal <自由文（日時を含む）>`）。
+
+    主人のご質問（2026-09-06）:「`#cal 9/9の14時から対面で予備審査` というと
+    カレンダーに登録されますか？」——決め打ちでは読めない形なので、読み取りへ落ちる。
+    """
+    monkeypatch.setenv("MANOR_TODAY", "2026-09-06")
+    posted = _setup(
+        home, monkeypatch, leak_terms,
+        [{"ts": "4000.0001", "text": "#cal 9/9の14時から対面で予備審査"}],
+        push={"ok": True, "html_link": "https://www.google.com/calendar/event?eid=zz", "reason": ""},
+    )
+    monkeypatch.setattr(
+        slack_mod, "_extract_when",
+        lambda body: {"ok": True, "on": "2026-09-09", "at": "14:00", "end_on": None,
+                      "end_at": None, "place": "対面", "text": "予備審査", "freeform": True},
+    )
+
+    result = slack_mod.intake(home)
+
+    assert result["taken"][0]["kind"] == "cal"
+    row = conn.execute("SELECT start, title FROM secretary_event").fetchone()
+    assert (row["start"], row["title"]) == ("2026-09-09T14:00", "予備審査")
+    assert "対面" in str(posted[0]["text"])
+
+
+def test_a_missing_body_is_not_sent_to_the_extractor(
+    home: Path, monkeypatch: pytest.MonkeyPatch, leak_terms
+) -> None:
+    """`#cal 明日` は**日付は読めている**。読み取りへ回しても件名は生えてこないので、
+    書き方の案内をそのまま返す（無駄なモデル呼び出しをしない）。
+    """
+    monkeypatch.setenv("MANOR_TODAY", "2026-09-06")
+    posted = _setup(home, monkeypatch, leak_terms, [{"ts": "4000.0002", "text": "#cal 明日"}])
+    called: list[str] = []
+    monkeypatch.setattr(
+        slack_mod, "_extract_when",
+        lambda body: (called.append(body), {"ok": False, "code": "no_date", "reason": "x"})[1],
+    )
+
+    slack_mod.intake(home)
+
+    assert called == []  # 読み取りを呼んでいない
+    assert "本文がありません" in str(posted[0]["text"])
+
+
+def test_the_reply_says_how_it_was_interpreted_and_which_calendar(
+    home: Path, monkeypatch: pytest.MonkeyPatch, leak_terms
+) -> None:
+    """v1 の安全網（§6「保存前から保存後へ移す」）を3つとも出すこと。"""
+    monkeypatch.setenv("MANOR_TODAY", "2026-09-06")
+    link = "https://www.google.com/calendar/event?eid=qq"
+    posted = _setup(
+        home, monkeypatch, leak_terms, [{"ts": "4000.0003", "text": "#cal 9/9 14:00 予備審査"}],
+        push={"ok": True, "html_link": link, "reason": ""},
+    )
+
+    slack_mod.intake(home)
+
+    text = str(posted[0]["text"])
+    assert link in text                    # ①予定へのリンク
+    assert "60分" in text                   # ②どう解釈したか
+    assert "「AI執事」" in text              # ③どのカレンダーか
+
+
+def test_the_extractor_never_gets_any_tools() -> None:
+    """読み取りの段は**道具を1つも持たない**（読むだけ。外部へは何も書かない）。"""
+    from manor import calendar as calendar_mod
+
+    for name in ("Bash", "Read", "Write", "Edit", "WebFetch", "WebSearch", "Task"):
+        assert name in calendar_mod.EXTRACT_DISALLOWED_TOOLS
+
+
+def test_the_extractor_verifies_the_shape(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """**検算する。** 日付の形をしていなければ、読み取れたと見なさない。"""
+    from manor import calendar as calendar_mod
+
+    class _P:
+        stdout = '{"is_error": false, "result": "{\\"title\\": \\"会議\\", \\"date\\": \\"来週\\"}"}'
+        stderr = ""
+
+    monkeypatch.setattr("shutil.which", lambda name: "claude")
+    monkeypatch.setattr("subprocess.run", lambda *a, **k: _P())
+
+    got = calendar_mod.extract_event("来週いつか会議", today="2026-09-06")
+
+    assert got["ok"] is False
+
+
+@pytest.mark.parametrize(
+    ("text", "should_fall_through"),
+    [
+        ("9/9 14:00 予備審査", False),        # 決め打ちで完全に読めている
+        ("10/1 東京出張", False),             # 時刻の匂いが無い＝終日でよい
+        ("明日", False),                      # 本文が無いだけ（読み取りに回しても生えない）
+        ("9/3 18時半 歯医者", True),          # ⚠ 読めたつもりで時刻を取りこぼしている
+        ("9/9 14時から打ち合わせ", True),      # 同上
+        ("そのうち 打ち合わせ", True),          # 日付が読めない
+        ("9/9の14時から対面で予備審査", True),  # 自由文
+    ],
+)
+def test_when_to_fall_through_to_the_extractor(text: str, should_fall_through: bool) -> None:
+    """**危ないのは「読めたつもり」のほう。**
+
+    `9/3 18時半 歯医者` は `18時半` が `HH:MM` ではないため件名の側へ流れ、
+    決め打ちの解釈は「終日の『18時半 歯医者』」として**成功してしまう**
+    （2026-09-06 に実測して見つけた穴）。時刻の匂いが件名に残っていたら読み取りへ回す。
+    """
+    when = slack_mod.parse_when(text, today="2026-09-06")
+
+    assert slack_mod._looks_unparsed(when) is should_fall_through

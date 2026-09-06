@@ -214,8 +214,16 @@ LINE_ALLOWLIST: set[str] = {
     # 文面そのもの（端末には出ない。slack.py の生成の下書きと同じ扱い）。418 以降は
     # `reason` ——`check()` / 返信と共有する診断文字列なので訳さない（このファイルの
     # 既存の方針と同じ。ADR-012 5d の判断）。
-    "calendar.py:335", "calendar.py:418", "calendar.py:423",
-    "calendar.py:444", "calendar.py:453", "calendar.py:460", "calendar.py:462",
+    # [データ] calendar.py（2026-09-06 の書き込み・読み取り）: 335/398 は `claude -p` へ
+    # 渡す指示の文面そのもの（端末には出ない。slack.py の生成の下書きと同じ扱い）。
+    # 残りは `reason` ——`check()` / Slack の返信と共有する診断文字列なので訳さない
+    # （このファイルの既存の方針と同じ。ADR-012 5d の判断）。
+    # ⚠ 行番号で固定してあるので、上に行を足すとここがずれる。ずれたら
+    #   `_string_constant_offenders` に直接聞いて入れ替えること（手で数えない）。
+    "calendar.py:335", "calendar.py:398", "calendar.py:427", "calendar.py:432", "calendar.py:454",     "calendar.py:463",
+    "calendar.py:470", "calendar.py:472", "calendar.py:494", "calendar.py:537",     "calendar.py:539",
+    "calendar.py:557", "calendar.py:564", "calendar.py:566", "calendar.py:573",     "calendar.py:575",
+    "calendar.py:582",
     # [共有] face.py: try_open_app_window は web の `/api/v1/face/open` の応答(reason)。
     # _popen_chrome も両方から共有される(コメント参照)。
     "face.py:52", "face.py:226", "face.py:237",
