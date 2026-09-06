@@ -89,6 +89,26 @@ def test_decision_rule_moves_task_to_section_b(conn, home: Path) -> None:
     assert task_mod.show(conn, tid)["section"] == "B"
 
 
+def test_decision_rule_records_web_as_the_source(conn, home: Path) -> None:
+    """**アプリから押した裁定に `web` が残ること**（S12・2026-09-06）。
+
+    一言なしの承認は `ruling` に既定の「承認」が入るだけなので、これが無いと
+    主人がアプリで押したものと執事が CLI で書いたものが台帳上で同一になる。
+    """
+    tid = task_mod.add(conn, "出所の残る裁定")
+    did = decision_mod.ask(conn, "押してください", task_id=tid, recommend="承認", background="")
+    conn.commit()
+
+    client = make_web_client(home)
+    res = client.post(f"/api/v1/tasks/decision/{did}/rule", json={"status": "approved", "ruling": ""})
+
+    assert res.status_code == 200
+    assert res.json()["actor"] == "web"  # 押した側が確かめられる
+    row = conn.execute("SELECT actor, ruling FROM decision WHERE id = ?", (did,)).fetchone()
+    assert row["actor"] == "web"
+    assert row["ruling"] == "承認"  # 一言なしでも、出所だけは別に残っている
+
+
 def test_decision_rule_404_unknown(home: Path) -> None:
     client = make_web_client(home)
     res = client.post("/api/v1/tasks/decision/D999/rule", json={"status": "approved", "ruling": "よい"})

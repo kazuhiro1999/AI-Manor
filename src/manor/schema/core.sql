@@ -64,7 +64,13 @@ CREATE TABLE IF NOT EXISTS decision (
   background TEXT NOT NULL DEFAULT '',       -- 背景・目的・意図・影響
   risk       TEXT NOT NULL DEFAULT '' CHECK (risk IN ('','low','medium','high')),
   ruling     TEXT NOT NULL DEFAULT '',       -- 主人の裁定文
-  asked_at   TEXT NOT NULL, decided_at TEXT
+  asked_at   TEXT NOT NULL, decided_at TEXT,
+  -- 誰が裁定したか（`task_event.actor` と同じ語・同じ意味）。S12（2026-09-06）:
+  -- 一言なしの承認・却下は ruling に既定の「承認」「却下」が入るので、**主人が
+  -- アプリで押したものと、執事が CLI から書いたものが台帳上で見分けられなかった**。
+  -- 既定は空文字＝**出所の記録なし**（古い行と、これから書く行を区別するため。
+  -- `task_event.actor` の既定 'butler' とは意図的に違う——あちらは全行に値がある）。
+  actor      TEXT NOT NULL DEFAULT ''
 );
 
 CREATE TABLE IF NOT EXISTS milestone (

@@ -326,7 +326,11 @@ def cmd_decision_ask(conn, home, args) -> object:
 
 
 def cmd_decision_rule(conn, home, args) -> object:
-    result = decision_mod.rule(conn, args.id, args.verdict, ruling=args.ruling)
+    # 既定は `"cli"`——**この口から来たことしか分からない**（主人が自分で叩いたのか、
+    # 執事が書いたのかは区別できない）。分かっていない以上のことを台帳に書かない。
+    result = decision_mod.rule(
+        conn, args.id, args.verdict, ruling=args.ruling, actor=args.actor or "cli"
+    )
     if args.json:
         return result
     return f"{args.id} -> {args.verdict}"
@@ -338,7 +342,32 @@ def cmd_decision_list(conn, home, args) -> object:
         return rows
     if not rows:
         return i18n.t("common.none")
-    return "\n".join(i18n.t("decision.list.line", id=r["id"], status=r["status"], title=r["title"]) for r in rows)
+    out: list[str] = []
+    for r in rows:
+        line = i18n.t("decision.list.line", id=r["id"], status=r["status"], title=r["title"])
+        # 裁定済みの行にだけ出所を添える（open にはまだ出所が無い）
+        if r["status"] != "open":
+            line += i18n.t("decision.list.actor_suffix", actor=format_actor(r.get("actor")))
+        out.append(line)
+    return "\n".join(out)
+
+
+def format_actor(actor: object) -> str:
+    """裁定の出所を人向けの1語に。**空なら「記録なし」と明示する**（S12）。
+
+    黙って空欄にすると「執事が書いた」と読まれてしまう——分かっていないことを、
+    分かっているように見せない。
+    """
+    value = str(actor or "").strip()
+    if not value:
+        return i18n.t("decision.actor.unrecorded")
+    if value in _KNOWN_ACTORS:
+        return i18n.t(f"decision.actor.{value}")
+    return value  # 知らない出所は生のまま出す（勝手に訳さない）
+
+
+#: 訳語を持つ出所。これ以外は生の文字列をそのまま出す。
+_KNOWN_ACTORS: frozenset[str] = frozenset({"web", "cli", "butler", "slack"})
 
 
 def cmd_decision_show(conn, home, args) -> object:
@@ -360,6 +389,8 @@ def cmd_decision_show(conn, home, args) -> object:
     lines.append(f"asked_at: {data['asked_at']}")
     if data["decided_at"]:
         lines.append(f"decided_at: {data['decided_at']} ruling: {data['ruling']}")
+        # **出所を必ず1行出す。** 記録の無い古い行は黙って空欄にせず、そう言う（S12）。
+        lines.append(i18n.t("decision.show.actor", actor=format_actor(data.get("actor"))))
     if data["tasks"]:
         lines.append(i18n.t("decision.show.tasks", tasks=", ".join(data["tasks"])))  # type: ignore[arg-type]
     lines.append(i18n.t("decision.show.events_header"))
@@ -930,6 +961,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("id")
     p.add_argument("verdict")
     p.add_argument("--ruling", default="", help=i18n.t("cli.decision.rule.ruling.help"))
+    p.add_argument("--actor", default="", help=i18n.t("cli.decision.rule.actor.help"))
     p.add_argument("--json", action="store_true")
     p.add_argument("--no-render", action="store_true")
     p.set_defaults(func=cmd_decision_rule, is_write=True)

@@ -216,7 +216,8 @@ LINE_ALLOWLIST: set[str] = {
     # [データ] decision.py: 承認・却下のときに入れる既定のルーリング文言そのものは、
     # 台帳に永続する記録(主人が入れたデータと同じ扱い)。CLI の言語設定に関わらず
     # 日本語のまま。
-    "decision.py:87",
+    # 2026-09-06（S12）: `rule()` に actor の説明を足して行がずれた（87 → 101）。
+    "decision.py:101",
     # [データ] chef/ops.py: validate_date の既定 field="日付"。tests/staff/test_chef.py が
     # field 省略で呼ぶため既定値は残すが、エラーの ManorError 側では呼び出し元が
     # field_key を渡して訳している(cli.py 側からの呼び出しはすべて明示的)。

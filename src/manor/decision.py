@@ -65,7 +65,21 @@ def ask(
     return decision_id
 
 
-def rule(conn: sqlite3.Connection, decision_id: str, verdict: str, *, ruling: str) -> dict[str, object]:
+def rule(
+    conn: sqlite3.Connection, decision_id: str, verdict: str, *, ruling: str,
+    actor: str = "butler",
+) -> dict[str, object]:
+    """裁定を下す。
+
+    `actor`（S12・2026-09-06）: **誰が裁定したか。** `task.status()` と同じ語・同じ既定
+    （`"butler"`）。Web の口は `"web"`、CLI は `"cli"` を明示的に渡す。
+
+    なぜ要るか: 一言なしの承認・却下は `ruling` に既定の「承認」「却下」が入るので、
+    **主人がアプリで押したものと、執事が CLI から書いたものが台帳上で同一**になっていた。
+    D6（`external_send` という fixed=true への例外を①層へ書き込む裁定）でそれが起き、
+    検分側が「誰の承認か判定できない」と指摘した——**いちばん記録が要るところで、
+    いちばん薄かった。**
+    """
     if verdict not in VALID_VERDICTS:
         raise ManorError(
             f"語彙外の裁定です: {verdict!r}（approved/rejected/modified）",
@@ -96,8 +110,8 @@ def rule(conn: sqlite3.Connection, decision_id: str, verdict: str, *, ruling: st
 
     now_ts = util.now()
     conn.execute(
-        "UPDATE decision SET status = ?, ruling = ?, decided_at = ? WHERE id = ?",
-        (verdict, ruling, now_ts, decision_id),
+        "UPDATE decision SET status = ?, ruling = ?, decided_at = ?, actor = ? WHERE id = ?",
+        (verdict, ruling, now_ts, actor, decision_id),
     )
     graph.touch_node(conn, decision_id)
 
@@ -109,7 +123,9 @@ def rule(conn: sqlite3.Connection, decision_id: str, verdict: str, *, ruling: st
             conn.execute("UPDATE task SET section = 'B' WHERE id = ?", (tid,))
             graph.touch_node(conn, tid)
             moved.append(tid)
-    return {"id": decision_id, "status": verdict, "moved_to_b": moved}
+    # `actor` も返す——Web の口はこれをそのまま返すので、押した側が「何が記録されたか」を
+    # 確かめられる（画面の「判断待ち」は open だけを出すので、裁定後はここでしか見えない）。
+    return {"id": decision_id, "status": verdict, "moved_to_b": moved, "actor": actor}
 
 
 def list_decisions(conn: sqlite3.Connection, *, open_only: bool = False) -> list[dict[str, object]]:

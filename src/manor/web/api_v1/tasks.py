@@ -151,7 +151,12 @@ def register(app: FastAPI, ctx: WebContext) -> None:
         require_writable(ctx)
         with open_conn(ctx) as conn:
             try:
-                result = decision_mod.rule(conn, decision_id, body.status, ruling=body.ruling)
+                # **出所を残す**（S12）。`task_status` が actor="web" を渡しているのに
+                # ここだけ渡していなかったため、主人がアプリで押した裁定と、執事が CLI で
+                # 書いた裁定が台帳上で見分けられなかった。
+                result = decision_mod.rule(
+                    conn, decision_id, body.status, ruling=body.ruling, actor="web"
+                )
             except ManorError as exc:
                 conn.rollback()
                 raise manor_error_to_http(exc)

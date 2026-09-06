@@ -143,6 +143,8 @@ def migrate_core(home: Path) -> None:
         conn.executescript(CORE_SCHEMA_PATH.read_text(encoding="utf-8"))
         _add_column_if_missing(conn, "decision", "evidence", "TEXT NOT NULL DEFAULT ''")
         _add_column_if_missing(conn, "task_event", "authorized_by", "TEXT")
+        # S12（2026-09-06）: 裁定の出所。既存の行は空文字＝「出所の記録なし」。
+        _add_column_if_missing(conn, "decision", "actor", "TEXT NOT NULL DEFAULT ''")
         # ADR-010 D2: 既存 DB の task に kind 列を冪等に足す。
         _add_column_if_missing(conn, "task", "kind", "TEXT NOT NULL DEFAULT ''")
         # 済んだ節目（2026-09-05）。既存 DB は全部 NULL＝「まだ」から始まる。
@@ -196,6 +198,8 @@ def init(home: Path) -> list[str]:
         # 段を通るので、新規・既存どちらも同じ経路で列を持つ。
         _add_column_if_missing(conn, "decision", "evidence", "TEXT NOT NULL DEFAULT ''")
         _add_column_if_missing(conn, "task_event", "authorized_by", "TEXT")
+        # S12（2026-09-06）: 裁定の出所。既存の行は空文字＝「出所の記録なし」。
+        _add_column_if_missing(conn, "decision", "actor", "TEXT NOT NULL DEFAULT ''")
 
         # ADR-010 D2: 既存 DB の task に kind 列を冪等に足す（新規 DB は core.sql の
         # CREATE TABLE が最初から持つ）。
