@@ -58,6 +58,10 @@ def _add_run(sub: "argparse._SubParsersAction") -> None:
     p.add_argument("--model", default=runner.DEFAULT_MODEL)
     p.add_argument("--max-turns", type=int, default=runner.DEFAULT_MAX_TURNS, dest="max_turns")
     p.add_argument("--no-resume", action="store_true", dest="no_resume", help=i18n.t("cli.night.run.no_resume.help"))
+    p.add_argument(
+        "--sleep-back", action="store_true", dest="sleep_back",
+        help=i18n.t("cli.night.run.sleep_back.help"),
+    )
     p.add_argument("--json", action="store_true")
     p.set_defaults(func=_cmd_run, is_write=False, needs_db=False)
 
@@ -76,6 +80,7 @@ def _cmd_run(args: "argparse.Namespace") -> int:
         max_turns=args.max_turns,
         no_resume=args.no_resume,
         echo=not args.json,
+        sleep_back_after=bool(getattr(args, "sleep_back", False)),
     )
     if args.json:
         print(json.dumps(result, ensure_ascii=False, indent=2))
@@ -111,13 +116,20 @@ def _add_install(sub: "argparse._SubParsersAction") -> None:
     p.add_argument("--at", default="01:00")
     p.add_argument("--dry-run", action="store_true", dest="dry_run", help=i18n.t("cli.night.install.dry_run.help"))
     p.add_argument("--yes", action="store_true", help=i18n.t("cli.night.install.yes.help"))
+    p.add_argument(
+        "--sleep-back", action="store_true", dest="sleep_back",
+        help=i18n.t("cli.night.install.sleep_back.help"),
+    )
     p.add_argument("--json", action="store_true")
     p.set_defaults(func=_cmd_install, is_write=False, needs_db=False)
 
 
 def _cmd_install(args: "argparse.Namespace") -> int:
     execute = bool(args.yes) and not bool(args.dry_run)
-    result = runner.install(at=args.at, execute=execute)
+    result = runner.install(
+        at=args.at, execute=execute,
+        sleep_back_after=bool(getattr(args, "sleep_back", False)),
+    )
     if args.json:
         print(json.dumps(result, ensure_ascii=False, indent=2))
     else:
@@ -152,9 +164,10 @@ def _outcome_line(result: dict, verb: str) -> str:
     if result.get("ok"):
         return i18n.t(f"night.{verb}.done")
     detail = (result.get("stderr") or result.get("stdout") or "").strip()
-    return i18n.t(f"night.{verb}.failed").format(
-        returncode=result.get("returncode"), detail=detail
-    )
+    # **差し込みは `t()` に渡す。** `t(key).format(...)` にすると、`t()` の中で
+    # 引数ゼロの `format` が先に走って I18nError で落ちる（2026-09-06 の検分で実測）——
+    # 「失敗を隠さない」ために足した経路が、そこだけ例外で落ちる形になっていた。
+    return i18n.t(f"night.{verb}.failed", returncode=result.get("returncode"), detail=detail)
 
 
 def _add_report(sub: "argparse._SubParsersAction") -> None:

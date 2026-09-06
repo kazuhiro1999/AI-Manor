@@ -229,3 +229,20 @@ CREATE TABLE IF NOT EXISTS task_kind (
   sort INTEGER NOT NULL DEFAULT 0,
   archived_at TEXT
 );
+
+-- T4（2026-09-06）: v1 `apps/slack-relay/watch-inbox.ps1` の `#task` / `#log` 取り込みの
+-- 移植。`slack_reply`（＝判断待ちスレッドへの返信）とは別の表にしてある——あちらは
+-- 「スレッドの返信を裁定として読む」経路、こちらは「チャンネルの本文を指示として読む」経路で、
+-- 読む場所も冪等性の単位も違う。混ぜると、片方の取り込み済みの印がもう片方を黙らせる。
+-- UNIQUE(channel, ts) が二重取り込みの歯止め（`INSERT ... ON CONFLICT DO NOTHING`）。
+-- `kind` は task / log / ''（接頭辞はあるが本文が無い＝案内だけ返した）。
+CREATE TABLE IF NOT EXISTS slack_intake (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  channel TEXT NOT NULL,
+  ts TEXT NOT NULL,
+  kind TEXT NOT NULL DEFAULT '',
+  node_id TEXT REFERENCES node(id) ON DELETE SET NULL,
+  consumed_at TEXT NOT NULL,
+  UNIQUE (channel, ts)
+);
+CREATE INDEX IF NOT EXISTS slack_intake_ts ON slack_intake(channel, ts);

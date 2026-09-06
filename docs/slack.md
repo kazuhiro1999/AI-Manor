@@ -169,6 +169,49 @@ Bot の招待・チャンネル ID とトークンの入力まで、拡張機構
 （`not_installed` にはならず `needs_config` → 設定後 `ready` → `test()` 後 `ok` まで
 遷移することを確認した）。
 
+## `manor slack intake` — `#task` / `#log` を拾う（2026-09-06 に追加。T4）
+
+v1 `apps/slack-relay/watch-inbox.ps1` の取り込み部分の移植。`inbox` が**スレッドの
+返信を裁定として読む**のに対し、こちらは `conversations.history` で**チャンネルの
+本文を指示として読む**。
+
+```
+uv run manor slack intake [--dry-run] [--json]
+```
+
+| 書いたもの | 起きること |
+|---|---|
+| `#task 来週までに評価をまとめる` | タスクが1本立ち、その id を返信する |
+| `#log P4 実装を進めた` | メモ（`note`）として残り、返信する |
+| `#task`（本文なし） | **書き方の案内を返す**（黙って捨てない） |
+| 接頭辞の無い投稿 | **何もしない・返信もしない**（会話に割り込まない） |
+
+`#task評価をまとめる` のように**空白を空けずに続けても読む**（日本語はそう書く）。
+ASCII の英数字が続くときだけ別の語と見なすので、`#tasks` は `#task` ではない。
+
+### v1 と違うところ
+
+**本文を `claude -p` に分解させない。** v1 は分解してから起票していたが、取り込みの
+経路に LLM を挟むと、落ちたときに主人の言葉ごと消える。ここでは本文をそのまま
+`body` に残して起票する——分解は執事が起きているときにやればよい。
+
+### 読んだ位置は `meta` に持つ（取り込んだ位置ではない）
+
+接頭辞の無い投稿は `slack_intake` に印を残さないので、「取り込み済みの最大 ts」を
+読み出し位置に使うと、**`#task` が1件も来ない限り窓が「15分前」から動かず、16分前に
+届いた投稿を永遠に見落とす**。だから `meta` の `slack_intake_cursor:<channel>` に
+**見た中でいちばん新しい ts**を持つ（v1 が `watch-state.json` を別に持っていたのと同じ理由）。
+記録が1件も無い初回だけ15分前まで遡る——導入した日にチャンネルの全履歴を起票しないため。
+
+### 冪等性
+
+`slack_intake`（`channel` / `ts` / `kind` / `node_id` / `consumed_at`。`UNIQUE(channel, ts)`）。
+`slack_reply` とは**別の表**にしてある——読む場所も冪等性の単位も違うので、混ぜると
+片方の取り込み済みの印がもう片方を黙らせる。
+
+禁止語スキャンに引っかかったときは**返信だけを止め、取り込みは残す**——巻き戻すと
+次の起動で同じものをもう一度起票してしまう。
+
 ## `manor slack morning` — 朝の定例（2026-09-06 に追加）
 
 v1 `apps/slack-relay/morning.ps1` の移植。**3つを順に、前が失敗しても次へ進む**:
@@ -213,6 +256,7 @@ Slack のためだけの常駐・別のタスクスケジューラ登録は作�
 ```
 uv run manor slack brief [--generate] [--dry-run] [--json]
 uv run manor slack inbox [--dry-run] [--json]
+uv run manor slack intake [--dry-run] [--json]
 uv run manor slack morning [--no-generate] [--dry-run] [--json]
 uv run manor slack test [--json]                # auth.test で疎通確認する
 ```

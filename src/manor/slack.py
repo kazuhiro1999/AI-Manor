@@ -63,6 +63,7 @@ import re
 import shutil
 import sqlite3
 import subprocess
+import time
 import tomllib
 import urllib.error
 import urllib.parse
@@ -909,6 +910,228 @@ def _cmd_inbox(args: argparse.Namespace) -> int:
     return 0 if result.get("ok", True) else 1
 
 
+# --- intake（`#task` / `#log`。v1 watch-inbox.ps1 の移植。T4） -------------------
+
+#: 接頭辞 → 何として読むか。**この2つだけ**を読む。
+INTAKE_PREFIXES = {"#task": "task", "#log": "log"}
+
+#: 初回（取り込みの記録が1件も無いとき）に遡る分数。v1 の `-FirstRunMinutes 15` と同じ。
+#: **チャンネルの全履歴を遡らない**——導入した日に何百件も起票してしまう。
+INTAKE_FIRST_RUN_MINUTES = 15
+
+#: `#task` の本文からタイトルへ切り出す長さ。溢れた分は body に丸ごと残る。
+INTAKE_TITLE_MAX = 80
+
+
+def parse_intake(text: str) -> dict[str, str] | None:
+    """`#task 本文` / `#log 本文` を読む。
+
+    **接頭辞が無ければ `None`**——雑談には反応しない（反応すると会話に割り込む。
+    v1 の姿勢をそのまま引き継いだ）。接頭辞があって本文が空なら `body=""` を返す:
+    **黙って捨てない**ためで、呼び出し元は案内を1行返す。2026-08-26 に v1 が
+    `#task` だけの投稿（音声入力で本文が乗らなかった）を無言で捨て、主人が
+    気づけなかった——その事故の再発を止めるのがこの分岐。
+    """
+    body = (text or "").lstrip("﻿").strip()
+    if body.startswith("- "):
+        body = body[2:].lstrip()
+    lowered = body.lower()
+    for prefix, kind in INTAKE_PREFIXES.items():
+        if not lowered.startswith(prefix):
+            continue
+        rest = body[len(prefix):]
+        head = rest[:1]
+        # 空白で区切るのが基本だが、**日本語は空白を空けずに続けて書く**——
+        # `#task評価をまとめる` を弾くと、主人の言葉が黙って消える。ASCII の英数字が
+        # 続くときだけ別の語と見なす（`#tasks` は `#task` ではない）。
+        if head and (head.isascii() and (head.isalnum() or head == "_")):
+            continue
+        return {"kind": kind, "body": rest.strip()}
+    return None
+
+
+def _intake_cursor_key(channel: str) -> str:
+    return f"slack_intake_cursor:{channel}"
+
+
+def _intake_oldest(conn: sqlite3.Connection, channel: str) -> str:
+    """`conversations.history` の `oldest`（＝どこから読むか）。
+
+    **読んだ位置を持つ。取り込んだ位置ではない。** 接頭辞の無い投稿は
+    `slack_intake` に印を残さないので、「取り込み済みの最大 ts」を位置に使うと、
+    `#task` が1件も来ない限り窓が「15分前」から動かず、**16分前の `#task` を
+    永遠に見落とす**（v1 が `watch-state.json` を別に持っていた理由）。
+    """
+    row = conn.execute(
+        "SELECT value FROM meta WHERE key = ?", (_intake_cursor_key(channel),)
+    ).fetchone()
+    if row is not None and row["value"]:
+        return str(row["value"])
+    return f"{time.time() - INTAKE_FIRST_RUN_MINUTES * 60:.6f}"
+
+
+def _set_intake_cursor(conn: sqlite3.Connection, channel: str, ts: str) -> None:
+    conn.execute(
+        "INSERT INTO meta (key, value) VALUES (?, ?)"
+        " ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        (_intake_cursor_key(channel), ts),
+    )
+
+
+def intake(home: Path, *, dry_run: bool = False) -> dict[str, Any]:
+    """`manor slack intake`。チャンネルの新着から `#task` / `#log` を拾う。
+
+    `inbox()`（スレッドの返信を裁定として読む）とは**読む場所が違う**——こちらは
+    `conversations.history` でチャンネルそのものを見る。取り込みの印も別の表
+    （`slack_intake`）に持つので、片方の冪等性がもう片方を黙らせることはない。
+
+    守っていること（v1 `watch-inbox.ps1` から）:
+
+    - **接頭辞のある投稿には必ず何か返す。** 本文が無ければ書き方の案内を返す
+    - **接頭辞の無い雑談には返さない**（会話に割り込まない）
+    - **返信は1回の起動につき1通にまとめる**
+    - **Bot 自身の投稿は読まない**（無限ループの防止）
+    - **新着が無ければ Slack へ何も投げない**（最も頻繁に走る経路を静かに保つ）
+
+    v1 との違い: v1 は `#task` の本文を `claude -p` に分解させていた。ここでは
+    **本文をそのまま起票する**——分解は執事が起きているときにやればよく、
+    取り込みの経路に LLM を挟むと、落ちたときに主人の言葉ごと消える。
+    """
+    home = Path(home)
+    conn = db.connect(home)
+    try:
+        token = bot_token()
+        if not token:
+            return {"ok": False, "reason": "bot_token が未設定です", "taken": [], "replied": False}
+        channel = channel_id(home)
+        if not channel:
+            return {"ok": False, "reason": "channel が未設定です", "taken": [], "replied": False}
+
+        resp = _slack_api(
+            "conversations.history", token,
+            params={"channel": channel, "oldest": _intake_oldest(conn, channel), "limit": 200},
+        )
+        if not resp.get("ok"):
+            return {"ok": False, "reason": str(resp.get("error", "不明")), "taken": [], "replied": False}
+
+        messages = resp.get("messages")
+        messages = messages if isinstance(messages, list) else []
+        # Slack は新しい順に返す。**古い順に処理する**——起票の順序が主人の発言順と
+        # 揃っていないと、あとから読んだときに話が前後する。
+        messages = sorted(
+            (m for m in messages if isinstance(m, dict)), key=lambda m: float(m.get("ts") or 0)
+        )
+
+        taken: list[dict[str, Any]] = []
+        reply_lines: list[str] = []
+        # 読んだ位置。**接頭辞の有無に関わらず**、見た中でいちばん新しい ts まで進める。
+        newest_seen = ""
+
+        for msg in messages:
+            ts = str(msg.get("ts") or "")
+            if not ts:
+                continue
+            newest_seen = ts  # 古い順に回しているので、最後に代入されたものが最新
+            if msg.get("bot_id") or msg.get("subtype"):
+                continue
+            if msg.get("thread_ts") and str(msg.get("thread_ts")) != ts:
+                continue  # スレッドの返信は inbox() の担当。二重に読まない
+            if conn.execute(
+                "SELECT id FROM slack_intake WHERE channel = ? AND ts = ?", (channel, ts)
+            ).fetchone() is not None:
+                continue
+
+            parsed = parse_intake(str(msg.get("text") or ""))
+            if parsed is None:
+                continue  # 接頭辞の無い投稿。印も残さない（雑談は取り込みの対象外）
+
+            kind, body = parsed["kind"], parsed["body"]
+            if not body:
+                reply_lines.append(_intake_empty_guidance(kind))
+                # `taken` の形は揃える（`node_id` の有無で呼び出し側を分岐させない）
+                taken.append({"ts": ts, "kind": "", "node_id": None, "reason": "本文がありません"})
+                if not dry_run:
+                    _record_intake(conn, channel=channel, ts=ts, kind="", node_id=None)
+                continue
+
+            node_id: str | None = None
+            if not dry_run:
+                node_id = _create_from_intake(conn, kind=kind, body=body)
+                _record_intake(conn, channel=channel, ts=ts, kind=kind, node_id=node_id)
+            taken.append({"ts": ts, "kind": kind, "node_id": node_id, "body": body})
+            reply_lines.append(_intake_ack(kind, node_id, body))
+
+        if not dry_run and newest_seen:
+            _set_intake_cursor(conn, channel, newest_seen)
+
+        if not reply_lines:
+            return {"ok": True, "taken": taken, "replied": False, "reason": "新着はありません"}
+
+        text = "\n".join(reply_lines)
+        scan = scan_for_leak_terms(text)
+        if not scan.get("ok"):
+            # 取り込み自体は済ませる（主人の言葉を落とさない）。返信だけを止める。
+            if not dry_run:
+                conn.commit()
+            return {
+                "ok": False, "taken": taken, "replied": False,
+                "reason": f"禁止語スキャンのため返信しません: {scan.get('reason', '')}",
+                "scan": scan,
+            }
+        if dry_run:
+            return {"ok": True, "taken": taken, "replied": False, "dry_run": True, "text": text}
+
+        conn.commit()
+        post = _slack_api("chat.postMessage", token, params={"channel": channel, "text": text})
+        if not post.get("ok"):
+            # **取り込みは済んでいる。** 返信できなかったことだけを言う——ここで
+            # 取り込みを巻き戻すと、次の起動で同じものをもう一度起票してしまう。
+            return {
+                "ok": False, "taken": taken, "replied": False,
+                "reason": f"取り込みましたが返信できませんでした: {post.get('error', '不明')}",
+            }
+        return {"ok": True, "taken": taken, "replied": True, "text": text}
+    finally:
+        conn.commit()
+        conn.close()
+
+
+def _intake_empty_guidance(kind: str) -> str:
+    if kind == "task":
+        return "・`#task` を受け取りましたが本文がありません。例: `#task 来週の会までに評価をまとめる`"
+    return "・`#log` を受け取りましたが本文がありません。例: `#log P4 実装を進めた`"
+
+
+def _intake_ack(kind: str, node_id: str | None, body: str) -> str:
+    head = body.splitlines()[0][:INTAKE_TITLE_MAX]
+    label = "起票しました" if kind == "task" else "控えました"
+    return f"・{node_id or '(dry-run)'} として{label}: {head}"
+
+
+def _create_from_intake(conn: sqlite3.Connection, *, kind: str, body: str) -> str:
+    """`#task` はタスク、`#log` はメモとして DB へ。**本文は丸ごと残す。**"""
+    title = body.splitlines()[0][:INTAKE_TITLE_MAX] or body[:INTAKE_TITLE_MAX]
+    if kind == "task":
+        from . import task as task_mod
+
+        return task_mod.add(
+            conn, title, cls="general", now="Slack から受け取りました（#task）", body=body
+        )
+    from . import graph as graph_mod
+
+    return graph_mod.note_add(conn, title, body=body)
+
+
+def _record_intake(
+    conn: sqlite3.Connection, *, channel: str, ts: str, kind: str, node_id: str | None
+) -> None:
+    conn.execute(
+        "INSERT INTO slack_intake (channel, ts, kind, node_id, consumed_at)"
+        " VALUES (?, ?, ?, ?, ?) ON CONFLICT(channel, ts) DO NOTHING",
+        (channel, ts, kind, node_id, util.now()),
+    )
+
+
 def morning(home: Path, *, generate: bool = True, dry_run: bool = False) -> dict[str, Any]:
     """朝の定例。**取り込んでから送る**（v1 `apps/slack-relay/morning.ps1` の移植）。
 
@@ -937,6 +1160,29 @@ def morning(home: Path, *, generate: bool = True, dry_run: bool = False) -> dict
     steps["brief"] = brief(home, generate=generate, dry_run=dry_run)
     steps["ok"] = bool(steps["brief"].get("sent") or steps["brief"].get("dry_run"))
     return steps
+
+
+def _cmd_intake(args: argparse.Namespace) -> int:
+    home = util.manor_home()
+    result = intake(home, dry_run=bool(args.dry_run))
+    if args.json:
+        _print_json(result)
+        return 0 if result.get("ok") else 1
+    if not result.get("ok"):
+        print(i18n.t("slack.intake.failed", reason=result.get("reason", "")))
+        return 1
+    taken = result.get("taken") or []
+    if not taken:
+        print(i18n.t("slack.intake.nothing"))
+        return 0
+    for item in taken:
+        print(i18n.t(
+            "slack.intake.taken_line",
+            ts=item.get("ts", ""),
+            kind=item.get("kind") or "—",
+            node_id=item.get("node_id") or "—",
+        ))
+    return 0
 
 
 def _cmd_morning(args: argparse.Namespace) -> int:
@@ -1007,6 +1253,14 @@ def _add_slack_subcommands(sub: "argparse._SubParsersAction", *, needs_db: bool 
     )
     i.add_argument("--json", action="store_true")
     i.set_defaults(func=_cmd_inbox, **extra)
+
+    n = sub.add_parser("intake", help=i18n.t("cli.slack.intake.help"))
+    n.add_argument(
+        "--dry-run", action="store_true", dest="dry_run",
+        help=i18n.t("cli.slack.intake.dry_run.help"),
+    )
+    n.add_argument("--json", action="store_true")
+    n.set_defaults(func=_cmd_intake, **extra)
 
     m = sub.add_parser("morning", help=i18n.t("cli.slack.morning.help"))
     m.add_argument(

@@ -18,8 +18,9 @@ manor 側からトリガーはしない」。このため `manor night install` 
 ```
 uv run python -m manor.night run [--deadline 06:30] [--min-minutes 20] [--grace 15]
                                   [--dry-run] [--exec "<cmd>"] [--now HH:MM] [--model sonnet]
+                                  [--sleep-back]
 uv run python -m manor.night status
-uv run python -m manor.night install --at 01:00 [--dry-run] [--yes]
+uv run python -m manor.night install --at 01:00 [--sleep-back] [--dry-run] [--yes]
 uv run python -m manor.night uninstall [--yes]
 uv run python -m manor.night report [DATE]
 ```
@@ -88,6 +89,22 @@ runner.run(home, *, repo_root=None, deadline="06:30", min_minutes=20, grace_minu
 **返り値を見てから「登録しました」と言う**（同じく 2026-09-06 に是正）。それまでは
 `schtasks` が落ちても成功と報告し、終了コードも 0 でした——**夜勤が丸ごと動かない朝**を
 作る形です。いまは `ok`（真偽）を結果に持ち、失敗なら理由と終了コード1で止まります。
+
+## `--sleep-back` — 終わったら眠りへ戻す（2026-09-06 に追加。T6）
+
+v1 `apps/night-shift/sleep-back.ps1` の移植。**自分のウェイクタイマーで起きたときだけ**
+PC をスリープへ戻す。電源設定そのものは触らない——日中に勝手に寝られると困るので、
+毎回 `powercfg /lastwake` を見て、直近の復帰がこのタスク（`manor-night`）によるもの
+だったときだけ眠る。**主人が自分で起こした PC は眠らせない。読めなかったときも眠らせない。**
+
+- **休止（hibernate）ではなくスリープ（S3）**。休止するとウェイクタイマーが効かず翌日が動かない
+- **判定はタスク名で行う**。`powercfg` の文言は OS の言語で変わるが、タスク名は変わらない
+  （v1 は日本語の文言に依存していた）
+- **`SetSuspendState` は投げたら待たない**。あれは機械が起きるまで戻らないので、
+  `subprocess.run` ＋ timeout で呼ぶと、翌朝に必ず「時間切れで失敗」と記録されてしまう
+- 記録（`last-run.json`）を**書き終えてから**眠る。ここより後ろに置いたものは翌朝まで動かない
+- `manor night install --sleep-back` を渡すと、**登録するコマンドの中に** `--sleep-back` が
+  入る。設定ファイルに隠さないのは、`schtasks /Query` を見れば意図が分かるようにするため
 
 ## 作業報告の書式（`home/night/reports/<日付>.md`）
 

@@ -46,7 +46,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from .. import db, runlog, util
+from .. import db, runlog, util, winps
 
 # --- 置き場 ------------------------------------------------------------------
 
@@ -518,6 +518,7 @@ def run(
     no_resume: bool = False,
     lock_max_min: int = DEFAULT_LOCK_MAX_MIN,
     echo: bool = True,
+    sleep_back_after: bool = False,
 ) -> dict[str, Any]:
     """`manor night run` の入口。D10: まず戻し、それから消音する。**声の失敗（VOICEVOX 未設定
     含む）で夜勤自体は止めない**——本体（`_run_impl`）は変えず、その前後を薄く包むだけ。
@@ -525,8 +526,9 @@ def run(
     home = Path(home)
     _voice_restore_safely(home)
     _voice_mute_safely(home)
+    result: dict[str, Any] = {}
     try:
-        return _run_impl(
+        result = _run_impl(
             home,
             repo_root=repo_root,
             deadline=deadline,
@@ -541,8 +543,21 @@ def run(
             lock_max_min=lock_max_min,
             echo=echo,
         )
+        return result
     finally:
         _voice_restore_safely(home)
+        # **いちばん最後に眠る。** 声を戻し、記録を書き終えてから——`SetSuspendState` の
+        # あとに置いたものは翌朝まで動かない。
+        #
+        # 眠らせない場合が2つある: ①`locked`（別の実行が働いている最中） ②`result` が
+        # 空（`_run_impl` が例外で落ちた）。**どちらも「起きたまま」のほうが安全側**。
+        if sleep_back_after and result and result.get("status") != "locked":
+            sb = sleep_back(dry_run=dry_run)
+            NightLog(home, echo=echo).write(
+                "INFO", "眠りへ戻します" if sb.get("slept") else f"眠りません: {sb.get('reason')}"
+            )
+            result["sleep_back"] = sb
+            _write_last_run(home, result)
 
 
 def _run_impl(
@@ -716,6 +731,69 @@ def _run_impl(
         _write_last_run(home, result)
 
 
+# --- 眠りへ戻す（v1 `apps/night-shift/sleep-back.ps1` の移植。T6） ---------------
+
+#: `powercfg /lastwake` と `SetSuspendState` を呼ぶときの待ち時間（秒）。
+SLEEP_BACK_TIMEOUT = 30
+
+
+def woken_by_task(task_name: str = DEFAULT_TASK_NAME) -> dict[str, Any]:
+    """直近の復帰が、このタスクのウェイクタイマーによるものか（`powercfg /lastwake`）。
+
+    **タスク名で判定する。** `powercfg` の文言は OS の言語で変わる（v1 は日本語の
+    文言に依存していた）が、タスク名は変わらない——`NT TASK\\manor-night` の形で
+    必ず出る。読めなかったときは `None`（＝分からない）を返し、**眠らせない**。
+    """
+    if not sys.platform.startswith("win"):
+        return {"woken": None, "reason": "windows 以外では判定しません"}
+    code, out, err = winps.run("powercfg /lastwake", timeout=SLEEP_BACK_TIMEOUT)
+    if code != 0:
+        return {"woken": None, "reason": f"powercfg /lastwake を読めません: {(err or out).strip()[:200]}"}
+    return {"woken": task_name.lower() in out.lower(), "detail": out.strip()[:400]}
+
+
+def sleep_back(
+    *, task_name: str = DEFAULT_TASK_NAME, dry_run: bool = False
+) -> dict[str, Any]:
+    """**自分のウェイクタイマーで起きたときだけ** PC をスリープへ戻す。
+
+    主人が自分で起こしていた PC を勝手に眠らせない——だから電源設定そのものは触らず、
+    毎回 `powercfg /lastwake` を見る（v1 の判断をそのまま引き継いだ）。
+
+    **休止（hibernate）ではなくスリープ（S3）。** 休止するとウェイクタイマーが効かず、
+    翌日の夜勤が動かない。
+    """
+    probe = woken_by_task(task_name)
+    if probe.get("woken") is not True:
+        return {"slept": False, "reason": probe.get("reason", "この復帰は執事のタスクによるものではありません"), **probe}
+    if dry_run:
+        return {"slept": False, "reason": "dry-run のため眠りません", **probe}
+    script = (
+        "Add-Type -Namespace Manor -Name Power -MemberDefinition '"
+        '[DllImport(\\"powrprof.dll\\", SetLastError = true)] '
+        "public static extern bool SetSuspendState(bool hibernate, bool forceCritical, "
+        "bool disableWakeEvent);'\n"
+        "[Manor.Power]::SetSuspendState($false, $false, $false)\n"
+    )
+    # **待たない。** `SetSuspendState` は機械が起きるまで戻らないので、`winps.run`
+    # （＝`subprocess.run` ＋ timeout）で呼ぶと、翌朝に必ず「時間切れ」で失敗したことに
+    # なってしまう——実際には眠れているのに。投げたら離す。
+    argv = [
+        "powershell", "-NoProfile", "-NonInteractive",
+        "-EncodedCommand", winps.encode_command(script),
+    ]
+    try:
+        subprocess.Popen(  # noqa: S603 — argv 固定。文字列をシェルに渡していない
+            argv,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            stdin=subprocess.DEVNULL,
+        )
+    except Exception as exc:  # noqa: BLE001 — 眠れないことは、夜勤の失敗ではない
+        return {"slept": False, "reason": f"スリープ要求を出せませんでした: {exc}", **probe}
+    return {"slept": True, "detail": probe.get("detail", "")}
+
+
 def _write_last_run(home: Path, result: dict[str, Any]) -> None:
     payload = {k: v for k, v in result.items() if k != "preview_lines"}
     try:
@@ -809,21 +887,28 @@ def format_status(data: dict[str, Any]) -> str:
 
 
 def build_install_command(
-    *, at: str, repo_root: Path | None = None, task_name: str = DEFAULT_TASK_NAME
+    *,
+    at: str,
+    repo_root: Path | None = None,
+    task_name: str = DEFAULT_TASK_NAME,
+    sleep_back_after: bool = False,
 ) -> str:
     repo = Path(repo_root) if repo_root else util.repo_root()
+    # **登録するコマンドに書く**（設定ファイルへ隠さない）。`schtasks /Query` を見れば
+    # 「この機械の夜勤は終わったら眠る」と分かるほうが、後から読む人に親切。
+    verb = "run --sleep-back" if sleep_back_after else "run"
     if sys.platform.startswith("win"):
         python_exe = repo / ".venv" / "Scripts" / "python.exe"
         # `/TR` の中の `"` は `\"` で逃がす。**逃がさないと、空白を含むパス
         # （`...\AI Agents\manor`）で schtasks が「無効な引数」で落ちる**——実測 2026-09-06。
-        inner = f'\\"{python_exe}\\" -m manor.night run'
+        inner = f'\\"{python_exe}\\" -m manor.night {verb}'
         tr = f'cmd /c cd /d \\"{repo}\\" && {inner}'
         return f'schtasks /Create /SC DAILY /ST {at} /TN "{task_name}" /TR "{tr}" /F'
     python_exe = repo / ".venv" / "bin" / "python"
     hh, mm = at.split(":")
     return (
         "# launchd/cron 雛形（macOS/Linux。schtasks に相当する自動登録は無い。手で組み込む）\n"
-        f'{int(mm)} {int(hh)} * * * cd "{repo}" && "{python_exe}" -m manor.night run  '
+        f'{int(mm)} {int(hh)} * * * cd "{repo}" && "{python_exe}" -m manor.night {verb}  '
         f"# {task_name}"
     )
 
@@ -840,8 +925,11 @@ def install(
     execute: bool = False,
     repo_root: Path | None = None,
     task_name: str = DEFAULT_TASK_NAME,
+    sleep_back_after: bool = False,
 ) -> dict[str, Any]:
-    cmd = build_install_command(at=at, repo_root=repo_root, task_name=task_name)
+    cmd = build_install_command(
+        at=at, repo_root=repo_root, task_name=task_name, sleep_back_after=sleep_back_after
+    )
     result: dict[str, Any] = {"command": cmd, "executed": False, "ok": None}
     if execute:
         proc = subprocess.run(

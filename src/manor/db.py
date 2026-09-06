@@ -29,7 +29,8 @@ CORE_TABLES: frozenset[str] = frozenset(
         "meta", "node", "task", "task_event", "project", "decision", "milestone", "edge",
         "handoff", "rule", "run", "profile",
         # ADR-009 §3（Slack 拡張。5b）: 部下（staff）の接頭規則の対象ではない core の表。
-        "slack_message", "slack_reply",
+        # `slack_intake` は T4（2026-09-06）の `#task` / `#log` 取り込みの印。
+        "slack_message", "slack_reply", "slack_intake",
         # ADR-009 §7（Notion 拡張。5c）: 同上。
         "notion_page",
         # ADR-010 D2（タスクの種類）: 同上。node には紐づかない独立の表（`rule` と同じ流儀）。
