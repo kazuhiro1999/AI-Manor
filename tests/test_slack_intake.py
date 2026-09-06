@@ -120,6 +120,11 @@ def _setup(
         slack_mod, "_push_to_calendar",
         lambda home, when: push or {"ok": False, "html_link": "", "reason": "（試験）押し出さない"},
     )
+    # `#task` の分解も既定では呼ばせない（既定は「読めなかった」＝本文そのまま起票）。
+    monkeypatch.setattr(
+        slack_mod, "extract_task",
+        lambda body, **kw: {"ok": False, "reason": "（試験）分解しない"},
+    )
     # **自由文の読み取りも既定では本物の claude を呼ばせない。**
     # 差し替え忘れがあると、試験が実際にモデルを叩いて遅くなる（実測 62秒）。
     monkeypatch.setattr(
@@ -859,3 +864,150 @@ def test_update_uses_the_update_tool(home: Path, monkeypatch: pytest.MonkeyPatch
     assert result["mode"] == "update"
     assert calendar_mod.DEFAULT_UPDATE_TOOL in seen[0]
     assert calendar_mod.DEFAULT_CREATE_TOOL not in seen[0]
+
+
+# --- #task の自然言語（v1 watch-prompt.txt の #task の処理。2026-09-06） -------------------
+
+
+def _broken(tasks, event=None):
+    return {"ok": True, "tasks": tasks, "event": event, "reason": ""}
+
+
+def test_task_is_filed_with_the_inferred_project_and_due(
+    home: Path, conn, monkeypatch: pytest.MonkeyPatch, leak_terms
+) -> None:
+    """プロジェクトと期限まで解いて起票し、**確定内容を返信に書く**
+    （主人の裁定 2026-09-06:「カレンダー同様、追加までおこなって確定内容を返信にいれる」）。
+    """
+    monkeypatch.setenv("MANOR_TODAY", "2026-09-06")
+    from manor import project as project_mod
+
+    project_mod.add(conn, code="p10", name="Meta Working Laboratory（NEDO）")
+    conn.commit()
+
+    posted = _setup(
+        home, monkeypatch, leak_terms,
+        [{"ts": "6000.0001", "text": "#task NEDOの件で、来週金曜までに報告書をまとめる"}],
+    )
+    monkeypatch.setattr(
+        slack_mod, "extract_task",
+        lambda body, **kw: _broken([{"title": "NEDO報告書をまとめる", "project": "p10",
+                                     "due": "2026-09-12"}]),
+    )
+
+    slack_mod.intake(home)
+
+    row = conn.execute(
+        "SELECT t.due, p.code AS code FROM task t JOIN node n ON n.id = t.id"
+        " JOIN project p ON p.id = t.project_id WHERE n.title = 'NEDO報告書をまとめる'"
+    ).fetchone()
+    assert row["due"] == "2026-09-12"
+    assert row["code"] == "p10"  # id は連番（P1…）で code とは別物
+    text = str(posted[0]["text"])
+    assert "2026-09-12" in text and "NEDO" in text
+
+
+def test_an_unresolved_project_is_said_out_loud(
+    home: Path, conn, monkeypatch: pytest.MonkeyPatch, leak_terms
+) -> None:
+    """**推測で決めない。** 確信が持てなければ「不明」と書く（v1 の規則そのまま）。"""
+    monkeypatch.setenv("MANOR_TODAY", "2026-09-06")
+    posted = _setup(home, monkeypatch, leak_terms, [{"ts": "6000.0002", "text": "#task 何かをやる"}])
+    monkeypatch.setattr(
+        slack_mod, "extract_task",
+        lambda body, **kw: _broken([{"title": "何かをやる", "project": "", "due": ""}]),
+    )
+
+    slack_mod.intake(home)
+
+    assert "プロジェクト不明" in str(posted[0]["text"])
+
+
+def test_a_dated_appointment_in_a_task_goes_to_the_calendar(
+    home: Path, conn, monkeypatch: pytest.MonkeyPatch, leak_terms
+) -> None:
+    """**日時のある約束はカレンダーへ**（v1 Q30 の裁定「イ」・2026-08-30）。
+
+    主人のご指摘:「この場合はタスクではなく予定なので、カレンダーに入れる」。
+    """
+    monkeypatch.setenv("MANOR_TODAY", "2026-09-06")
+    posted = _setup(
+        home, monkeypatch, leak_terms,
+        [{"ts": "6000.0003", "text": "#task NEDOの件で、明日の15時以降〜打合せ"}],
+        push={"ok": True, "html_link": "https://www.google.com/calendar/event?eid=nn",
+              "mode": "create", "event_id": "EV9", "reason": ""},
+    )
+    monkeypatch.setattr(
+        slack_mod, "extract_task",
+        lambda body, **kw: _broken([], {"ok": True, "on": "2026-09-07", "at": "15:00",
+                                        "end_on": None, "end_at": None, "place": "",
+                                        "text": "NEDOの件で打合せ"}),
+    )
+
+    slack_mod.intake(home)
+
+    # 予定として入り、タスクは作られない（「タスクではなく予定」）
+    assert conn.execute("SELECT COUNT(*) AS n FROM secretary_event").fetchone()["n"] == 1
+    assert conn.execute(
+        "SELECT COUNT(*) AS n FROM node WHERE kind = 'task' AND title LIKE '%打合せ%'"
+    ).fetchone()["n"] == 0
+    text = str(posted[0]["text"])
+    assert "カレンダーに登録しました" in text and "eid=nn" in text
+
+
+def test_a_task_and_an_appointment_can_both_come_out(
+    home: Path, conn, monkeypatch: pytest.MonkeyPatch, leak_terms
+) -> None:
+    """1件の依頼が**タスクと予定の両方**に分かれることもある（v1「複数タスクに分かれる」）。"""
+    monkeypatch.setenv("MANOR_TODAY", "2026-09-06")
+    posted = _setup(
+        home, monkeypatch, leak_terms, [{"ts": "6000.0004", "text": "#task 打合せと議事録"}],
+        push={"ok": True, "html_link": "https://www.google.com/calendar/event?eid=mm",
+              "mode": "create", "event_id": "EVA", "reason": ""},
+    )
+    monkeypatch.setattr(
+        slack_mod, "extract_task",
+        lambda body, **kw: _broken(
+            [{"title": "議事録を作成する", "project": "", "due": "2026-09-12"}],
+            {"ok": True, "on": "2026-09-07", "at": "15:00", "end_on": None, "end_at": None,
+             "place": "", "text": "打合せ"},
+        ),
+    )
+
+    slack_mod.intake(home)
+
+    assert conn.execute(
+        "SELECT COUNT(*) AS n FROM node WHERE title = '議事録を作成する'"
+    ).fetchone()["n"] == 1
+    assert conn.execute("SELECT COUNT(*) AS n FROM secretary_event").fetchone()["n"] == 1
+    text = str(posted[0]["text"])
+    assert "議事録" in text and "カレンダー" in text  # 両方を返信に書く
+
+
+def test_an_unbreakable_body_is_filed_verbatim(
+    home: Path, conn, monkeypatch: pytest.MonkeyPatch, leak_terms
+) -> None:
+    """**分解できなくても主人の言葉を落とさない。** 本文をそのまま1件のタスクにする。"""
+    monkeypatch.setenv("MANOR_TODAY", "2026-09-06")
+    _setup(home, monkeypatch, leak_terms, [{"ts": "6000.0005", "text": "#task 読めない依頼"}])
+    # `_setup` の既定が「分解しない」なので、そのまま
+
+    slack_mod.intake(home)
+
+    assert conn.execute(
+        "SELECT body FROM node WHERE title = '読めない依頼'"
+    ).fetchone()["body"] == "読めない依頼"
+
+
+def test_the_extractor_only_offers_known_projects(conn) -> None:
+    """**一覧に無いプロジェクトは選ばせない**（`_project_choices` が渡すものだけ）。"""
+    from manor import project as project_mod
+
+    project_mod.add(conn, code="p1", name="論文")
+    project_mod.add(conn, code="p2", name="博論", status="done")
+    conn.commit()
+
+    codes = {c for c, _ in slack_mod._project_choices(conn)}
+
+    assert "p1" in codes
+    assert "p2" not in codes  # 終わったプロジェクトは選択肢に出さない
