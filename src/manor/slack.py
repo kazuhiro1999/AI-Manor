@@ -1237,9 +1237,13 @@ def intake(home: Path, *, dry_run: bool = False) -> dict[str, Any]:
                     # **どう解釈したかは、押し出しの成否と切り離す。** 登録できなくても
                     # 「終日として読んだ」は主人に伝わるべきもの。
                     when["how"] = _calendar_slots(when)["how"]
+                    # **同じ予定が既にあれば直す**（v1 §6）。台帳が無くても壊れない
+                    # ——その場合は新規になり、重複は主人が消せる。
+                    when["existing"] = _find_existing_event(conn, when)
                     # **手元へ保存したあとで**カレンダーへ押し出す。この順なら、
                     # 押し出しが失敗しても主人の言葉は消えない。
                     when["pushed"] = _push_to_calendar(home, when)
+                    _remember_event(conn, node_id, when)
                 # **`slack_intake.node_id` は `node(id)` への外部キー。** 予定・控えは
                 # 秘書の表の行であって node ではないので、そこには入れない（入れると
                 # FOREIGN KEY で落ちる——実測）。冪等の要は (channel, ts) なので、
@@ -1330,9 +1334,12 @@ def _intake_ack(
             # **登録まで済んでいる。** v1 の「安全網を保存前から保存後へ移す」（§6）に従い、
             # ①予定へのリンク ②執事がどう解釈したか ③どのカレンダーか、の3つを必ず出す。
             place = f"／場所: {when['place']}" if when.get("place") else ""
+            # **どちらをしたかを必ず書く**（v1 §6「更新をどう扱うか」）——
+            # 「新規で入れました」／「既にあった予定を更新しました」。
+            verb = "既にあった予定を更新しました" if pushed.get("mode") == "update" else "登録しました"
             return (
                 f"・{_format_when(when)} 「{when['text']}」を"
-                f"{INTAKE_CALENDAR_LABEL}カレンダーに登録しました"
+                f"{INTAKE_CALENDAR_LABEL}カレンダーに{verb}"
                 f"（{when.get('how', '')}{place}）\n"
                 f"　確認・修正: {pushed['html_link']}"
             )
@@ -1450,6 +1457,7 @@ def _push_to_calendar(home: Path, when: dict[str, Any]) -> dict[str, object]:
             home, start=str(slots["start"]), end=str(slots["end"]),
             title=str(when["text"]), all_day=bool(slots["all_day"]),
             location=str(when.get("place") or ""),
+            event_id=str((when.get("existing") or {}).get("event_id") or ""),
         )
     except Exception as exc:  # noqa: BLE001 — 登録できないことは、取り込みの失敗ではない
         return {"ok": False, "html_link": "", "reason": str(exc)}
@@ -1683,3 +1691,59 @@ def main(argv: list[str] | None = None) -> int:
 
 if __name__ == "__main__":  # pragma: no cover
     raise SystemExit(main())
+
+
+#: 執事が Slack 経由で作った予定の印（`secretary_event.source`）。
+INTAKE_EVENT_SOURCE = "slack"
+
+
+def _find_existing_event(conn: sqlite3.Connection, when: dict[str, Any]) -> dict[str, Any] | None:
+    """**同じ日付範囲に、執事が作った予定があり、件名が一致する**か（v1 §6）。
+
+    v1 の「更新をどう扱うか」をそのまま:「先の予定はまだ未確定のこともあり、決まったら
+    更新したい」。`10/1-2 東京出張` を入れたあと `10/1 8:30 東京出張` を送れば、
+    **同じ予定が更新される**。
+
+    照合は**執事が作った行だけ**（`source='slack'`）。主人が手で入れた予定
+    （`manual`）や ICS 由来（`ics`）には触らない。**台帳が無くても壊れない**
+    ——見つからなければ新規になり、重複は主人が消せる（v1:「見えない失敗より、
+    見える重複のほうが害が小さい」）。
+    """
+    on = str(when["on"])
+    title = str(when["text"])
+    row = conn.execute(
+        "SELECT id, external_id, start FROM secretary_event"
+        " WHERE source = ? AND title = ? AND external_id IS NOT NULL AND external_id != ''"
+        "   AND substr(start, 1, 10) = ?"
+        " ORDER BY id DESC LIMIT 1",
+        (INTAKE_EVENT_SOURCE, title, on),
+    ).fetchone()
+    if row is None:
+        return None
+    return {"row_id": int(row["id"]), "event_id": str(row["external_id"])}
+
+
+def _remember_event(
+    conn: sqlite3.Connection, node_id: str | None, when: dict[str, Any]
+) -> None:
+    """作った／直した予定の Google 側の id を手元にも控える（次に来たとき直せるように）。
+
+    `secretary_event.external_id` を使う——**ICS の同期は `source='ics'` の行しか
+    触らない**ので、`source='slack'` の行の `external_id` を使っても衝突しない。
+    """
+    pushed = when.get("pushed") or {}
+    event_id = str(pushed.get("event_id") or "")
+    if not pushed.get("ok") or not event_id:
+        return
+    existing = when.get("existing") or {}
+    row_id = existing.get("row_id")
+    if row_id:
+        # 直した場合、手元の行は今回作った新しい行のほう。古い行は残さない
+        # （同じ予定が2行あると、次の照合でどちらを直すか決められなくなる）。
+        conn.execute("DELETE FROM secretary_event WHERE id = ? AND source = ?",
+                     (row_id, INTAKE_EVENT_SOURCE))
+    conn.execute(
+        "UPDATE secretary_event SET external_id = ?, note = ?"
+        " WHERE id = (SELECT MAX(id) FROM secretary_event WHERE source = ? AND title = ?)",
+        (event_id, str(pushed.get("html_link") or ""), INTAKE_EVENT_SOURCE, str(when["text"])),
+    )

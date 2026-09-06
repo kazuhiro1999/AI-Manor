@@ -760,3 +760,102 @@ def test_when_to_fall_through_to_the_extractor(text: str, should_fall_through: b
     when = slack_mod.parse_when(text, today="2026-09-06")
 
     assert slack_mod._looks_unparsed(when) is should_fall_through
+
+
+# --- 更新（v1 §6「同じ日付範囲・件名一致なら update_event」）----------------------------
+
+
+def test_the_same_event_is_updated_not_duplicated(
+    home: Path, conn, monkeypatch: pytest.MonkeyPatch, leak_terms
+) -> None:
+    """v1 の例そのまま: `10/1-2 東京出張` のあとに `10/1 8:30 東京出張` を送ると
+    **同じ予定が更新される**（新規で作らない）。
+    """
+    monkeypatch.setenv("MANOR_TODAY", "2026-09-06")
+    calls: list[str] = []
+
+    def fake_push(home_arg, when):
+        calls.append(str((when.get("existing") or {}).get("event_id") or ""))
+        return {"ok": True, "html_link": "https://www.google.com/calendar/event?eid=x",
+                "mode": "update" if calls[-1] else "create", "event_id": "EV1", "reason": ""}
+
+    _setup(home, monkeypatch, leak_terms, [{"ts": "5000.0001", "text": "#cal 10/1 東京出張"}])
+    monkeypatch.setattr(slack_mod, "_push_to_calendar", fake_push)
+    slack_mod.intake(home)
+
+    posted = _setup(home, monkeypatch, leak_terms, [{"ts": "5000.0002", "text": "#cal 10/1 8:30 東京出張"}])
+    monkeypatch.setattr(slack_mod, "_push_to_calendar", fake_push)
+    slack_mod.intake(home)
+
+    assert calls == ["", "EV1"]          # 1回目は新規、2回目は既存の id を渡している
+    assert "更新しました" in str(posted[0]["text"])  # どちらをしたかを書く（v1 §6）
+
+
+def test_a_different_title_makes_a_new_event(
+    home: Path, conn, monkeypatch: pytest.MonkeyPatch, leak_terms
+) -> None:
+    """件名が違えば別の予定（照合は「同じ日付範囲＋件名一致」）。"""
+    monkeypatch.setenv("MANOR_TODAY", "2026-09-06")
+    conn.execute(
+        "INSERT INTO secretary_event (start, title, source, external_id, created_at)"
+        " VALUES ('2026-10-01', '東京出張', 'slack', 'EV1', '2026-09-06T00:00:00')"
+    )
+    conn.commit()
+
+    when = {"on": "2026-10-01", "text": "大阪出張"}
+    assert slack_mod._find_existing_event(conn, when) is None
+
+    when_same = {"on": "2026-10-01", "text": "東京出張"}
+    assert (slack_mod._find_existing_event(conn, when_same) or {}).get("event_id") == "EV1"
+
+
+def test_the_masters_own_events_are_never_matched(conn) -> None:
+    """**執事が作った行だけ**を照合する。主人が手で入れた予定・ICS 由来には触らない。"""
+    for source in ("manual", "ics"):
+        conn.execute(
+            "INSERT INTO secretary_event (start, title, source, external_id, created_at)"
+            " VALUES ('2026-10-01', '東京出張', ?, 'EVX', '2026-09-06T00:00:00')", (source,)
+        )
+    conn.commit()
+
+    assert slack_mod._find_existing_event(conn, {"on": "2026-10-01", "text": "東京出張"}) is None
+
+
+def test_a_missing_ledger_falls_back_to_creating(conn) -> None:
+    """**台帳が無くても壊れない。** 見つからなければ新規（v1:「見えない失敗より、
+    見える重複のほうが害が小さい」）。
+    """
+    conn.execute(
+        "INSERT INTO secretary_event (start, title, source, external_id, created_at)"
+        " VALUES ('2026-10-01', '東京出張', 'slack', NULL, '2026-09-06T00:00:00')"
+    )
+    conn.commit()
+
+    assert slack_mod._find_existing_event(conn, {"on": "2026-10-01", "text": "東京出張"}) is None
+
+
+def test_update_uses_the_update_tool(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """`event_id` を渡したら **update の道具**と update の文面になること。"""
+    from manor import calendar as calendar_mod
+
+    (Path(home) / "config.toml").write_text(
+        '[calendar]\nwrite_calendar_id = "cal@example.com"\n', encoding="utf-8"
+    )
+    seen: list[list[str]] = []
+
+    class _P:
+        stdout = '{"is_error": false, "result": "https://www.google.com/calendar/event?eid=zz"}'
+        stderr = ""
+
+    def fake_run(argv, **kwargs):
+        seen.append(argv)
+        return _P()
+
+    monkeypatch.setattr("shutil.which", lambda name: "claude")
+    monkeypatch.setattr("subprocess.run", fake_run)
+
+    result = calendar_mod.push_event(home, start="S", end="E", title="T", event_id="EV1")
+
+    assert result["mode"] == "update"
+    assert calendar_mod.DEFAULT_UPDATE_TOOL in seen[0]
+    assert calendar_mod.DEFAULT_CREATE_TOOL not in seen[0]

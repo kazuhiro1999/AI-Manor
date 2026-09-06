@@ -24,7 +24,6 @@ import re
 from pathlib import Path
 
 import pytest
-
 # 中点(・ U+30FB)だけは除く——この2文字幅の区切り文字は日本語の文というより
 # 単なる列挙の区切り(`"・".join(...)`)として両方の言語で使っている箇所がある
 # (`rule.py`・`gate.py` 等)。他の日本語文字と一緒に現れれば、その文字のほうで
@@ -33,7 +32,6 @@ import pytest
 JA_CHAR_PATTERN = re.compile(r"[぀-ヺー-ヿ㐀-鿿]")
 
 SRC_ROOT = Path(__file__).resolve().parent.parent / "src" / "manor"
-
 # ファイル単位の許可。3つの理由のどれかに当てはまる(コメントで明示する)。
 #
 #   [データ] 画面の文言ではなく、語彙・持続する記録・外部サービスへ投函する実データ
@@ -201,15 +199,12 @@ ALLOWLIST: set[str] = {
     # ——主人にしか決められない判断として報告する)。CLI の結果行・help は訳し済み。
     "shortcut.py",
 }
-
 # 行単位の許可(ファイル全体は検算したいが、特定の行だけ理由があって除外)。
 # "相対パス:行番号" の形。
 LINE_ALLOWLIST: set[str] = {
     # [共有] calendar.py: fetch_ics/check_connection の `reason` は web の拡張ステータス
     # 表示(`manor ext check calendar` 相当・設定画面のヘルスチェック)と共有する診断
     # 文字列。CLI 表示側(_cmd_sync/_cmd_list)の「包む文」だけを訳し、ここは日本語のまま。
-    "calendar.py:76", "calendar.py:78", "calendar.py:80", "calendar.py:82", "calendar.py:89",
-    "calendar.py:101", "calendar.py:107", "calendar.py:110", "calendar.py:122", "calendar.py:190",
     # [データ] calendar.py の書き込み（2026-09-06）: 335 は `claude -p` へ渡す指示の
     # 文面そのもの（端末には出ない。slack.py の生成の下書きと同じ扱い）。418 以降は
     # `reason` ——`check()` / 返信と共有する診断文字列なので訳さない（このファイルの
@@ -220,10 +215,38 @@ LINE_ALLOWLIST: set[str] = {
     # （このファイルの既存の方針と同じ。ADR-012 5d の判断）。
     # ⚠ 行番号で固定してあるので、上に行を足すとここがずれる。ずれたら
     #   `_string_constant_offenders` に直接聞いて入れ替えること（手で数えない）。
-    "calendar.py:335", "calendar.py:398", "calendar.py:427", "calendar.py:432", "calendar.py:454",     "calendar.py:463",
-    "calendar.py:470", "calendar.py:472", "calendar.py:494", "calendar.py:537",     "calendar.py:539",
-    "calendar.py:557", "calendar.py:564", "calendar.py:566", "calendar.py:573",     "calendar.py:575",
-    "calendar.py:582",
+    # [データ] calendar.py: ICS の注記マーカーと、2026-09-06 に足した書き込み・読み取り。
+    # 338/354 は `claude -p` へ渡す指示の文面そのもの（端末には出ない）。残りは `reason`
+    # ——`check()` / Slack の返信と共有する診断文字列なので訳さない。
+    # ⚠ 行番号で固定してあるので、上に行を足すとずれる。ずれたら手で数えず、
+    #   `_string_constant_offenders` に直接聞いて入れ替えること。
+    "calendar.py:76",
+    "calendar.py:78",
+    "calendar.py:80",
+    "calendar.py:82",
+    "calendar.py:89",
+    "calendar.py:101",
+    "calendar.py:107",
+    "calendar.py:110",
+    "calendar.py:190",
+    "calendar.py:338",
+    "calendar.py:354",
+    "calendar.py:421",
+    "calendar.py:452",
+    "calendar.py:459",
+    "calendar.py:481",
+    "calendar.py:490",
+    "calendar.py:497",
+    "calendar.py:499",
+    "calendar.py:522",
+    "calendar.py:565",
+    "calendar.py:567",
+    "calendar.py:585",
+    "calendar.py:592",
+    "calendar.py:594",
+    "calendar.py:601",
+    "calendar.py:603",
+    "calendar.py:610",
     # [共有] face.py: try_open_app_window は web の `/api/v1/face/open` の応答(reason)。
     # _popen_chrome も両方から共有される(コメント参照)。
     "face.py:52", "face.py:226", "face.py:237",
