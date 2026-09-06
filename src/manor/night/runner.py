@@ -56,6 +56,8 @@ REPORTS_DIR_NAME = "reports"
 LOGS_DIR_NAME = "logs"
 LOCK_FILE_NAME = "night.lock"
 LAST_RUN_FILE_NAME = "last-run.json"
+#: `--dry-run` の記録。**本番の `last-run.json` は塗り替えない**（検分 S11）。
+LAST_RUN_DRY_FILE_NAME = "last-run.dry.json"
 
 DEFAULT_DEADLINE = "06:30"
 DEFAULT_MIN_MINUTES = 20
@@ -120,8 +122,17 @@ def lock_path(home: Path) -> Path:
     return night_dir(home) / LOCK_FILE_NAME
 
 
-def last_run_path(home: Path) -> Path:
-    return night_dir(home) / LAST_RUN_FILE_NAME
+def last_run_path(home: Path, *, dry_run: bool = False) -> Path:
+    """最後の実行の記録。**dry-run は別のファイルへ書く**（検分 S11・2026-09-06）。
+
+    以前は `--dry-run` も同じ `last-run.json` を塗り替えていたので、下見のつもりで
+    1回叩くと `manor night status` が「前回は dry_run」と答えるようになった——
+    **本番が動いたかどうかを見る唯一の記録が、下見で消えていた。**
+
+    消すのではなく分けたのは、「dry-run が何を返したか」も見たいことがあるため。
+    """
+    name = LAST_RUN_DRY_FILE_NAME if dry_run else LAST_RUN_FILE_NAME
+    return night_dir(home) / name
 
 
 def prompt_template_path() -> Path:
@@ -559,7 +570,7 @@ def run(
                 else f"眠りません: {sb.get('reason')}",
             )
             result["sleep_back"] = sb
-            _write_last_run(home, result)
+            _write_last_run(home, result, dry_run=dry_run)
 
 
 def _run_impl(
@@ -730,7 +741,7 @@ def _run_impl(
     finally:
         result["ended_at"] = datetime.now().isoformat()
         release_lock(home)
-        _write_last_run(home, result)
+        _write_last_run(home, result, dry_run=dry_run)
 
 
 # --- 眠りへ戻す（v1 `apps/night-shift/sleep-back.ps1` の移植。T6） ---------------
@@ -744,6 +755,12 @@ SLEEP_BACK_IDLE_MINUTES = 15
 #: `SetSuspendState` を投げたあと、生死を確かめるまでの待ち（秒）。
 #: 成功していればこの時点でプロセスは**まだ生きている**（機械が眠るまで戻らないため）。
 SLEEP_BACK_POLL_SECONDS = 2.0
+
+#: スリープを**拒否された**ときにスクリプトが返す終了コード。
+#: `SetSuspendState` は真偽値を返すだけで、拒否されても PowerShell の終了コードは 0 の
+#: まま（実測 2026-09-06）。だから偽なら明示的にこれで落とす——「0 だから成功」という
+#: 読みが成り立たないことを、コードの側で分かる形にしておく。
+SLEEP_BACK_REFUSED_CODE = 3
 
 
 def woken_by_task(task_name: str = DEFAULT_TASK_NAME) -> dict[str, Any]:
@@ -866,17 +883,21 @@ def sleep_back(
             "checks": checks, "detail": probe.get("detail", ""),
         }
 
+    # `SetSuspendState` は**真偽値を返す関数**で、拒否されると `False` を返して
+    # 普通に終わる。PowerShell はそれを出力するだけなので**終了コードは 0 のまま**
+    # （実測 2026-09-06: `powershell -Command '$false'` の終了コードは 0）。
+    # だから**スクリプトの側でも真偽を見て、拒否なら 3 で落とす**（検分 S10）。
     script = (
         "Add-Type -Namespace Manor -Name Power -MemberDefinition '"
         '[DllImport(\\"powrprof.dll\\", SetLastError = true)] '
         "public static extern bool SetSuspendState(bool hibernate, bool forceCritical, "
         "bool disableWakeEvent);'\n"
-        "[Manor.Power]::SetSuspendState($false, $false, $false)\n"
+        "if (-not [Manor.Power]::SetSuspendState($false, $false, $false)) { exit "
+        f"{SLEEP_BACK_REFUSED_CODE} }}\n"
     )
     # **完了は待たない。** `SetSuspendState` は機械が起きるまで戻らないので、
     # `subprocess.run` ＋ timeout で呼ぶと、実際には眠れているのに翌朝「時間切れで失敗」と
-    # 記録されてしまう。かわりに**少しだけ待って生死を見る**——成功していればプロセスは
-    # まだ生きている。すぐ非0で終わっていたら、それは失敗（検分 S2）。
+    # 記録されてしまう。かわりに**少しだけ待って生死を見る**（検分 S2）。
     argv = [
         "powershell", "-NoProfile", "-NonInteractive",
         "-EncodedCommand", winps.encode_command(script),
@@ -896,15 +917,25 @@ def sleep_back(
 
     time.sleep(SLEEP_BACK_POLL_SECONDS)
     code = proc.poll()
-    if code is not None and code != 0:
-        err = ""
+    # **終わっていたら、終了コードが何であれ失敗。** 眠れたのなら、この窓の中で
+    # 戻ってくるはずがない——`code is not None` そのものが「眠れなかった」証拠になる
+    # （検分 S10。それまでは `code != 0` だけを見ていたので、拒否＝出力 `False`・
+    # 終了コード 0 が「要求した」として記録されていた）。
+    if code is not None:
+        out = err = ""
         try:
             err = (proc.stderr.read() or b"").decode("utf-8", errors="replace").strip()
+            out = (proc.stdout.read() or b"").decode("utf-8", errors="replace").strip()
         except Exception:  # noqa: BLE001
             pass
+        why = (
+            "拒否されました（SetSuspendState が False）"
+            if code == SLEEP_BACK_REFUSED_CODE
+            else f"{SLEEP_BACK_POLL_SECONDS:g} 秒で終了しました（眠れていません）"
+        )
         return {
             "requested": False,
-            "reason": f"スリープ要求が失敗しました (exit={code}): {err[:300]}",
+            "reason": f"スリープ要求が失敗しました: {why} (exit={code}) {(err or out)[:300]}".strip(),
             "checks": checks, "detail": probe.get("detail", ""),
         }
     return {
@@ -915,11 +946,11 @@ def sleep_back(
     }
 
 
-def _write_last_run(home: Path, result: dict[str, Any]) -> None:
+def _write_last_run(home: Path, result: dict[str, Any], *, dry_run: bool = False) -> None:
     payload = {k: v for k, v in result.items() if k != "preview_lines"}
     try:
         night_dir(home).mkdir(parents=True, exist_ok=True)
-        last_run_path(home).write_text(
+        last_run_path(home, dry_run=dry_run).write_text(
             json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
         )
     except OSError:
@@ -961,17 +992,20 @@ def status(home: Path, *, task_name: str = DEFAULT_TASK_NAME) -> dict[str, Any]:
             "age_minutes": round(age_min, 1),
         }
 
-    last_run: dict[str, Any] | None = None
-    lrp = last_run_path(home)
-    if lrp.is_file():
+    def _read(path: Path) -> dict[str, Any] | None:
+        if not path.is_file():
+            return None
         try:
-            last_run = json.loads(lrp.read_text(encoding="utf-8"))
-        except Exception:
-            last_run = None
+            return json.loads(path.read_text(encoding="utf-8"))
+        except Exception:  # noqa: BLE001
+            return None
 
+    # **`last_run` は本番だけ。** dry-run は別枠で見せる（S11）——混ぜると
+    # 「昨夜ちゃんと走ったか」を答えられなくなる。
     return {
         "lock": lock_info,
-        "last_run": last_run,
+        "last_run": _read(last_run_path(home)),
+        "last_dry_run": _read(last_run_path(home, dry_run=True)),
         "scheduled": _query_scheduled_task(task_name),
     }
 
@@ -993,6 +1027,13 @@ def format_status(data: dict[str, Any]) -> str:
         )
     else:
         lines.append("最後の実行: （記録なし）")
+
+    dry = data.get("last_dry_run")
+    if dry:
+        lines.append(
+            f"最後の下見（--dry-run）: {dry.get('status')}"
+            f"（{dry.get('started_at')}）— 本番の記録とは別に持っています"
+        )
 
     sched = data.get("scheduled", {})
     if sched.get("registered") is True:

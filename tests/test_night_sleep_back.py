@@ -15,6 +15,8 @@
 
 from __future__ import annotations
 
+import base64
+
 import pytest
 
 from manor import winps
@@ -55,18 +57,21 @@ def on_windows(monkeypatch: pytest.MonkeyPatch):
 def no_suspend(monkeypatch: pytest.MonkeyPatch):
     """`SetSuspendState` を撃たせない。**呼ばれたかどうか**だけ記録する。
 
-    既定では「投げた直後もまだ生きている」＝成功の形を返す（`poll()` が `None`）。
-    `set_exit(code, err)` で「すぐ非0で死んだ」＝失敗の形に切り替えられる。
+    既定では「投げた直後もまだ生きている」＝要求できた形を返す（`poll()` が `None`）。
+    `set_exit(code, err)` で「窓の中で終わっていた」形に切り替えられる——
+    **終了コードが 0 でも失敗**である点が S10 の主題（`SetSuspendState` は拒否されると
+    `False` を返すだけで、PowerShell の終了コードは 0 のまま）。
     """
-    state: dict[str, object] = {"code": None, "err": b""}
+    state: dict[str, object] = {"code": None, "err": b"", "out": b""}
 
     class _Calls(list):
-        """呼ばれた argv の記録。`set_exit` で「すぐ死んだ」形へ切り替える
+        """呼ばれた argv の記録。`set_exit` で「窓の中で終わっていた」形へ切り替える
         （素の `list` には属性を足せないので、薄く包む）。"""
 
-        def set_exit(self, code: int, err: bytes = b"") -> None:
+        def set_exit(self, code: int, err: bytes = b"", out: bytes = b"") -> None:
             state["code"] = code
             state["err"] = err
+            state["out"] = out
 
     calls = _Calls()
 
@@ -81,7 +86,11 @@ def no_suspend(monkeypatch: pytest.MonkeyPatch):
         pid = 1234
 
         def __init__(self) -> None:
+            # **`stdout` も持たせる。** 持たせないと、本物が stdout を読む行で
+            # AttributeError になり、それが握り潰されて**たまたま通ってしまう**
+            # （偽物が本物より痩せていると、試験は何も守らない）。
             self.stderr = _FakeStream(state["err"])  # type: ignore[arg-type]
+            self.stdout = _FakeStream(state["out"])  # type: ignore[arg-type]
 
         def poll(self):
             return state["code"]
@@ -238,6 +247,60 @@ def test_reports_failure_when_the_request_dies_immediately(
     assert "SetSuspendState" in result["reason"]
 
 
+def test_exit_zero_within_the_window_is_still_a_failure(
+    winps_answers, on_windows, no_suspend
+) -> None:
+    """**これが S10 の本体。**
+
+    `SetSuspendState` は真偽値を返す関数で、拒否されると `False` を返して普通に終わる
+    ——PowerShell はそれを出力するだけなので**終了コードは 0 のまま**（実測 2026-09-06:
+    `powershell -Command '$false'` の終了コードは 0）。`code != 0` だけを見ていると、
+    **拒否が「要求できた」として記録される。**
+
+    眠れたのなら、この窓の中で戻ってくるはずがない——`code is not None` そのものが
+    「眠れなかった」証拠になる。
+    """
+    winps_answers(lastwake=_WOKEN_BY_TASK, idle=_IDLE_LONG)
+    no_suspend.set_exit(0)
+
+    result = runner.sleep_back()
+
+    assert result["requested"] is False
+    assert "眠れていません" in result["reason"]
+
+
+def test_refusal_is_named_as_such(winps_answers, on_windows, no_suspend) -> None:
+    """スクリプト側でも真偽を見て、拒否なら専用の終了コードで落とす。"""
+    winps_answers(lastwake=_WOKEN_BY_TASK, idle=_IDLE_LONG)
+    no_suspend.set_exit(runner.SLEEP_BACK_REFUSED_CODE)
+
+    result = runner.sleep_back()
+
+    assert result["requested"] is False
+    assert "拒否されました" in result["reason"]
+
+
+def test_the_script_checks_the_return_value(winps_answers, on_windows, no_suspend) -> None:
+    """スクリプトの中身そのものの確認——真偽を見ずに投げていないこと。"""
+    winps_answers(lastwake=_WOKEN_BY_TASK, idle=_IDLE_LONG)
+
+    runner.sleep_back()
+
+    encoded = no_suspend[0][-1]
+    script = base64.b64decode(encoded).decode("utf-16-le")
+    assert "if (-not [Manor.Power]::SetSuspendState" in script
+    assert f"exit {runner.SLEEP_BACK_REFUSED_CODE}" in script
+
+
+def test_still_alive_after_the_window_means_the_request_went_through(
+    winps_answers, on_windows, no_suspend
+) -> None:
+    """3通りの3つめ: 生き続けている＝眠りに入った（この場で確かめられる唯一の形）。"""
+    winps_answers(lastwake=_WOKEN_BY_TASK, idle=_IDLE_LONG)
+
+    assert runner.sleep_back()["requested"] is True
+
+
 def test_does_not_claim_to_have_slept(winps_answers, on_windows, no_suspend) -> None:
     """**確かめていないことを、確かめたように言わない。** 返すのは「要求した」まで。"""
     winps_answers(lastwake=_WOKEN_BY_TASK, idle=_IDLE_LONG)
@@ -322,6 +385,50 @@ def test_run_without_the_flag_never_sleeps(
 
     assert "sleep_back" not in result
     assert no_suspend == []
+
+
+# --- 下見が本番の記録を汚さない（検分 S11） -------------------------------------------------
+
+
+def test_dry_run_does_not_overwrite_the_real_last_run(home) -> None:
+    """**`--dry-run` を1回叩いたら `status` が「前回は dry_run」と答える**のはおかしい。
+
+    本番が動いたかどうかを見る唯一の記録が、下見で消えていた（検分中に実際に踏まれた）。
+    """
+    runner._write_last_run(home, {"status": "done", "started_at": "本番"})
+    runner._write_last_run(home, {"status": "dry_run", "started_at": "下見"}, dry_run=True)
+
+    status = runner.status(home)
+
+    assert status["last_run"]["status"] == "done"
+    assert status["last_run"]["started_at"] == "本番"
+    # 下見のほうも残っている（何を返したかを後から見たいことがある）
+    assert status["last_dry_run"]["status"] == "dry_run"
+
+
+def test_dry_run_writes_to_its_own_file(home) -> None:
+    assert runner.last_run_path(home).name == "last-run.json"
+    assert runner.last_run_path(home, dry_run=True).name == "last-run.dry.json"
+
+
+def test_a_real_dry_run_leaves_the_real_record_untouched(home) -> None:
+    """通しで確かめる。**`tasks.md` が空なので `claude` は呼ばれない**（起動の門）。"""
+    runner._write_last_run(home, {"status": "done", "started_at": "きのうの本番"})
+    runner.tasks_path(home).parent.mkdir(parents=True, exist_ok=True)
+    runner.tasks_path(home).write_text("# 空の指示書\n", encoding="utf-8")
+
+    result = runner.run(home, dry_run=True)
+
+    assert result["status"] == "empty"
+    assert runner.status(home)["last_run"]["started_at"] == "きのうの本番"
+
+
+def test_status_says_there_is_no_real_run_yet_even_after_a_dry_run(home) -> None:
+    """本番が一度も走っていないなら、下見を何回叩いても「記録なし」のまま。"""
+    runner._write_last_run(home, {"status": "dry_run"}, dry_run=True)
+
+    assert runner.status(home)["last_run"] is None
+    assert "最後の実行: （記録なし）" in runner.format_status(runner.status(home))
 
 
 # --- 登録するコマンドに意図が出ているか -----------------------------------------------------

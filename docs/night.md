@@ -37,7 +37,8 @@ uv run python -m manor.night report [DATE]
 | `reports/<YYYY-MM-DD>.md` | 作業報告（board の「記録」タブが読む予定。書式は下記） |
 | `logs/<YYYY-MM>.log` | 実行ログ（`INFO`/`WARN`/`ERROR`） |
 | `night.lock` | PID + 開始時刻。生存確認つき（次項） |
-| `last-run.json` | 最後の実行の記録（`status` / `started_at` / `ended_at` / `exit_code` / `killed` / `attempts` / `resumed` 等） |
+| `last-run.json` | **本番の**最後の実行の記録（`status` / `started_at` / `ended_at` / `exit_code` / `killed` / `attempts` / `resumed` 等） |
+| `last-run.dry.json` | `--dry-run` の記録。**本番のほうを塗り替えないため別ファイル**（S11） |
 
 ## 機構（v1 README の指摘どおり、散文ではなく機械が守る）
 
@@ -116,8 +117,21 @@ PC をスリープへ戻す。電源設定そのものは触らない——日�
 - **判定はタスク名で行う**。`powercfg` の文言は OS の言語で変わるが、タスク名は変わらない
   （v1 は日本語の文言に依存していた）
 - **`SetSuspendState` は投げたら待たない**。あれは機械が起きるまで戻らないので、
-  `subprocess.run` ＋ timeout で呼ぶと、翌朝に必ず「時間切れで失敗」と記録されてしまう
+  `subprocess.run` ＋ timeout で呼ぶと、翌朝に必ず「時間切れで失敗」と記録されてしまう。
+  かわりに2秒だけ待って生死を見る——**窓の中で終わっていたら、終了コードが何であれ失敗**。
+  眠れたのなら戻ってくるはずがないので、「終わっていた」こと自体が証拠になる
+- **`SetSuspendState` は真偽値を返す関数**で、拒否されると `False` を返して普通に終わる。
+  PowerShell はそれを出力するだけなので**終了コードは 0 のまま**（実測 2026-09-06:
+  `powershell -Command '$false'` の終了コードは 0）。だからスクリプトの側でも真偽を見て、
+  拒否なら `exit 3`（`SLEEP_BACK_REFUSED_CODE`）で落とす
+- 返り値の `requested` は「**要求した**」であって「眠った」ではない。眠ったことは
+  この場では確かめられない（確かめられるなら、それは眠っていない）
 - 記録（`last-run.json`）を**書き終えてから**眠る。ここより後ろに置いたものは翌朝まで動かない
+- **`--dry-run` は `last-run.dry.json` へ書く**（`last-run.json` を塗り替えない）。
+  下見のつもりで1回叩いたら `manor night status` が「前回は dry_run」と答える——
+  本番が動いたかどうかを見る唯一の記録が、下見で消えていた（検分 S11・2026-09-06）。
+  消さずに分けたのは、下見が何を返したかも見たいことがあるため。`status` は
+  「最後の実行」（本番）と「最後の下見」を別の行で出す
 - `manor night install --sleep-back` を渡すと、**登録するコマンドの中に** `--sleep-back` が
   入る。設定ファイルに隠さないのは、`schtasks /Query` を見れば意図が分かるようにするため
 

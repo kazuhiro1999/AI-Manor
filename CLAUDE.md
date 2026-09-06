@@ -50,6 +50,13 @@
 
 ②④は外に出しません。Slack送信も git push も外部送信＝human_gate です。
 
+**例外は定例の5つだけ**（主人の常時のご許可。D6・2026-09-06）: `manor slack brief` /
+`inbox` / `intake` / `morning` と `manor notion diary`。**宛先は固定**（主人の私的
+チャンネルと主人の Notion）、**本文は DB から機械的に組み**、送信の直前に必ず禁止語
+スキャンを通ります。**これ以外の外部送信は従来どおり human_gate**——執事が自分の判断で
+送るときは `manor decision ask` に積みます。止めたくなったら定例の登録を無効にするだけ
+（`home/ENV.md`）。
+
 ## 定例
 
 `/brief` `/retro` `/handoff`
