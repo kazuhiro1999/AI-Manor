@@ -198,14 +198,21 @@ uv run manor slack intake [--dry-run] [--json]   # #task / #log / #cal / #remind
 のが妥当で、**結果を返すなら十分**」。その「結果を返す」ために、返信には必ず
 解いた絶対日付を入れます。
 
-### ⚠ `#cal` は Google カレンダーには書きません
+### `#cal` は Google カレンダーへ**実際に登録します**（2026-09-06・主人のご指示）
 
-**v2 は Google カレンダーへ書き込めません**（`manor calendar` は ICS の読み取り専用。
-v1 は MCP のコネクタで `create_event` を叩いていました）。`#cal` が入れるのは
-**manor 自身の予定表**（`secretary_event`。`manor sec agenda` や Web アプリに出る）です。
+手元の予定表（`secretary_event`）へ入れたあと、**Google カレンダーへ登録し、
+確認・修正用のリンクを返します**。詳しくは [`docs/calendar.md`](calendar.md) の
+「書き込み」。
 
-そのかわり、返信に **Google カレンダーの「予定を追加」リンク**を添えます（v1
-`calendar-sync/new-event-link.ps1` の移植）。外出先ならそれを押せば端末で追加できます。
+**書き込み先は「読んでいる ICS と同じカレンダー」でなければ意味がありません。**
+v1 の失敗（主人のご記憶）:「このURLから予定を追加すると AI執事ではなく私のカレンダーと
+して登録され、AI執事側から予定が見えなくなった」——`render?action=TEMPLATE` のリンクは
+既定で**主カレンダー**へ入るのに、執事が読んでいるのは「AI執事」という別のカレンダー
+だったためです。だから書き込み先は `[calendar] write_calendar_id` に**明示**し、
+未設定なら**書きません**（既定の主カレンダーへ落とさない）。
+
+登録できなかったときは、手元の予定表には入れたうえで**理由を言い**、押せば端末で
+追加できるリンクを添えます（v1 `calendar-sync/new-event-link.ps1` の退避と同じ形）。
 
 写真やファイルを添えた投稿（`file_share`）も読みます。**`subtype` は名指しで弾く**
 （`IGNORED_SUBTYPES`）——付いていれば全部落とす作りだと、画像に添えた `#task` まで

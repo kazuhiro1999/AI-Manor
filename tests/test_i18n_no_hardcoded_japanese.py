@@ -210,6 +210,12 @@ LINE_ALLOWLIST: set[str] = {
     # 文字列。CLI 表示側(_cmd_sync/_cmd_list)の「包む文」だけを訳し、ここは日本語のまま。
     "calendar.py:76", "calendar.py:78", "calendar.py:80", "calendar.py:82", "calendar.py:89",
     "calendar.py:101", "calendar.py:107", "calendar.py:110", "calendar.py:122", "calendar.py:190",
+    # [データ] calendar.py の書き込み（2026-09-06）: 335 は `claude -p` へ渡す指示の
+    # 文面そのもの（端末には出ない。slack.py の生成の下書きと同じ扱い）。418 以降は
+    # `reason` ——`check()` / 返信と共有する診断文字列なので訳さない（このファイルの
+    # 既存の方針と同じ。ADR-012 5d の判断）。
+    "calendar.py:335", "calendar.py:418", "calendar.py:423",
+    "calendar.py:444", "calendar.py:453", "calendar.py:460", "calendar.py:462",
     # [共有] face.py: try_open_app_window は web の `/api/v1/face/open` の応答(reason)。
     # _popen_chrome も両方から共有される(コメント参照)。
     "face.py:52", "face.py:226", "face.py:237",

@@ -1227,6 +1227,10 @@ def intake(home: Path, *, dry_run: bool = False) -> dict[str, Any]:
             node_id: str | None = None
             if not dry_run:
                 node_id = _create_from_intake(conn, kind=kind, body=body, when=when)
+                if kind == "cal" and when:
+                    # **手元へ保存したあとで**カレンダーへ押し出す。この順なら、
+                    # 押し出しが失敗しても主人の言葉は消えない。
+                    when["pushed"] = _push_to_calendar(home, when)
                 # **`slack_intake.node_id` は `node(id)` への外部キー。** 予定・控えは
                 # 秘書の表の行であって node ではないので、そこには入れない（入れると
                 # FOREIGN KEY で落ちる——実測）。冪等の要は (channel, ts) なので、
@@ -1308,11 +1312,20 @@ def _intake_ack(
 ) -> str:
     marker = node_id or "(dry-run)"
     if kind == "cal" and when:
-        # **v2 は Google カレンダーへ書けない**（`manor calendar` は ICS の読み取り専用）。
-        # 手元の予定表には入れたうえで、押せば端末で追加できるリンクを添える。
+        pushed = when.get("pushed") or {}
+        if pushed.get("ok"):
+            # **登録まで済んでいる。** 送るのは確認・修正用のリンク（その予定そのものへ飛ぶ）。
+            return (
+                f"・{_format_when(when)} 「{when['text']}」をカレンダーに登録しました\n"
+                f"　確認・修正: {pushed['html_link']}"
+            )
+        # 登録できなかったとき。**手元には入っている**ので、押せば端末で追加できる
+        # リンクを添えて退避する（v1 の即応と同じ形）。
         link = google_calendar_link(str(when["on"]), when.get("at"), str(when["text"]))
+        reason = str(pushed.get("reason") or "").strip()
+        tail = f"（カレンダーへは登録できませんでした: {reason}）" if reason else ""
         return (
-            f"・{_format_when(when)} 「{when['text']}」を予定に入れました（{marker}）\n"
+            f"・{_format_when(when)} 「{when['text']}」を手元の予定表に入れました（{marker}）{tail}\n"
             f"　Google カレンダーへ入れるならこちら: {link}"
         )
     if kind == "remind" and when:
@@ -1320,6 +1333,29 @@ def _intake_ack(
     head = body.splitlines()[0][:INTAKE_TITLE_MAX]
     label = "起票しました" if kind == "task" else "控えました"
     return f"・{marker} として{label}: {head}"
+
+
+def _push_to_calendar(home: Path, when: dict[str, Any]) -> dict[str, object]:
+    """`#cal` を Google カレンダーへ登録する（`calendar.push_event`）。
+
+    時刻が無い（終日の）予定も、コネクタは開始・終了を求めるので**その日の 00:00〜23:59**
+    として渡す。**例外は投げない**——ここが失敗しても予定は手元に入っている。
+    """
+    from . import calendar as calendar_mod
+
+    on, at = str(when["on"]), when.get("at")
+    if at:
+        start = f"{on}T{at}:00+09:00"
+        end_dt = datetime.strptime(f"{on} {at}", "%Y-%m-%d %H:%M") + timedelta(
+            minutes=INTAKE_EVENT_MINUTES
+        )
+        end = end_dt.strftime("%Y-%m-%dT%H:%M:00+09:00")
+    else:
+        start, end = f"{on}T00:00:00+09:00", f"{on}T23:59:00+09:00"
+    try:
+        return calendar_mod.push_event(home, start=start, end=end, title=str(when["text"]))
+    except Exception as exc:  # noqa: BLE001 — 登録できないことは、取り込みの失敗ではない
+        return {"ok": False, "html_link": "", "reason": str(exc)}
 
 
 def _create_from_intake(
