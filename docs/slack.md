@@ -169,22 +169,43 @@ Bot の招待・チャンネル ID とトークンの入力まで、拡張機構
 （`not_installed` にはならず `needs_config` → 設定後 `ready` → `test()` 後 `ok` まで
 遷移することを確認した）。
 
-## `manor slack intake` — `#task` / `#log` を拾う（2026-09-06 に追加。T4）
+## `manor slack intake` — `#task` / `#log` / `#cal` / `#remind` を拾う（T4・T14）
 
 v1 `apps/slack-relay/watch-inbox.ps1` の取り込み部分の移植。`inbox` が**スレッドの
 返信を裁定として読む**のに対し、こちらは `conversations.history` で**チャンネルの
 本文を指示として読む**。
 
 ```
-uv run manor slack intake [--dry-run] [--json]
+uv run manor slack intake [--dry-run] [--json]   # #task / #log / #cal / #remind
 ```
 
 | 書いたもの | 起きること |
 |---|---|
 | `#task 来週までに評価をまとめる` | タスクが1本立ち、その id を返信する |
 | `#log P4 実装を進めた` | メモ（`note`）として残り、返信する |
+| `#cal 9/9 14:00 予備審査` | 予定に入り、**解いた絶対日付**と Google カレンダーのリンクを返す |
+| `#remind 明日 申請を出す` | 控えに入り、解いた絶対日付を返す |
 | `#task`（本文なし） | **書き方の案内を返す**（黙って捨てない） |
 | 接頭辞の無い投稿 | **何もしない・返信もしない**（会話に割り込まない） |
+
+`#cal` / `#remind` は「先頭が日付、続けて任意の時刻、残りが本文」。日付式の解釈は
+**秘書のものを使い回す**（`staff/secretary/ops.resolve_date`）——ここで別の暦を作らない。
+`明日` `来週の火` `+3` `9/9` `2026-09-09` が使えます。読めなければ**理由を返して
+取り込みません**（日付を推測で埋めるくらいなら聞き返す）。
+
+**`M/D` は「次に来るその日」**（過ぎていれば来年）。8月に `1/5` と書けば翌年になります
+——主人の裁定（2026-09-06）:「基本何も言わずに 1/5 とするなら、次に来る 1/5 と推測する
+のが妥当で、**結果を返すなら十分**」。その「結果を返す」ために、返信には必ず
+解いた絶対日付を入れます。
+
+### ⚠ `#cal` は Google カレンダーには書きません
+
+**v2 は Google カレンダーへ書き込めません**（`manor calendar` は ICS の読み取り専用。
+v1 は MCP のコネクタで `create_event` を叩いていました）。`#cal` が入れるのは
+**manor 自身の予定表**（`secretary_event`。`manor sec agenda` や Web アプリに出る）です。
+
+そのかわり、返信に **Google カレンダーの「予定を追加」リンク**を添えます（v1
+`calendar-sync/new-event-link.ps1` の移植）。外出先ならそれを押せば端末で追加できます。
 
 写真やファイルを添えた投稿（`file_share`）も読みます。**`subtype` は名指しで弾く**
 （`IGNORED_SUBTYPES`）——付いていれば全部落とす作りだと、画像に添えた `#task` まで
@@ -267,7 +288,7 @@ Slack のためだけの常駐・別のタスクスケジューラ登録は作�
 ```
 uv run manor slack brief [--generate] [--dry-run] [--json]
 uv run manor slack inbox [--dry-run] [--json]
-uv run manor slack intake [--dry-run] [--json]
+uv run manor slack intake [--dry-run] [--json]   # #task / #log / #cal / #remind
 uv run manor slack morning [--no-generate] [--dry-run] [--json]
 uv run manor slack test [--json]                # auth.test で疎通確認する
 ```

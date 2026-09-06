@@ -68,6 +68,7 @@ import tomllib
 import urllib.error
 import urllib.parse
 import urllib.request
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -920,8 +921,15 @@ def _cmd_inbox(args: argparse.Namespace) -> int:
 
 # --- intake（`#task` / `#log`。v1 watch-inbox.ps1 の移植。T4） -------------------
 
-#: 接頭辞 → 何として読むか。**この2つだけ**を読む。
-INTAKE_PREFIXES = {"#task": "task", "#log": "log"}
+#: 接頭辞 → 何として読むか。v1 の即応（`watch-inbox.ps1`）と同じ4つ
+#: （v1 にあった `#idea` は v2 に受け皿が無いので入れていない）。
+INTAKE_PREFIXES = {"#task": "task", "#log": "log", "#cal": "cal", "#remind": "remind"}
+
+#: `#cal` / `#remind` で日付のあとに置ける時刻。`14:00` / `9:05`。
+_INTAKE_TIME_RE = re.compile(r"^([01]?\d|2[0-3]):([0-5]\d)$")
+
+#: 予定に時刻があるとき、終わりを何分後にするか（v1 `new-event-link.ps1` の既定と同じ）。
+INTAKE_EVENT_MINUTES = 60
 
 #: 初回（取り込みの記録が1件も無いとき）に遡る分数。v1 の `-FirstRunMinutes 15` と同じ。
 #: **チャンネルの全履歴を遡らない**——導入した日に何百件も起票してしまう。
@@ -980,6 +988,84 @@ def parse_intake(text: str) -> dict[str, str] | None:
             continue
         return {"kind": kind, "body": rest.strip()}
     return None
+
+
+def parse_when(rest: str, *, today: str | None = None) -> dict[str, Any]:
+    """`#cal` / `#remind` の本文から「いつ」と「何を」を切り出す。
+
+    受ける形（先頭が日付、続けて任意の時刻、残りが本文）::
+
+        9/9 14:00 予備審査      → 2026-09-09T14:00 / 予備審査
+        明日 歯医者             → （明日の日付）終日 / 歯医者
+        来週の火 10:00 打ち合わせ → …
+
+    日付式の解釈は**秘書のものを使い回す**（`staff.secretary.ops.resolve_date`）——
+    ここで別の暦を作らない。`M/D` は今年、過ぎていれば来年（主人の裁定 2026-09-06:
+    「基本何も言わずに 1/5 とするなら、次に来る 1/5 と推測するのが妥当」）。
+
+    読めなければ `{"ok": False, "reason": ...}`。**黙って捨てない**——呼び出し元が
+    その理由をそのまま返信する。
+    """
+    from .staff.secretary import ops as sec_ops
+
+    # 全角スペースでも切れるようにする（日本語入力では普通に混ざる）
+    tokens = (rest or "").replace("　", " ").split()
+    if not tokens:
+        return {"ok": False, "reason": "日付と本文がありません"}
+
+    try:
+        base = date.fromisoformat(today) if today else date.fromisoformat(util.today())
+        on = sec_ops.resolve_date(tokens[0], base)
+    except ManorError:
+        return {"ok": False, "reason": f"日付として読めません: {tokens[0]!r}"}
+    except ValueError:
+        return {"ok": False, "reason": "今日の日付を読めません"}
+
+    at: str | None = None
+    body_from = 1
+    if len(tokens) > 1:
+        m = _INTAKE_TIME_RE.match(tokens[1])
+        if m:
+            at = f"{int(m.group(1)):02d}:{m.group(2)}"
+            body_from = 2
+
+    text = " ".join(tokens[body_from:]).strip()
+    if not text:
+        return {"ok": False, "reason": "本文がありません（日付のあとに内容を続けてください）"}
+    return {"ok": True, "on": on.isoformat(), "at": at, "text": text}
+
+
+def google_calendar_link(on: str, at: str | None, title: str) -> str:
+    """Google カレンダーの「予定を追加」リンク（v1 `calendar-sync/new-event-link.ps1` の移植）。
+
+    **v2 は Google カレンダーへ書き込めない**（`manor calendar` は ICS の読み取り専用）。
+    だから代わりに、押せば主人の端末で追加できるリンクを返信に添える——v1 の即応も
+    登録できないときはこの形へ退避していた。
+    """
+    ymd = on.replace("-", "")
+    if at:
+        start = f"{ymd}T{at.replace(':', '')}00"
+        end_dt = datetime.strptime(f"{on} {at}", "%Y-%m-%d %H:%M") + timedelta(
+            minutes=INTAKE_EVENT_MINUTES
+        )
+        end = end_dt.strftime("%Y%m%dT%H%M%S")
+    else:
+        # 終日は日付だけ。**終わりは「翌日」を指定する決まり**（Google の仕様）
+        start = ymd
+        end = (date.fromisoformat(on) + timedelta(days=1)).isoformat().replace("-", "")
+    # `dates` の `/` は**そのまま**にする（v1 と同じ形。Google の例示もこの形）。
+    quoted_title = urllib.parse.quote(title, safe="")
+    parts = [
+        "action=TEMPLATE",
+        f"text={quoted_title}",
+        f"dates={start}/{end}",
+        f"ctz={urllib.parse.quote(INTAKE_TIMEZONE, safe='')}",
+    ]
+    return "https://calendar.google.com/calendar/render?" + "&".join(parts)
+
+
+#: リンクに載せるタイムゾーン（Google は IANA 形式を求める）。
+INTAKE_TIMEZONE = "Asia/Tokyo"
 
 
 def _intake_cursor_key(channel: str) -> str:
@@ -1126,12 +1212,34 @@ def intake(home: Path, *, dry_run: bool = False) -> dict[str, Any]:
                     _record_intake(conn, channel=channel, ts=ts, kind="", node_id=None)
                 continue
 
+            # `#cal` / `#remind` は「いつ」を先に解く。**読めなければ理由を返して
+            # 取り込まない**（黙って捨てない。日付を推測で埋めるくらいなら聞き返す）。
+            when: dict[str, Any] | None = None
+            if kind in ("cal", "remind"):
+                when = parse_when(body)
+                if not when["ok"]:
+                    reply_lines.append(_intake_when_guidance(kind, str(when["reason"])))
+                    taken.append({"ts": ts, "kind": "", "node_id": None, "reason": when["reason"]})
+                    if not dry_run:
+                        _record_intake(conn, channel=channel, ts=ts, kind="", node_id=None)
+                    continue
+
             node_id: str | None = None
             if not dry_run:
-                node_id = _create_from_intake(conn, kind=kind, body=body)
-                _record_intake(conn, channel=channel, ts=ts, kind=kind, node_id=node_id)
-            taken.append({"ts": ts, "kind": kind, "node_id": node_id, "body": body})
-            reply_lines.append(_intake_ack(kind, node_id, body))
+                node_id = _create_from_intake(conn, kind=kind, body=body, when=when)
+                # **`slack_intake.node_id` は `node(id)` への外部キー。** 予定・控えは
+                # 秘書の表の行であって node ではないので、そこには入れない（入れると
+                # FOREIGN KEY で落ちる——実測）。冪等の要は (channel, ts) なので、
+                # 印としてはそれで足りる。id は返信に載る。
+                _record_intake(
+                    conn, channel=channel, ts=ts, kind=kind,
+                    node_id=node_id if kind in ("task", "log") else None,
+                )
+            taken.append(
+                {"ts": ts, "kind": kind, "node_id": node_id, "body": body,
+                 "on": (when or {}).get("on"), "at": (when or {}).get("at")}
+            )
+            reply_lines.append(_intake_ack(kind, node_id, body, when))
 
         if not dry_run and newest_seen:
             _set_intake_cursor(conn, channel, newest_seen)
@@ -1168,26 +1276,83 @@ def intake(home: Path, *, dry_run: bool = False) -> dict[str, Any]:
         conn.close()
 
 
+#: 接頭辞ごとの書き方の例（本文が無い／読めないときに返す）。
+_INTAKE_EXAMPLES: dict[str, str] = {
+    "task": "`#task 来週の会までに評価をまとめる`",
+    "log": "`#log P4 実装を進めた`",
+    "cal": "`#cal 9/9 14:00 予備審査`（時刻は省けます）",
+    "remind": "`#remind 明日 申請を出す`",
+}
+
+
 def _intake_empty_guidance(kind: str) -> str:
-    if kind == "task":
-        return "・`#task` を受け取りましたが本文がありません。例: `#task 来週の会までに評価をまとめる`"
-    return "・`#log` を受け取りましたが本文がありません。例: `#log P4 実装を進めた`"
+    return f"・`#{kind}` を受け取りましたが本文がありません。例: {_INTAKE_EXAMPLES[kind]}"
 
 
-def _intake_ack(kind: str, node_id: str | None, body: str) -> str:
+def _intake_when_guidance(kind: str, reason: str) -> str:
+    return f"・`#{kind}` を受け取りましたが{reason}。例: {_INTAKE_EXAMPLES[kind]}"
+
+
+def _format_when(when: dict[str, Any]) -> str:
+    """**解いた絶対日付を必ず返す。**
+
+    `M/D` は「次に来るその日」に寄せる（過ぎていれば来年）ので、8月に `1/5` と書けば
+    翌年になる。主人の裁定（2026-09-06）:「基本何も言わずに 1/5 とするなら、次に来る
+    1/5 と推測するのが妥当で、**結果を返すなら十分**」——その「結果を返す」がこれ。
+    """
+    return f"{when['on']} {when['at']}" if when.get("at") else f"{when['on']} 終日"
+
+
+def _intake_ack(
+    kind: str, node_id: str | None, body: str, when: dict[str, Any] | None = None
+) -> str:
+    marker = node_id or "(dry-run)"
+    if kind == "cal" and when:
+        # **v2 は Google カレンダーへ書けない**（`manor calendar` は ICS の読み取り専用）。
+        # 手元の予定表には入れたうえで、押せば端末で追加できるリンクを添える。
+        link = google_calendar_link(str(when["on"]), when.get("at"), str(when["text"]))
+        return (
+            f"・{_format_when(when)} 「{when['text']}」を予定に入れました（{marker}）\n"
+            f"　Google カレンダーへ入れるならこちら: {link}"
+        )
+    if kind == "remind" and when:
+        return f"・{_format_when(when)} 「{when['text']}」を控えました（{marker}）"
     head = body.splitlines()[0][:INTAKE_TITLE_MAX]
     label = "起票しました" if kind == "task" else "控えました"
-    return f"・{node_id or '(dry-run)'} として{label}: {head}"
+    return f"・{marker} として{label}: {head}"
 
 
-def _create_from_intake(conn: sqlite3.Connection, *, kind: str, body: str) -> str:
-    """`#task` はタスク、`#log` はメモとして DB へ。**本文は丸ごと残す。**"""
+def _create_from_intake(
+    conn: sqlite3.Connection, *, kind: str, body: str, when: dict[str, Any] | None = None
+) -> str:
+    """`#task` はタスク、`#log` はメモ、`#cal` は予定、`#remind` は控えとして DB へ。
+
+    **本文は丸ごと残す**（`#task` / `#log`）。`#cal` / `#remind` は秘書の表へ入れる
+    ——秘書の書き込みを slack.py が直に書くのは、部下の表へ横から書かない約束
+    （ADR-002 §4）に触れるので、**秘書の関数を呼ぶ**。
+    """
     title = body.splitlines()[0][:INTAKE_TITLE_MAX] or body[:INTAKE_TITLE_MAX]
     if kind == "task":
         from . import task as task_mod
 
         return task_mod.add(
             conn, title, cls="general", now="Slack から受け取りました（#task）", body=body
+        )
+    if kind == "cal" and when:
+        from .staff.secretary import ops as sec_ops
+
+        start = f"{when['on']}T{when['at']}" if when.get("at") else str(when["on"])
+        return "E" + str(
+            sec_ops.add_event(conn, start=start, title=str(when["text"]), source="slack")
+        )
+    if kind == "remind" and when:
+        from .staff.secretary import ops as sec_ops
+
+        return "R" + str(
+            sec_ops.add_reminder(
+                conn, on_date=str(when["on"]), at_time=when.get("at"),
+                text=str(when["text"]), source="slack",
+            )
         )
     from . import graph as graph_mod
 

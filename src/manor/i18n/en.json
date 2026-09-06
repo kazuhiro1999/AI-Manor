@@ -257,7 +257,7 @@
   "cli.slack.inbox.help": "Import thread replies as verdicts.",
   "cli.slack.inbox.dry_run.help": "Do not import -- only show the judgment result (no verdict applied, nothing recorded).",
   "cli.slack.test.help": "Check connectivity via auth.test.",
-  "cli.slack.intake.help": "Pick up #task / #log from the channel and file them.",
+  "cli.slack.intake.help": "Pick up #task / #log / #cal / #remind from the channel and file them.",
   "cli.slack.intake.dry_run.help": "Show what would be picked up and the reply text, without filing or posting.",
   "slack.intake.failed": "Could not take intake: {reason}",
   "slack.intake.nothing": "No new #task / #log messages.",

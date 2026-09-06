@@ -43,13 +43,10 @@ def cmd_remind_add(conn, home, args) -> object:
     today = date.fromisoformat(util.today())
     on_date = ops.resolve_date(args.on, today)
     at_time = ops.validate_time(args.at, field="--at") if args.at else None
-    now = util.now()
-    cur = conn.execute(
-        "INSERT INTO secretary_reminder (on_date, at_time, text, source, created_at)"
-        " VALUES (?, ?, ?, ?, ?)",
-        (on_date.isoformat(), at_time, text, args.source, now),
+    # 書き込みは `ops` の1本に寄せる（Slack の `#remind` も同じ関数を通る。T14）
+    reminder_id = ops.add_reminder(
+        conn, on_date=on_date.isoformat(), at_time=at_time, text=text, source=args.source
     )
-    reminder_id = cur.lastrowid
     # 控えは復唱する（登録した日付と文をそのまま返す。ADR-002 §6）。
     if args.json:
         return {
@@ -135,13 +132,11 @@ def cmd_event_add(conn, home, args) -> object:
         raise ManorError("予定の題名が空です", code=2, key="error.sec.event_title_empty")
     start = ops.validate_datetime(args.start, field="--start")
     end = ops.validate_datetime(args.end, field="--end") if args.end else None
-    now = util.now()
-    cur = conn.execute(
-        'INSERT INTO secretary_event (start, "end", title, place, note, source, created_at)'
-        " VALUES (?, ?, ?, ?, ?, 'manual', ?)",
-        (start, end, title, args.place, args.note, now),
+    # 書き込みは `ops` の1本に寄せる（Slack の `#cal` も同じ関数を通る。T14）
+    event_id = ops.add_event(
+        conn, start=start, title=title, end=end,
+        place=args.place or "", note=args.note or "", source="manual",
     )
-    event_id = cur.lastrowid
     if args.json:
         return {"id": event_id, "start": start, "end": end, "title": title}
     return i18n.t("sec.event.add.done", start=start, title=title, id=event_id)

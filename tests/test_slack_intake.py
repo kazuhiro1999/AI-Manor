@@ -331,3 +331,111 @@ def test_leak_term_blocks_the_reply_but_keeps_the_intake(
     assert posted == []
     assert conn.execute("SELECT COUNT(*) AS n FROM slack_intake").fetchone()["n"] == 1
     assert "ひみつのあいことば" not in str(result.get("reason", ""))
+
+
+# --- #cal / #remind（v1 から戻した。T14・2026-09-06） ---------------------------------------
+
+
+def test_cal_creates_an_event_and_answers_with_the_resolved_date(
+    home: Path, conn, monkeypatch: pytest.MonkeyPatch, leak_terms
+) -> None:
+    """**解いた絶対日付を必ず返す**（主人の裁定 2026-09-06:「結果を返すなら十分」）。"""
+    monkeypatch.setenv("MANOR_TODAY", "2026-09-06")
+    posted = _setup(
+        home, monkeypatch, leak_terms,
+        [{"ts": "2000.0001", "text": "#cal 9/9 14:00 予備審査"}],
+    )
+
+    result = slack_mod.intake(home)
+
+    assert result["taken"][0]["kind"] == "cal"
+    row = conn.execute("SELECT start, title, source FROM secretary_event").fetchone()
+    assert row["start"] == "2026-09-09T14:00"
+    assert row["title"] == "予備審査"
+    assert row["source"] == "slack"
+    text = str(posted[0]["text"])
+    assert "2026-09-09 14:00" in text  # 解いた日付をそのまま返す
+
+
+def test_cal_without_a_time_is_all_day(
+    home: Path, conn, monkeypatch: pytest.MonkeyPatch, leak_terms
+) -> None:
+    monkeypatch.setenv("MANOR_TODAY", "2026-09-06")
+    posted = _setup(home, monkeypatch, leak_terms, [{"ts": "2000.0002", "text": "#cal 明日 歯医者"}])
+
+    slack_mod.intake(home)
+
+    assert conn.execute("SELECT start FROM secretary_event").fetchone()["start"] == "2026-09-07"
+    assert "終日" in str(posted[0]["text"])
+
+
+def test_cal_reply_carries_a_google_calendar_link(
+    home: Path, monkeypatch: pytest.MonkeyPatch, leak_terms
+) -> None:
+    """**v2 は Google カレンダーへ書けない**（ICS の読み取り専用）ので、押せば端末で
+    追加できるリンクを添える（v1 の退避と同じ形）。
+    """
+    monkeypatch.setenv("MANOR_TODAY", "2026-09-06")
+    posted = _setup(home, monkeypatch, leak_terms, [{"ts": "2000.0003", "text": "#cal 9/9 14:00 予備審査"}])
+
+    slack_mod.intake(home)
+
+    text = str(posted[0]["text"])
+    assert "calendar.google.com/calendar/render" in text
+    assert "dates=20260909T140000/20260909T150000" in text
+
+
+def test_remind_creates_a_reminder(
+    home: Path, conn, monkeypatch: pytest.MonkeyPatch, leak_terms
+) -> None:
+    monkeypatch.setenv("MANOR_TODAY", "2026-09-06")
+    posted = _setup(
+        home, monkeypatch, leak_terms, [{"ts": "2000.0004", "text": "#remind 明日 申請を出す"}]
+    )
+
+    slack_mod.intake(home)
+
+    row = conn.execute("SELECT on_date, at_time, text, source FROM secretary_reminder").fetchone()
+    assert (row["on_date"], row["at_time"], row["text"]) == ("2026-09-07", None, "申請を出す")
+    assert row["source"] == "slack"
+    assert "2026-09-07" in str(posted[0]["text"])
+
+
+def test_a_year_less_date_flies_forward_and_says_so(
+    home: Path, conn, monkeypatch: pytest.MonkeyPatch, leak_terms
+) -> None:
+    """`M/D` は「次に来るその日」。**飛んだことが返信で分かる**（B122 の裁定）。"""
+    monkeypatch.setenv("MANOR_TODAY", "2026-09-06")
+    posted = _setup(home, monkeypatch, leak_terms, [{"ts": "2000.0005", "text": "#remind 1/5 年始の挨拶"}])
+
+    slack_mod.intake(home)
+
+    assert conn.execute("SELECT on_date FROM secretary_reminder").fetchone()["on_date"] == "2027-01-05"
+    assert "2027-01-05" in str(posted[0]["text"])
+
+
+def test_an_unreadable_date_is_answered_not_dropped(
+    home: Path, conn, monkeypatch: pytest.MonkeyPatch, leak_terms
+) -> None:
+    """**黙って捨てない。** 日付を推測で埋めるくらいなら聞き返す。"""
+    monkeypatch.setenv("MANOR_TODAY", "2026-09-06")
+    posted = _setup(home, monkeypatch, leak_terms, [{"ts": "2000.0006", "text": "#cal そのうち 打ち合わせ"}])
+
+    result = slack_mod.intake(home)
+
+    assert result["replied"] is True
+    assert "日付として読めません" in str(posted[0]["text"])
+    assert conn.execute("SELECT COUNT(*) AS n FROM secretary_event").fetchone()["n"] == 0
+    # 印は残す（同じ投稿に何度も聞き返さない）
+    assert conn.execute("SELECT COUNT(*) AS n FROM slack_intake").fetchone()["n"] == 1
+
+
+def test_cal_with_only_a_date_asks_for_the_body(
+    home: Path, monkeypatch: pytest.MonkeyPatch, leak_terms
+) -> None:
+    monkeypatch.setenv("MANOR_TODAY", "2026-09-06")
+    posted = _setup(home, monkeypatch, leak_terms, [{"ts": "2000.0007", "text": "#cal 明日"}])
+
+    slack_mod.intake(home)
+
+    assert "本文がありません" in str(posted[0]["text"])

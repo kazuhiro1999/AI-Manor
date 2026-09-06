@@ -294,3 +294,61 @@ def merge_agenda(
         )
     )
     return items
+
+
+# --- 書き込み（他の担当からも呼べる口。2026-09-06・T14） ---------------------------------
+#
+# `secretary_event` / `secretary_reminder` へ**行を入れるのはここだけ**にする。
+# Slack の取り込み（`manor.slack.intake`）から `#cal` / `#remind` を受けるようになり、
+# 書き手が CLI 以外にも増えた——**部下の表へ横から書かない**（ADR-002 §4）を守るため、
+# SQL を cli.py から持ち上げて関数にした。CLI 側もこの関数を呼ぶ。
+
+
+def add_event(
+    conn: "sqlite3.Connection",
+    *,
+    start: str,
+    title: str,
+    end: str | None = None,
+    place: str = "",
+    note: str = "",
+    source: str = "manual",
+) -> int:
+    """予定を1件入れて `id` を返す。`start`/`end` は絶対日時（`validate_datetime` の形）。"""
+    from manor import util
+
+    title = title.strip()
+    if not title:
+        raise ManorError("予定の題名が空です", code=2, key="error.sec.event_title_empty")
+    start = validate_datetime(start, field="--start")
+    end = validate_datetime(end, field="--end") if end else None
+    cur = conn.execute(
+        'INSERT INTO secretary_event (start, "end", title, place, note, source, created_at)'
+        " VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (start, end, title, place or "", note or "", source, util.now()),
+    )
+    return int(cur.lastrowid or 0)
+
+
+def add_reminder(
+    conn: "sqlite3.Connection",
+    *,
+    on_date: str,
+    text: str,
+    at_time: str | None = None,
+    source: str = "manual",
+) -> int:
+    """控えを1件入れて `id` を返す。`on_date` は絶対日付（`resolve_date` を通したもの）。"""
+    from manor import util
+
+    text = text.strip()
+    if not text:
+        raise ManorError("控えの本文が空です", code=2, key="error.sec.remind_text_empty")
+    if at_time:
+        at_time = validate_time(at_time, field="--at")
+    cur = conn.execute(
+        "INSERT INTO secretary_reminder (on_date, at_time, text, source, created_at)"
+        " VALUES (?, ?, ?, ?, ?)",
+        (on_date, at_time, text, source, util.now()),
+    )
+    return int(cur.lastrowid or 0)

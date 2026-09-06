@@ -257,7 +257,7 @@
   "cli.slack.inbox.help": "スレッドの返信を裁定として取り込む",
   "cli.slack.inbox.dry_run.help": "取り込まず、判定結果だけ表示する（裁定を適用せず・記録もしない）",
   "cli.slack.test.help": "auth.test で疎通確認する",
-  "cli.slack.intake.help": "チャンネルの #task / #log を拾って起票・記録する",
+  "cli.slack.intake.help": "チャンネルの #task / #log / #cal / #remind を拾って起票・記録する",
   "cli.slack.intake.dry_run.help": "起票せず、何を拾うかと返信の文面だけ出す（Slack へは投げない）",
   "slack.intake.failed": "取り込めませんでした: {reason}",
   "slack.intake.nothing": "新着の #task / #log はありません。",
