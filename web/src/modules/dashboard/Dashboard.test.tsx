@@ -24,6 +24,10 @@ function renderScreen() {
 
 const fullPayload: DashboardData = {
   today: "2026-09-04",
+  needs_you: [],
+  working: [],
+  due_today_list: [],
+  recent: [],
   status: { ok: false, action_needed: 2, check_failures: 0, open_decisions: 1, blocked_ready: 1 },
   counts: { pending_decisions: 1, doing_butler: 3, due_today: 2, done_this_week: 4 },
   night: { available: true, status: "done", started_at: "2026-09-03T22:00:00", ended_at: "2026-09-03T22:10:00" },
@@ -54,6 +58,10 @@ const fullPayload: DashboardData = {
 
 const emptyPayload: DashboardData = {
   today: "2026-09-04",
+  needs_you: [],
+  working: [],
+  due_today_list: [],
+  recent: [],
   status: { ok: true, action_needed: 0, check_failures: 0, open_decisions: 0, blocked_ready: 0 },
   counts: { pending_decisions: 0, doing_butler: 0, due_today: 0, done_this_week: 0 },
   night: { available: false, status: null, started_at: null, ended_at: null },
@@ -88,5 +96,66 @@ describe("ダッシュボード画面（ADR-011 D2）", () => {
     expect(screen.getByText("問題はありません。")).toBeTruthy();
     // run 表が無い home 相当（available: false）の帯が3つとも案内文を出す。
     expect(screen.getAllByText(/run 表が無い home です/).length).toBeGreaterThanOrEqual(2);
+  });
+});
+
+/* --- 管制塔（2026-09-06・外部レビュー「What is happening in my home?」）------------- */
+
+describe("ダッシュボードの管制塔", () => {
+  afterEach(cleanup);
+
+  it("判断が要るものは、件名だけでなく**推奨と理由**まで出す", async () => {
+    mockFetch({
+      ...fullPayload,
+      needs_you: [
+        {
+          id: "D7",
+          title: "旅行を予約してよいか",
+          recommendation: "予約する",
+          evidence: "予算内 / 日程一致 / キャンセル可",
+          risk: "low",
+          days: 2,
+          project_id: "p1",
+        },
+      ],
+    });
+    renderScreen();
+
+    await waitFor(() => expect(screen.getByText(/旅行を予約してよいか/)).toBeTruthy());
+    // 押してから読み直さずに済むこと——推奨と理由がトップに出ている
+    expect(screen.getByText(/予約する/)).toBeTruthy();
+    expect(screen.getByText(/予算内/)).toBeTruthy();
+  });
+
+  it("判断待ちが無いときは、そう言う（黙って空にしない）", async () => {
+    mockFetch({ ...fullPayload, needs_you: [] });
+    renderScreen();
+
+    await waitFor(() => expect(screen.getByText(/判断を待っているものはありません/)).toBeTruthy());
+  });
+
+  it("AI が進めていることを**担当ごと**に出す", async () => {
+    mockFetch({
+      ...fullPayload,
+      working: [
+        { owner: "chef", tasks: [{ id: "B1", title: "買い物リストを整理", project_id: "" }], more: 2 },
+      ],
+    });
+    renderScreen();
+
+    await waitFor(() => expect(screen.getByText(/買い物リストを整理/)).toBeTruthy());
+    expect(screen.getByText(/ほか2件/)).toBeTruthy();
+  });
+
+  it("今日と最近の動きを出す", async () => {
+    mockFetch({
+      ...fullPayload,
+      due_today_list: [{ id: "B9", title: "歯医者に行く", owner: "master", project_id: "p3" }],
+      recent: [{ id: "B8", title: "夜勤が3件片付けた", owner: "butler", at: "2026-09-04T07:01:00" }],
+    });
+    renderScreen();
+
+    await waitFor(() => expect(screen.getByText(/歯医者に行く/)).toBeTruthy());
+    expect(screen.getByText(/夜勤が3件片付けた/)).toBeTruthy();
   });
 });

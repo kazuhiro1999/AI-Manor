@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -108,14 +109,19 @@ def test_dashboard_reports_last_night_run(home: Path) -> None:
 
 
 def test_dashboard_runs_bands_reflect_run_table(conn, home: Path) -> None:
-    _insert_run(
-        conn, kind="behavior", started_at="2026-09-04T01:00:00", ended_at="2026-09-04T01:01:00",
-        cost_usd=0.12, exit_reason="done",
-    )
-    _insert_run(
-        conn, kind="behavior", started_at="2026-09-04T02:00:00", ended_at="2026-09-04T02:01:00",
-        cost_usd=0.20, exit_reason="failed",
-    )
+    """⚠ **日付を固定しない。** `runs_24h` は「いまから24時間」の窓なので、固定日を
+    書くと**その翌日から毎日落ちる**（2026-09-04 で書かれており、9/5 以降ずっと赤だった
+    ——2026-09-06 に是正）。いまからの相対時刻で入れる。
+    """
+    now = datetime.now()
+    for offset, cost, reason in ((2, 0.12, "done"), (1, 0.20, "failed")):
+        started = now - timedelta(hours=offset)
+        _insert_run(
+            conn, kind="behavior",
+            started_at=started.isoformat(timespec="seconds"),
+            ended_at=(started + timedelta(minutes=1)).isoformat(timespec="seconds"),
+            cost_usd=cost, exit_reason=reason,
+        )
     conn.commit()
 
     client = make_client(home)
@@ -189,3 +195,56 @@ def test_dashboard_upcoming_tolerates_missing_secretary_event_table(conn, home: 
     res = client.get("/api/v1/dashboard")
     assert res.status_code == 200
     assert res.json()["upcoming"] == []
+
+
+# --- 管制塔の3枚（2026-09-06・外部レビュー）-------------------------------------------
+
+
+def test_dashboard_carries_what_needs_the_owner(conn, home: Path) -> None:
+    """**判断が要るものを、推奨と根拠つきでトップへ返す。**
+
+    外部レビュー:「Dashboard を『データ一覧』から『AI の管制塔』にする」。件名だけだと
+    押してから読み直すことになるので、payload の時点で推奨・根拠まで載せる。
+    """
+    tid = task_mod.add(conn, "旅行の予約", recommendation="予約する", section="B")
+    decision_mod.ask(
+        conn, "旅行を予約してよいか", task_id=tid, recommend="予約する",
+        background="", evidence="予算内 / 日程一致 / キャンセル可",
+    )
+    conn.commit()
+
+    body = make_client(home).get("/api/v1/dashboard").json()
+
+    assert body["needs_you"], "判断待ちが payload に出ていない"
+    first = body["needs_you"][0]
+    assert first["recommendation"] == "予約する"
+    assert "予算内" in first["evidence"]
+
+
+def test_dashboard_groups_what_the_ai_is_doing_by_owner(conn, home: Path) -> None:
+    """**担当ごとに畳む**（誰が何をしているか）。主人ぶんは混ぜない。"""
+    mine = task_mod.add(conn, "主人の作業", owner="master")
+    task_mod.status(conn, mine, "doing")
+    theirs = task_mod.add(conn, "執事の作業", owner="butler")
+    task_mod.status(conn, theirs, "doing")
+    conn.commit()
+
+    body = make_client(home).get("/api/v1/dashboard").json()
+
+    owners = {w["owner"] for w in body["working"]}
+    assert owners == {"butler"}  # 主人の doing は「AI が進めている」ではない
+    assert body["working"][0]["tasks"][0]["title"] == "執事の作業"
+
+
+def test_dashboard_lists_today_and_recent(conn, home: Path, monkeypatch) -> None:
+    monkeypatch.setenv("MANOR_TODAY", "2026-09-04")
+    today_task = task_mod.add(conn, "今日が期限", due="2026-09-04")
+    done = task_mod.add(conn, "片付いたもの")
+    task_mod.status(conn, done, "doing")
+    task_mod.status(conn, done, "done")
+    conn.commit()
+
+    body = make_client(home).get("/api/v1/dashboard").json()
+
+    assert [t["id"] for t in body["due_today_list"]] == [today_task]
+    assert [r["id"] for r in body["recent"]] == [done]

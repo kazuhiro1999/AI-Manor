@@ -1232,8 +1232,41 @@ export async function mockApi<T>(path: string, options: ApiOptions = {}): Promis
     const totalCount = runs.length;
     const totalFailed = runs.filter((r) => r.exit_reason !== "done").length;
     const totalCost = runs.reduce((a, r) => a + (r.cost_usd || 0), 0);
+    // 管制塔の3枚（2026-09-06）。demo でも「家で何が起きているか」が見えるよう、
+    // 既にある board の配列から組む（新しい合成データを増やさない）。
+    const needsYou = board.pending.slice(0, 3).map((d) => ({
+      id: d.id,
+      title: d.title,
+      recommendation: d.tasks?.[0]?.recommendation ?? "",
+      evidence: d.evidence ?? "",
+      risk: d.risk ?? "",
+      days: d.days ?? null,
+      project_id: d.project_id ?? "",
+    }));
+    const doingByOwner: Record<string, { id: string; title: string; project_id: string }[]> = {};
+    for (const t of board.tasks) {
+      if (t.status !== "doing" || t.owner === "master") continue;
+      (doingByOwner[t.owner || "butler"] ||= []).push({
+        id: t.id,
+        title: t.title,
+        project_id: t.project_id ?? "",
+      });
+    }
     const data: DashboardData = {
       today: TODAY,
+      needs_you: needsYou,
+      working: Object.entries(doingByOwner)
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([owner, items]) => ({ owner, tasks: items.slice(0, 3), more: Math.max(0, items.length - 3) })),
+      due_today_list: board.tasks
+        .filter((t) => t.due === TODAY && !["done", "withdrawn"].includes(t.status))
+        .slice(0, 6)
+        .map((t) => ({ id: t.id, title: t.title, owner: t.owner ?? "", project_id: t.project_id ?? "" })),
+      recent: board.tasks
+        .filter((t) => t.status === "done")
+        .sort((a, b) => String(b.done_at ?? "").localeCompare(String(a.done_at ?? "")))
+        .slice(0, 5)
+        .map((t) => ({ id: t.id, title: t.title, owner: t.owner ?? "", at: t.done_at ?? "" })),
       status: {
         ok: actionNeeded === 0,
         action_needed: actionNeeded,

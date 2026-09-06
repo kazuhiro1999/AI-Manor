@@ -622,8 +622,50 @@ export interface DashboardUsageCost {
   cost_measured?: number;
 }
 
+/* 管制塔の3枚（2026-09-06・外部レビュー）。**新しい集計ではない**——`get_board` が
+ * 既に持っているものを、トップ画面に要る形へ並べ替えたもの。 */
+export interface DashboardNeedsYou {
+  id: string;
+  title: string;
+  recommendation: string;
+  evidence: string;
+  risk: string;
+  days: number | null;
+  project_id: string;
+}
+
+export interface DashboardWorkingItem {
+  id: string;
+  title: string;
+  project_id: string;
+}
+
+export interface DashboardWorking {
+  owner: string;
+  tasks: DashboardWorkingItem[];
+  more: number;
+}
+
+export interface DashboardTodayItem {
+  id: string;
+  title: string;
+  owner: string;
+  project_id: string;
+}
+
+export interface DashboardRecentItem {
+  id: string;
+  title: string;
+  owner: string;
+  at: string;
+}
+
 export interface DashboardData {
   today: string;
+  needs_you: DashboardNeedsYou[];
+  working: DashboardWorking[];
+  due_today_list: DashboardTodayItem[];
+  recent: DashboardRecentItem[];
   status: DashboardStatus;
   counts: DashboardCounts;
   night: DashboardNight;

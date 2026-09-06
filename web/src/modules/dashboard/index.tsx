@@ -19,6 +19,8 @@ import { useToast } from "../../components/Toast";
 // するだけで、開く処理は書き直さない。
 import { openFaceWindow } from "../settings";
 import { formatDay, useT } from "../../app/i18n";
+import { AGENT_LABEL_KEY } from "../../app/agentMeta";
+import { useNavigate } from "react-router-dom";
 
 function useNightLabel(night: DashboardData["night"]): string {
   const t = useT();
@@ -150,10 +152,122 @@ function UsageCostBand({ band }: { band: DashboardData["usage_cost"] }) {
   );
 }
 
+
+/* --- 管制塔の3枚（2026-09-06・外部レビュー「What is happening in my home?」）---------
+ *
+ * 外部レビューの指摘:「Dashboard を『データ一覧』から『AI の管制塔』にする」。
+ * トップに置くのは**数字ではなく出来事**——①あなたの判断が必要 ②AI が進めていること
+ * ③今日。既存の帯（節目・稼働・費用）はその下へ残す（見ていた人の手掛かりを消さない）。
+ */
+
+/** 担当の呼び名。**フックにしない**——`.map()` の中から呼ぶため（フックの規則）。
+ * 訳語は `agents` の画面と同じ辞書を使う（担当の名前を2箇所で持たない）。 */
+function ownerLabel(owner: string, t: ReturnType<typeof useT>): string {
+  if (!owner) return "";
+  return owner in AGENT_LABEL_KEY ? t(AGENT_LABEL_KEY[owner]) : owner;
+}
+
+function NeedsYouBand({ items, onOpen }: { items: DashboardData["needs_you"]; onOpen: () => void }) {
+  const t = useT();
+  if (!items.length) return <p className="panel-note">{t("dashboard.needsYou.empty")}</p>;
+  return (
+    <div className="cards">
+      {items.map((d) => (
+        <Card key={d.id}>
+          <div className="card-head">
+            <span className="card-title">
+              {d.id} {d.title}
+            </span>
+            {d.project_id ? <span className="card-pj">{d.project_id.toUpperCase()}</span> : null}
+            {d.days != null ? (
+              <span className="card-days">{t("dashboard.needsYou.days", { n: d.days })}</span>
+            ) : null}
+          </div>
+          {/* **推奨と根拠をトップに出す**（レビューの「推奨：… ／ 理由：…」の形）。
+            * 判断の画面（tasks/judge）と同じクラスを使う——同じものは同じ見た目で。 */}
+          <div className="card-rec">
+            {t("dashboard.needsYou.recommendation", { text: d.recommendation || t("common.none") })}{" "}
+            <RiskBadge risk={d.risk} />
+          </div>
+          {d.evidence.trim() ? (
+            <div className="card-evidence">
+              <div className="card-evidence-label">{t("dashboard.needsYou.evidenceLabel")}</div>
+              <p className="panel-note">{d.evidence}</p>
+            </div>
+          ) : null}
+          <div className="card-actions">
+            <button className="btn btn-small" type="button" onClick={onOpen}>
+              {t("dashboard.needsYou.decide")}
+            </button>
+          </div>
+        </Card>
+      ))}
+    </div>
+  );
+}
+
+function WorkingBand({ items }: { items: DashboardData["working"] }) {
+  const t = useT();
+  if (!items.length) return <p className="panel-note">{t("dashboard.working.empty")}</p>;
+  return (
+    <div className="cards">
+      {items.map((g) => (
+        <Card key={g.owner}>
+          <div className="card-head">
+            <span className="card-title">{ownerLabel(g.owner, t)}</span>
+          </div>
+          <div className="rows">
+            {g.tasks.map((task) => (
+              <div className="row-item" key={task.id}>
+                <span className="row-id">{task.id}</span>
+                <span className="row-title">{task.title}</span>
+              </div>
+            ))}
+          </div>
+          {g.more > 0 ? <p className="panel-note">{t("dashboard.working.more", { n: g.more })}</p> : null}
+        </Card>
+      ))}
+    </div>
+  );
+}
+
+function TodayBand({ items }: { items: DashboardData["due_today_list"] }) {
+  const t = useT();
+  if (!items.length) return <p className="panel-note">{t("dashboard.todayList.empty")}</p>;
+  return (
+    <div className="rows">
+      {items.map((task) => (
+        <div className="row-item" key={task.id}>
+          <span className="row-id">{task.id}</span>
+          <span className="row-title">{task.title}</span>
+          {task.project_id ? <span className="card-pj">{task.project_id.toUpperCase()}</span> : null}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function RecentBand({ items }: { items: DashboardData["recent"] }) {
+  const t = useT();
+  if (!items.length) return <p className="panel-note">{t("dashboard.recent.empty")}</p>;
+  return (
+    <div className="rows">
+      {items.map((r) => (
+        <div className="row-item" key={r.id}>
+          <span className="row-id">{r.at ? fmtDateTime(r.at) : r.id}</span>
+          <span className="row-title">{r.title}</span>
+          <span className="owner-tag">{ownerLabel(r.owner, t)}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function DashboardScreen() {
   const t = useT();
   const { data, error } = usePolling<DashboardData>("/dashboard", 5000);
   const { show } = useToast();
+  const navigate = useNavigate();
   const nightLabel = useNightLabel(data?.night ?? { available: false });
 
   if (error) return <p className="panel-note">{t("errors.loadFailed", { reason: error })}</p>;
@@ -174,16 +288,56 @@ function DashboardScreen() {
       <section className="panel panel-primary">
         <div className="panel-head">
           <StatusLine status={data.status} />
-          {/* ADR-011 D4: 担当の一覧のカードだけでなく、ダッシュボードからも小窓を開ける。 */}
+          {/* 状態の一行は「要対応 N件」を言うので、その隣のボタンは**要対応そのものへ**
+            * 連れて行く。以前はここが「小窓を開く」で、押しても要対応は見られなかった
+            * （主人のご指摘 2026-09-06）。小窓の口は下の担当の欄へ移した（ADR-011 D4 は
+            * 「ダッシュボードからも開ける」であって「ここに置く」ではない）。 */}
           <button
             className="btn btn-small"
             type="button"
             style={{ marginLeft: "auto" }}
-            onClick={() => openFaceWindow("butler", show)}
+            onClick={() => navigate("/tasks/judge")}
           >
-            {t("dashboard.faceWindow.open")}
+            {t("dashboard.pending.open")}
           </button>
         </div>
+      </section>
+
+      {/* --- 管制塔（2026-09-06・外部レビュー）------------------------------------
+        * トップは「What is in my database?」ではなく「What is happening in my home?」。
+        * ①あなたの判断が必要 ②AI が進めていること／今日 ③最近の動き の順に置き、
+        * 数字のタイルと既存の帯はその下へ下げる（見ていた人の手掛かりを消さない）。 */}
+      <section className="panel panel-primary">
+        <div className="panel-head">
+          <h2>{t("dashboard.needsYou.heading")}</h2>
+          {data.needs_you.length ? (
+            <span className="count" style={{ marginLeft: "auto" }}>
+              {data.needs_you.length}
+            </span>
+          ) : null}
+        </div>
+        <NeedsYouBand items={data.needs_you} onOpen={() => navigate("/tasks/judge")} />
+      </section>
+
+      <section className="panel">
+        <div className="panel-head">
+          <h2>{t("dashboard.todayList.heading")}</h2>
+        </div>
+        <TodayBand items={data.due_today_list} />
+      </section>
+
+      <section className="panel">
+        <div className="panel-head">
+          <h2>{t("dashboard.working.heading")}</h2>
+        </div>
+        <WorkingBand items={data.working} />
+      </section>
+
+      <section className="panel">
+        <div className="panel-head">
+          <h2>{t("dashboard.recent.heading")}</h2>
+        </div>
+        <RecentBand items={data.recent} />
       </section>
 
       <section className="panel">
@@ -229,6 +383,16 @@ function DashboardScreen() {
       <section className="panel">
         <div className="panel-head">
           <h2>{t("dashboard.usageCostHeading")}</h2>
+          {/* ADR-011 D4「ダッシュボードからも小窓を開ける」はここで守る。状態の一行の
+            * 隣から退かしただけで、口そのものは残してある。 */}
+          <button
+            className="btn btn-small"
+            type="button"
+            style={{ marginLeft: "auto" }}
+            onClick={() => openFaceWindow("butler", show)}
+          >
+            {t("dashboard.faceWindow.open")}
+          </button>
         </div>
         <UsageCostBand band={data.usage_cost} />
       </section>

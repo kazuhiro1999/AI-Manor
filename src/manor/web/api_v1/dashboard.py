@@ -137,8 +137,59 @@ def register(app: FastAPI, ctx: WebContext) -> None:
                 stats_24h = []
                 stats_7d = []
 
+            # --- 管制塔の3枚（2026-09-06・外部レビュー「What is happening in my home?」）---
+            #
+            # **新しい問い合わせをしない。** `get_board` が既に持っているものを、
+            # トップ画面に要る形へ並べ替えるだけ（このモジュールの元々の約束）。
+
+            # ① あなたの判断が必要——件名だけでなく**推奨と根拠**まで出す。
+            #    「何を聞かれているか」がトップで分かれば、押してから読み直さずに済む。
+            needs_you = [
+                {
+                    "id": d["id"], "title": d["title"], "recommendation": d.get("recommendation") or "",
+                    "evidence": d.get("evidence") or "", "risk": d.get("risk") or "",
+                    "days": d.get("days"), "project_id": d.get("project_id") or "",
+                }
+                for d in board["pending"][:3]
+            ]
+
+            # ② AI が進めていること——**担当ごと**に畳む（誰が何をしているか）。
+            doing_by_owner: dict[str, list[dict[str, object]]] = {}
+            for t in board["tasks"]:
+                if t["status"] != "doing" or t.get("owner") == "master":
+                    continue
+                doing_by_owner.setdefault(str(t.get("owner") or "butler"), []).append(
+                    {"id": t["id"], "title": t["title"], "project_id": t.get("project_id") or ""}
+                )
+            working = [
+                {"owner": owner, "tasks": items[:3], "more": max(0, len(items) - 3)}
+                for owner, items in sorted(doing_by_owner.items())
+            ]
+
+            # ③ 今日——期限が今日のタスク（主人のぶんも含む。ここは「家で何が起きているか」）。
+            due_today = [
+                {"id": t["id"], "title": t["title"], "owner": t.get("owner") or "",
+                 "project_id": t.get("project_id") or ""}
+                for t in board["tasks"]
+                if t.get("due") == today and t["status"] not in ("done", "withdrawn")
+            ][:6]
+
+            # ④ 最近の動き——直近に片付いたもの。「AI が何をしたか」が時系列で見える。
+            recent = [
+                {"id": t["id"], "title": t["title"], "owner": t.get("owner") or "",
+                 "at": t.get("done_at") or ""}
+                for t in sorted(
+                    (t for t in board["tasks"] if t["status"] == "done"),
+                    key=lambda t: str(t.get("done_at") or ""), reverse=True,
+                )
+            ][:5]
+
             return {
                 "today": today,
+                "needs_you": needs_you,
+                "working": working,
+                "due_today_list": due_today,
+                "recent": recent,
                 "status": {
                     "ok": check_failures == 0 and action_needed == 0,
                     "action_needed": action_needed,
