@@ -677,12 +677,16 @@ def _cmd_test(args: argparse.Namespace) -> int:
     return 0 if result.get("ok") else 1
 
 
-def register(subparsers: "argparse._SubParsersAction") -> None:
-    """`manor notion diary|test` を足す（`cli.py` から配線される公開口。
-    `slack.py` の `register()` と同じ形）。
+def _add_notion_subcommands(sub: "argparse._SubParsersAction", *, needs_db: bool | None) -> None:
+    """`diary` / `test` を1つの `add_subparsers()` の戻り値へ足す。
+
+    **`register()` と `main()` の両方からこれを呼ぶ**（`slack.py` の
+    `_add_slack_subcommands` と同じ形）。書き写すと、片方に旗を足した日に
+    もう片方が黙って落ちる——2026-09-06 に `manor.night` で実際に起きた
+    （`--sleep-back` が `python -m manor.night` 側に無く、**登録済みの夜勤が
+    起動直後に死ぬ**ところだった）。
     """
-    p = subparsers.add_parser("notion", help=i18n.t("cli.notion.help"))
-    sub = p.add_subparsers(dest="verb")
+    extra: dict[str, object] = {} if needs_db is None else {"needs_db": needs_db}
 
     d = sub.add_parser("diary", help=i18n.t("cli.notion.diary.help"))
     d.add_argument("--date", help=i18n.t("cli.notion.diary.date.help"))
@@ -696,11 +700,19 @@ def register(subparsers: "argparse._SubParsersAction") -> None:
         help=i18n.t("cli.notion.diary.dry_run.help"),
     )
     d.add_argument("--json", action="store_true")
-    d.set_defaults(func=_cmd_diary, needs_db=False)
+    d.set_defaults(func=_cmd_diary, **extra)
 
     t = sub.add_parser("test", help=i18n.t("cli.notion.test.help"))
     t.add_argument("--json", action="store_true")
-    t.set_defaults(func=_cmd_test, needs_db=False)
+    t.set_defaults(func=_cmd_test, **extra)
+
+
+def register(subparsers: "argparse._SubParsersAction") -> None:
+    """`manor notion diary|test` を足す（`cli.py` から配線される公開口。
+    `slack.py` の `register()` と同じ形）。
+    """
+    p = subparsers.add_parser("notion", help=i18n.t("cli.notion.help"))
+    _add_notion_subcommands(p.add_subparsers(dest="verb"), needs_db=False)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -714,19 +726,7 @@ def main(argv: list[str] | None = None) -> int:
     except Exception:  # noqa: BLE001
         pass
     parser = argparse.ArgumentParser(prog="python -m manor.notion", description=i18n.t("cli.notion.help"))
-    sub = parser.add_subparsers(dest="verb")
-
-    d = sub.add_parser("diary", help=i18n.t("cli.notion.diary.help"))
-    d.add_argument("--date")
-    d.add_argument("--yesterday", action="store_true")
-    d.add_argument("--generate", action="store_true")
-    d.add_argument("--dry-run", action="store_true", dest="dry_run")
-    d.add_argument("--json", action="store_true")
-    d.set_defaults(func=_cmd_diary)
-
-    t = sub.add_parser("test")
-    t.add_argument("--json", action="store_true")
-    t.set_defaults(func=_cmd_test)
+    _add_notion_subcommands(parser.add_subparsers(dest="verb"), needs_db=None)
 
     args = parser.parse_args(argv)
     func = getattr(args, "func", None)
