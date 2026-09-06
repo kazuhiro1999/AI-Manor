@@ -54,6 +54,8 @@
   "cli.task.add.level.help": "L0/L1/L2/L3/HG。**通常は --class で決める**（--class を渡すとこちらは無視）。HG は --recommendation 必須で、起票と同時に decision を積む",
   "cli.task.add.kind.help": "タスクの種類（ADR-010 D2。`manor kind list` の id。任意——空でよい）",
   "cli.task.set.kind.help": "タスクの種類（ADR-010 D2。空文字で外せる）",
+  "cli.task.status.authorized_by.help": "この遷移を通した decision の id（`D3` 等）か委譲の裁定（`H2` 等）。主人のご指示で動くときは、その decision を残してここに書く",
+  "cli.task.done.authorized_by.help": "done を認めた decision の id（`D3` 等。委譲の裁定 `H<n>` は done を認めない）",
   "cli.task.link.no_wait.help": "depends_on を張っても src を waiting にしない（既定: 相手が未完了なら waiting）",
   "cli.task.add.class.fixed_suffix": "・固定",
   "cli.task.add.class.list_prefix": " 一覧: ",

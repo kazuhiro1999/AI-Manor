@@ -135,7 +135,8 @@ def cmd_task_set(conn, home, args) -> object:
 
 def cmd_task_status(conn, home, args) -> object:
     result = task_mod.status(
-        conn, args.id, args.status, note=args.note or "", owner=args.owner, actor=args.actor
+        conn, args.id, args.status, note=args.note or "", owner=args.owner, actor=args.actor,
+        authorized_by=getattr(args, "authorized_by", None),
     )
     if args.json:
         return result
@@ -145,7 +146,10 @@ def cmd_task_status(conn, home, args) -> object:
 
 
 def cmd_task_done(conn, home, args) -> object:
-    result = task_mod.done(conn, args.id, note=args.note or "")
+    result = task_mod.done(
+        conn, args.id, note=args.note or "",
+        authorized_by=getattr(args, "authorized_by", None),
+    )
     if args.json:
         return result
     lines = [i18n.t("task.done.changed", id=result["id"])]
@@ -802,6 +806,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--note")
     p.add_argument("--owner")
     p.add_argument("--actor", default="butler")
+    p.add_argument(
+        "--authorized-by", dest="authorized_by",
+        help=i18n.t("cli.task.status.authorized_by.help"),
+    )
     p.add_argument("--json", action="store_true")
     p.add_argument("--no-render", action="store_true")
     p.set_defaults(func=cmd_task_status, is_write=True)
@@ -809,6 +817,10 @@ def build_parser() -> argparse.ArgumentParser:
     p = task_sub.add_parser("done")
     p.add_argument("id")
     p.add_argument("--note")
+    p.add_argument(
+        "--authorized-by", dest="authorized_by",
+        help=i18n.t("cli.task.done.authorized_by.help"),
+    )
     p.add_argument("--json", action="store_true")
     p.add_argument("--no-render", action="store_true")
     p.set_defaults(func=cmd_task_done, is_write=True)

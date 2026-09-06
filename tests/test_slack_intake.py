@@ -73,13 +73,27 @@ def _write_slack_config(home: Path, *, channel: str = "C123456") -> None:
     (Path(home) / "config.toml").write_text(f"[slack]\nchannel = '{channel}'\n", encoding="utf-8")
 
 
-def _history(messages: list[dict[str, object]]):
-    """`conversations.history` だけに答える偽 API。送信は記録して ok を返す。"""
+def _history(messages: list[dict[str, object]], *, page_size: int | None = None):
+    """`conversations.history` だけに答える偽 API。送信は記録して ok を返す。
+
+    `page_size` を渡すと、**新しい側から**その件数ずつ `has_more` ＋ `next_cursor` で
+    返す（Slack の実際の返し方に合わせる。S4 の試験用）。
+    """
     posted: list[dict[str, object]] = []
+    newest_first = list(reversed(messages))  # Slack は新しい順に返す
 
     def fake(method: str, token: str, *, params: dict[str, object] | None = None, timeout: float = 0):
         if method == "conversations.history":
-            return {"ok": True, "messages": list(reversed(messages))}  # Slack は新しい順
+            if page_size is None:
+                return {"ok": True, "messages": newest_first}
+            start = int((params or {}).get("cursor") or 0)
+            chunk = newest_first[start:start + page_size]
+            nxt = start + page_size
+            has_more = nxt < len(newest_first)
+            out: dict[str, object] = {"ok": True, "messages": chunk, "has_more": has_more}
+            if has_more:
+                out["response_metadata"] = {"next_cursor": str(nxt)}
+            return out
         if method == "chat.postMessage":
             posted.append(params or {})
             return {"ok": True, "ts": "9999.0001"}
@@ -88,11 +102,11 @@ def _history(messages: list[dict[str, object]]):
     return fake, posted
 
 
-def _setup(home: Path, monkeypatch: pytest.MonkeyPatch, leak_terms, messages):
+def _setup(home: Path, monkeypatch: pytest.MonkeyPatch, leak_terms, messages, *, page_size=None):
     leak_terms([])
     _write_slack_config(home)
     monkeypatch.setattr(slack_mod, "bot_token", lambda: "xoxb-test-token")
-    fake, posted = _history(messages)
+    fake, posted = _history(messages, page_size=page_size)
     monkeypatch.setattr(slack_mod, "_slack_api", fake)
     return posted
 
@@ -175,6 +189,80 @@ def test_bot_and_thread_replies_are_skipped(
 
     assert result["taken"] == []
     assert result["replied"] is False
+
+
+# --- subtype は名指しで弾く（検分 S3） ------------------------------------------------------
+
+
+def test_file_share_with_a_task_prefix_is_not_dropped(
+    home: Path, monkeypatch: pytest.MonkeyPatch, leak_terms
+) -> None:
+    """**これが S3 の本体。** 画像に添えて `#task これを直す` と書いたら、消えてはいけない。
+
+    以前は `subtype` が付いていれば全部落としていたので、`file_share` ごと消えていた——
+    `parse_intake` が「黙って捨てない」ために作った分岐と矛盾していた。
+    """
+    _setup(
+        home, monkeypatch, leak_terms,
+        [{"ts": "1000.0010", "text": "#task これを直す", "subtype": "file_share"}],
+    )
+
+    result = slack_mod.intake(home)
+
+    assert len(result["taken"]) == 1
+    assert result["taken"][0]["kind"] == "task"
+
+
+@pytest.mark.parametrize("subtype", ["channel_join", "channel_name", "bot_message", "message_changed"])
+def test_noise_subtypes_are_ignored(
+    home: Path, monkeypatch: pytest.MonkeyPatch, leak_terms, subtype: str
+) -> None:
+    """雑音は名指しで弾く（実物のチャンネルで数えた4種を含む）。"""
+    _setup(
+        home, monkeypatch, leak_terms,
+        [{"ts": "1000.0011", "text": "#task 雑音に紛れた文字列", "subtype": subtype}],
+    )
+
+    assert slack_mod.intake(home)["taken"] == []
+
+
+# --- has_more を最後まで追う（検分 S4） -----------------------------------------------------
+
+
+def test_reads_past_the_first_page(
+    home: Path, conn, monkeypatch: pytest.MonkeyPatch, leak_terms
+) -> None:
+    """**1ページで止めない。** Slack は新しい側から返すので、止めると古い側が
+    永久に読まれない（位置だけが先に進んでしまう）。
+    """
+    messages = [{"ts": f"1000.{i:04d}", "text": f"#task {i} 番目"} for i in range(1, 8)]
+    _setup(home, monkeypatch, leak_terms, messages, page_size=3)
+
+    result = slack_mod.intake(home)
+
+    assert len(result["taken"]) == 7
+    # いちばん古いもの（1ページ目には入らない）も起票されている
+    assert conn.execute(
+        "SELECT COUNT(*) AS n FROM node WHERE title LIKE '1 番目%'"
+    ).fetchone()["n"] == 1
+
+
+def test_truncated_history_fails_instead_of_advancing_the_cursor(
+    home: Path, conn, monkeypatch: pytest.MonkeyPatch, leak_terms
+) -> None:
+    """読み切れないときは**失敗として返す**——位置を進めると、読んでいない側が消える。"""
+    messages = [{"ts": f"1000.{i:04d}", "text": f"#task {i}"} for i in range(1, 30)]
+    _setup(home, monkeypatch, leak_terms, messages, page_size=2)
+    monkeypatch.setattr(slack_mod, "INTAKE_MAX_PAGES", 3)
+
+    result = slack_mod.intake(home)
+
+    assert result["ok"] is False
+    assert "新着が多すぎます" in result["reason"]
+    # 位置は進んでいない（次の起動で読み直せる）
+    assert conn.execute(
+        "SELECT COUNT(*) AS n FROM meta WHERE key LIKE 'slack_intake_cursor:%'"
+    ).fetchone()["n"] == 0
 
 
 def test_same_message_is_not_taken_twice(

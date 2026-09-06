@@ -54,6 +54,8 @@
   "cli.task.add.level.help": "L0/L1/L2/L3/HG. **Normally decided by --class** (ignored if --class is given). HG requires --recommendation and files a decision at the same time.",
   "cli.task.add.kind.help": "The task's kind (ADR-010 D2; an id from `manor kind list`. Optional -- may be left blank).",
   "cli.task.set.kind.help": "The task's kind (ADR-010 D2; pass an empty string to clear it).",
+  "cli.task.status.authorized_by.help": "The decision id (e.g. D3) or handoff ruling (e.g. H2) that authorized this transition. When acting on the owner's instruction, record that decision and name it here.",
+  "cli.task.done.authorized_by.help": "The decision id that authorized done (e.g. D3; a handoff ruling H<n> cannot authorize done).",
   "cli.task.link.no_wait.help": "Do not set src to waiting when linking depends_on (default: waiting if the target is unfinished).",
   "cli.task.add.class.fixed_suffix": " (fixed)",
   "cli.task.add.class.list_prefix": " Available: ",

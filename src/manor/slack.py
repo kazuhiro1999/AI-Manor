@@ -889,24 +889,32 @@ def _cmd_brief(args: argparse.Namespace) -> int:
     return 0 if (result.get("sent") or result.get("dry_run")) else 1
 
 
+def _print_inbox_result(result: dict[str, Any]) -> None:
+    """`inbox()` の結果を人向けに出す。**`morning` からも同じものを呼ぶ**——
+    定例の出力はログファイルにしか残らないので、**いちばん残すべき行**
+    （取り込めなかった返信・エラー）を落とすと、どこにも残らない（検分 S5・2026-09-06）。
+    """
+    if not result.get("ok"):
+        print(i18n.t("slack.inbox.failed", reason=result.get("reason", "")))
+        return
+    for r in result.get("ruled", []):  # type: ignore[union-attr]
+        tag = i18n.t("slack.inbox.tag_would_rule") if r.get("would_rule") else i18n.t("slack.inbox.tag_applied")
+        print(i18n.t("slack.inbox.ruled_line", tag=tag, decision_id=r["decision_id"], verdict=r["verdict"]))
+    for u in result.get("unmapped", []):  # type: ignore[union-attr]
+        print(i18n.t("slack.inbox.unmapped_line", channel=u["channel"], ts=u["ts"], reason=u["reason"]))
+    for e in result.get("errors", []):  # type: ignore[union-attr]
+        print(i18n.t("slack.inbox.error_line", channel=e["channel"], ts=e["ts"], reason=e["reason"]))
+    if not result.get("ruled") and not result.get("unmapped"):
+        print(i18n.t("slack.inbox.no_new_replies"))
+
+
 def _cmd_inbox(args: argparse.Namespace) -> int:
     home = util.manor_home()
     result = inbox(home, dry_run=bool(args.dry_run))
     if args.json:
         _print_json(result)
     else:
-        if not result.get("ok"):
-            print(i18n.t("slack.inbox.failed", reason=result.get("reason", "")))
-        else:
-            for r in result.get("ruled", []):  # type: ignore[union-attr]
-                tag = i18n.t("slack.inbox.tag_would_rule") if r.get("would_rule") else i18n.t("slack.inbox.tag_applied")
-                print(i18n.t("slack.inbox.ruled_line", tag=tag, decision_id=r["decision_id"], verdict=r["verdict"]))
-            for u in result.get("unmapped", []):  # type: ignore[union-attr]
-                print(i18n.t("slack.inbox.unmapped_line", channel=u["channel"], ts=u["ts"], reason=u["reason"]))
-            for e in result.get("errors", []):  # type: ignore[union-attr]
-                print(i18n.t("slack.inbox.error_line", channel=e["channel"], ts=e["ts"], reason=e["reason"]))
-            if not result.get("ruled") and not result.get("unmapped"):
-                print(i18n.t("slack.inbox.no_new_replies"))
+        _print_inbox_result(result)
     return 0 if result.get("ok", True) else 1
 
 
@@ -921,6 +929,30 @@ INTAKE_FIRST_RUN_MINUTES = 15
 
 #: `#task` の本文からタイトルへ切り出す長さ。溢れた分は body に丸ごと残る。
 INTAKE_TITLE_MAX = 80
+
+#: **読み飛ばす `subtype`。名指しで弾く（未知は通す）。**
+#:
+#: 最初は `subtype` が付いていれば全部落としていたが、それだと写真やファイルを添えた
+#: 投稿（`file_share`）まで消える——主人が画像に添えて「#task これを直す」と書いたら
+#: 黙って消えることになり、`parse_intake` が「黙って捨てない」ために作った分岐と矛盾する
+#: （検分 S3・2026-09-06）。**未知の subtype は通す**のが安全側。
+#:
+#: 実物で数えた（2026-09-06、この家のチャンネルの直近200件）: `bot_message` 40 /
+#: `(なし)` 14 / `bot_add` 4 / `channel_join` 2 / `channel_name` 1。
+#: 残りは Slack の同種のもの（入退室・話題・ピン・編集削除）を並べてある。
+IGNORED_SUBTYPES: frozenset[str] = frozenset({
+    # 実物で見たもの
+    "bot_message", "bot_add", "channel_join", "channel_name",
+    # 同じ性質のもの（入退室・チャンネルの設定変更）
+    "bot_remove", "channel_leave", "channel_topic", "channel_purpose",
+    "channel_archive", "channel_unarchive",
+    "group_join", "group_leave", "group_topic", "group_purpose", "group_name",
+    "group_archive", "group_unarchive",
+    # 本文が普段の場所に無いもの（`message.text` を読んでも意味がない）
+    "message_changed", "message_deleted", "message_replied",
+    # 通知の類
+    "pinned_item", "unpinned_item", "reminder_add",
+})
 
 
 def parse_intake(text: str) -> dict[str, str] | None:
@@ -978,6 +1010,51 @@ def _set_intake_cursor(conn: sqlite3.Connection, channel: str, ts: str) -> None:
     )
 
 
+#: `conversations.history` を1回に何件ずつ引くか、最大何ページ回すか。
+INTAKE_PAGE_SIZE = 200
+INTAKE_MAX_PAGES = 20
+
+
+def _fetch_history(token: str, channel: str, *, oldest: str) -> dict[str, Any]:
+    """`oldest` 以降の投稿を**全部**引く（`has_more` の間 `cursor` で回す）。
+
+    **1ページで止めてはいけない。** Slack は新しい側から `limit` 件を返すので、
+    溢れた古い側を読まないまま「見た中でいちばん新しい ts」まで位置を進めると、
+    **その古い側は永久に読まれない**（検分 S4・2026-09-06）。5分窓では滅多に
+    起きないが、長く止めていた後の初回で起きうる。
+
+    途中で失敗したら、**そこまでに読めた分も捨てる**（`ok=False`）——半端に位置を
+    進めるくらいなら、次の起動でもう一度読み直すほうがよい。
+    """
+    messages: list[dict[str, Any]] = []
+    cursor: str | None = None
+    for _ in range(INTAKE_MAX_PAGES):
+        params: dict[str, object] = {"channel": channel, "oldest": oldest, "limit": INTAKE_PAGE_SIZE}
+        if cursor:
+            params["cursor"] = cursor
+        resp = _slack_api("conversations.history", token, params=params)
+        if not resp.get("ok"):
+            return {"ok": False, "reason": str(resp.get("error", "不明")), "messages": []}
+        got = resp.get("messages")
+        messages.extend(m for m in (got if isinstance(got, list) else []) if isinstance(m, dict))
+        if not resp.get("has_more"):
+            return {"ok": True, "messages": messages, "reason": ""}
+        meta = resp.get("response_metadata")
+        cursor = (meta or {}).get("next_cursor") if isinstance(meta, dict) else None
+        if not cursor:
+            return {
+                "ok": False, "messages": [],
+                "reason": "has_more が真なのに cursor がありません（全部は読めていません）",
+            }
+    # **読み切れなかったら失敗として返す。** ここで `ok=True` を返すと、呼び出し元が
+    # 位置を「見た中でいちばん新しい ts」まで進めてしまい、まだ読んでいない古い側が
+    # 永久に読まれなくなる——S4 で塞いだ穴を、打ち切りの経路で開け直すことになる。
+    return {
+        "ok": False, "messages": [],
+        "reason": f"新着が多すぎます（{INTAKE_MAX_PAGES} ページ×{INTAKE_PAGE_SIZE} 件を超えました）",
+    }
+
+
 def intake(home: Path, *, dry_run: bool = False) -> dict[str, Any]:
     """`manor slack intake`。チャンネルの新着から `#task` / `#log` を拾う。
 
@@ -1007,20 +1084,13 @@ def intake(home: Path, *, dry_run: bool = False) -> dict[str, Any]:
         if not channel:
             return {"ok": False, "reason": "channel が未設定です", "taken": [], "replied": False}
 
-        resp = _slack_api(
-            "conversations.history", token,
-            params={"channel": channel, "oldest": _intake_oldest(conn, channel), "limit": 200},
-        )
-        if not resp.get("ok"):
-            return {"ok": False, "reason": str(resp.get("error", "不明")), "taken": [], "replied": False}
+        fetched = _fetch_history(token, channel, oldest=_intake_oldest(conn, channel))
+        if not fetched["ok"]:
+            return {"ok": False, "reason": fetched["reason"], "taken": [], "replied": False}
 
-        messages = resp.get("messages")
-        messages = messages if isinstance(messages, list) else []
         # Slack は新しい順に返す。**古い順に処理する**——起票の順序が主人の発言順と
         # 揃っていないと、あとから読んだときに話が前後する。
-        messages = sorted(
-            (m for m in messages if isinstance(m, dict)), key=lambda m: float(m.get("ts") or 0)
-        )
+        messages = sorted(fetched["messages"], key=lambda m: float(m.get("ts") or 0))
 
         taken: list[dict[str, Any]] = []
         reply_lines: list[str] = []
@@ -1032,7 +1102,9 @@ def intake(home: Path, *, dry_run: bool = False) -> dict[str, Any]:
             if not ts:
                 continue
             newest_seen = ts  # 古い順に回しているので、最後に代入されたものが最新
-            if msg.get("bot_id") or msg.get("subtype"):
+            # Bot 自身の投稿は無条件で読まない（無限ループの防止）。`subtype` のほうは
+            # **名指しで弾く**——全部弾くと `file_share` まで消える（S3）。
+            if msg.get("bot_id") or str(msg.get("subtype") or "") in IGNORED_SUBTYPES:
                 continue
             if msg.get("thread_ts") and str(msg.get("thread_ts")) != ts:
                 continue  # スレッドの返信は inbox() の担当。二重に読まない
@@ -1194,13 +1266,9 @@ def _cmd_morning(args: argparse.Namespace) -> int:
 
     if result.get("voice_restored"):
         print(i18n.t("slack.morning.voice_restored"))
-    ib = result.get("inbox") or {}
-    if not ib.get("ok"):
-        print(i18n.t("slack.inbox.failed", reason=ib.get("reason", "")))
-    else:
-        for r in ib.get("ruled", []):
-            tag = i18n.t("slack.inbox.tag_would_rule") if r.get("would_rule") else i18n.t("slack.inbox.tag_applied")
-            print(i18n.t("slack.inbox.ruled_line", tag=tag, decision_id=r["decision_id"], verdict=r["verdict"]))
+    # **`inbox` と同じ行を出す。** 定例の出力はログファイルにしか残らないので、
+    # 取り込めなかった返信・エラーを削ると、どこにも残らない（S5）。
+    _print_inbox_result(result.get("inbox") or {})
     br = result.get("brief") or {}
     if br.get("sent"):
         print(i18n.t("slack.brief.sent", channel=br.get("channel"), ts=br.get("ts")))
