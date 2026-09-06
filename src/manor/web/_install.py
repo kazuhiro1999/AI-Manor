@@ -22,8 +22,11 @@ def build_install_command(
     repo = Path(repo_root) if repo_root else util.repo_root()
     if sys.platform.startswith("win"):
         python_exe = repo / ".venv" / "Scripts" / "python.exe"
-        inner = f'"{python_exe}" -m manor.web serve --host {host} --port {port}'
-        tr = f'cmd /c cd /d "{repo}" && {inner}'
+        # `/TR` の中の `"` は `\"` で逃がす。**逃がさないと、空白を含むパス
+        # （`...\AI Agents\manor`）で schtasks が引数を5つに割ってしまい「無効な引数」で
+        # 落ちる**——night 側で 2026-09-06 に踏んだのと同じ形（同日の検分で実測）。
+        inner = f'\\"{python_exe}\\" -m manor.web serve --host {host} --port {port}'
+        tr = f'cmd /c cd /d \\"{repo}\\" && {inner}'
         return f'schtasks /Create /SC ONLOGON /TN "{task_name}" /TR "{tr}" /F'
     python_exe = repo / ".venv" / "bin" / "python"
     return (
@@ -44,19 +47,27 @@ def install(
     repo_root: Path | None = None, task_name: str = DEFAULT_TASK_NAME,
 ) -> dict[str, Any]:
     cmd = build_install_command(host=host, port=port, repo_root=repo_root, task_name=task_name)
-    result: dict[str, Any] = {"command": cmd, "executed": False}
+    result: dict[str, Any] = {"command": cmd, "executed": False, "ok": None}
     if execute:
         proc = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=30)  # noqa: S602
-        result.update(executed=True, returncode=proc.returncode, stdout=proc.stdout, stderr=proc.stderr)
+        # **返り値を見る。** 見ないと「登録しました」と言って終了コード0を返してしまう
+        # （night 側と同じ形。2026-09-06 の検分で是正）。
+        result.update(
+            executed=True, ok=proc.returncode == 0,
+            returncode=proc.returncode, stdout=proc.stdout, stderr=proc.stderr,
+        )
     return result
 
 
 def uninstall(*, execute: bool = False, task_name: str = DEFAULT_TASK_NAME) -> dict[str, Any]:
     cmd = build_uninstall_command(task_name=task_name)
-    result: dict[str, Any] = {"command": cmd, "executed": False}
+    result: dict[str, Any] = {"command": cmd, "executed": False, "ok": None}
     if execute:
         proc = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=30)  # noqa: S602
-        result.update(executed=True, returncode=proc.returncode, stdout=proc.stdout, stderr=proc.stderr)
+        result.update(
+            executed=True, ok=proc.returncode == 0,
+            returncode=proc.returncode, stdout=proc.stdout, stderr=proc.stderr,
+        )
     return result
 
 

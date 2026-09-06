@@ -120,6 +120,21 @@ def _cmd_build(args: "argparse.Namespace") -> int:
 # --- install / uninstall / status --------------------------------------------------
 
 
+def _outcome_line(result: dict, verb: str, *, done_key: str) -> str:
+    """`install` / `uninstall` の結果1行。**返り値を見てから言う。**
+
+    「実行を試みたか」（`executed`）ではなく「できたか」（`ok`）で言葉を選ぶ——
+    その2つを同じ言葉で言っていたのが、`manor night install` が登録できていないのに
+    「登録しました」と言った原因だった（butler/GROWTH.md G14）。
+    """
+    if not result["executed"]:
+        return i18n.t(f"web.{verb}.preview_only")
+    if result.get("ok"):
+        return i18n.t(f"web.{verb}.{done_key}")
+    detail = (result.get("stderr") or result.get("stdout") or "").strip()
+    return i18n.t(f"web.{verb}.failed", returncode=result.get("returncode"), detail=detail)
+
+
 def _add_install(sub: "argparse._SubParsersAction") -> None:
     p = sub.add_parser(
         "install", help=i18n.t("cli.web.install.help")
@@ -140,8 +155,9 @@ def _cmd_install(args: "argparse.Namespace") -> int:
         print(json.dumps(result, ensure_ascii=False, indent=2))
     else:
         print(result["command"])
-        print(i18n.t("web.install.registered") if result["executed"] else i18n.t("web.install.preview_only"))
-    return 0
+        print(_outcome_line(result, "install", done_key="registered"))
+    # **失敗を 0 で返さない**（night 側と同じ。2026-09-06 の検分で是正）。
+    return 0 if result.get("ok", None) is not False else 1
 
 
 def _add_uninstall(sub: "argparse._SubParsersAction") -> None:
@@ -159,8 +175,8 @@ def _cmd_uninstall(args: "argparse.Namespace") -> int:
         print(json.dumps(result, ensure_ascii=False, indent=2))
     else:
         print(result["command"])
-        print(i18n.t("web.uninstall.removed") if result["executed"] else i18n.t("web.uninstall.preview_only"))
-    return 0
+        print(_outcome_line(result, "uninstall", done_key="removed"))
+    return 0 if result.get("ok", None) is not False else 1
 
 
 def _add_status(sub: "argparse._SubParsersAction") -> None:
