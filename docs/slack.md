@@ -169,6 +169,21 @@ Bot の招待・チャンネル ID とトークンの入力まで、拡張機構
 （`not_installed` にはならず `needs_config` → 設定後 `ready` → `test()` 後 `ok` まで
 遷移することを確認した）。
 
+## `manor slack morning` — 朝の定例（2026-09-06 に追加）
+
+v1 `apps/slack-relay/morning.ps1` の移植。**3つを順に、前が失敗しても次へ進む**:
+
+1. `voice.restore()` — 夜勤が消音を戻し損ねていたら戻す（ADR-008 D10 の3つめの機会）。
+   **印が無ければ何もしない**——主人が自分で消した消音は触らない
+2. `manor slack inbox` 相当 — 前日の返信を裁定として取り込む
+3. `manor slack brief --generate` 相当 — その裁定を織り込んだブリーフィングを送る
+
+**順番に意味がある。** 取り込みを先にするのは、前日に主人が Slack で下した裁定を当日の
+ブリーフィングへ反映するため。**取り込みが失敗しても送信は続けます**——沈黙は故障の合図で
+あって、故障の理由ではない（v1 の morning.ps1 がそう書いていた）。
+
+終了コードは**送信できたかどうか**だけを見ます（1〜2 の失敗は理由を出して続行）。
+
 ## 定期実行は `manor night` に寄せる（D12）
 
 Slack のためだけの常駐・別のタスクスケジューラ登録は作らない。夜勤の仕組み
@@ -198,6 +213,7 @@ Slack のためだけの常駐・別のタスクスケジューラ登録は作�
 ```
 uv run manor slack brief [--generate] [--dry-run] [--json]
 uv run manor slack inbox [--dry-run] [--json]
+uv run manor slack morning [--no-generate] [--dry-run] [--json]
 uv run manor slack test [--json]                # auth.test で疎通確認する
 ```
 

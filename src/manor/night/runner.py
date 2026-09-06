@@ -814,8 +814,10 @@ def build_install_command(
     repo = Path(repo_root) if repo_root else util.repo_root()
     if sys.platform.startswith("win"):
         python_exe = repo / ".venv" / "Scripts" / "python.exe"
-        inner = f'"{python_exe}" -m manor.night run'
-        tr = f'cmd /c cd /d "{repo}" && {inner}'
+        # `/TR` の中の `"` は `\"` で逃がす。**逃がさないと、空白を含むパス
+        # （`...\AI Agents\manor`）で schtasks が「無効な引数」で落ちる**——実測 2026-09-06。
+        inner = f'\\"{python_exe}\\" -m manor.night run'
+        tr = f'cmd /c cd /d \\"{repo}\\" && {inner}'
         return f'schtasks /Create /SC DAILY /ST {at} /TN "{task_name}" /TR "{tr}" /F'
     python_exe = repo / ".venv" / "bin" / "python"
     hh, mm = at.split(":")
@@ -840,26 +842,36 @@ def install(
     task_name: str = DEFAULT_TASK_NAME,
 ) -> dict[str, Any]:
     cmd = build_install_command(at=at, repo_root=repo_root, task_name=task_name)
-    result: dict[str, Any] = {"command": cmd, "executed": False}
+    result: dict[str, Any] = {"command": cmd, "executed": False, "ok": None}
     if execute:
         proc = subprocess.run(
             cmd, shell=True, capture_output=True, text=True, timeout=30  # noqa: S602
         )
+        # **返り値を見る。** 見ないと、schtasks が「無効な引数」で落ちても
+        # 「登録しました」と言ってしまう（実測 2026-09-06）——夜勤が丸ごと動かない朝を作る。
         result.update(
-            executed=True, returncode=proc.returncode, stdout=proc.stdout, stderr=proc.stderr
+            executed=True,
+            ok=proc.returncode == 0,
+            returncode=proc.returncode,
+            stdout=proc.stdout,
+            stderr=proc.stderr,
         )
     return result
 
 
 def uninstall(*, execute: bool = False, task_name: str = DEFAULT_TASK_NAME) -> dict[str, Any]:
     cmd = build_uninstall_command(task_name=task_name)
-    result: dict[str, Any] = {"command": cmd, "executed": False}
+    result: dict[str, Any] = {"command": cmd, "executed": False, "ok": None}
     if execute:
         proc = subprocess.run(
             cmd, shell=True, capture_output=True, text=True, timeout=30  # noqa: S602
         )
         result.update(
-            executed=True, returncode=proc.returncode, stdout=proc.stdout, stderr=proc.stderr
+            executed=True,
+            ok=proc.returncode == 0,
+            returncode=proc.returncode,
+            stdout=proc.stdout,
+            stderr=proc.stderr,
         )
     return result
 

@@ -122,8 +122,10 @@ def _cmd_install(args: "argparse.Namespace") -> int:
         print(json.dumps(result, ensure_ascii=False, indent=2))
     else:
         print(result["command"])
-        print(i18n.t("night.install.done") if result["executed"] else i18n.t("night.install.dry_run_note"))
-    return 0
+        print(_outcome_line(result, "install"))
+    # **失敗を 0 で返さない。** 登録できていないのに「登録しました」と言うと、
+    # 夜勤が動かない朝まで誰も気づかない（実測 2026-09-06）。
+    return 0 if result.get("ok", None) is not False else 1
 
 
 def _add_uninstall(sub: "argparse._SubParsersAction") -> None:
@@ -139,8 +141,20 @@ def _cmd_uninstall(args: "argparse.Namespace") -> int:
         print(json.dumps(result, ensure_ascii=False, indent=2))
     else:
         print(result["command"])
-        print(i18n.t("night.uninstall.done") if result["executed"] else i18n.t("night.uninstall.dry_run_note"))
-    return 0
+        print(_outcome_line(result, "uninstall"))
+    return 0 if result.get("ok", None) is not False else 1
+
+
+def _outcome_line(result: dict, verb: str) -> str:
+    """`install` / `uninstall` の結果1行。**返り値を見てから言う。**"""
+    if not result["executed"]:
+        return i18n.t(f"night.{verb}.dry_run_note")
+    if result.get("ok"):
+        return i18n.t(f"night.{verb}.done")
+    detail = (result.get("stderr") or result.get("stdout") or "").strip()
+    return i18n.t(f"night.{verb}.failed").format(
+        returncode=result.get("returncode"), detail=detail
+    )
 
 
 def _add_report(sub: "argparse._SubParsersAction") -> None:

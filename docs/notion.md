@@ -14,7 +14,7 @@ v1 にあった夜間の自動起動や LOG.md/GROWTH.md/CHANGELOG.md を丸ご�
 ## `manor notion diary` — 投函
 
 ```
-uv run manor notion diary [--date YYYY-MM-DD] [--generate] [--dry-run] [--json]
+uv run manor notion diary [--date YYYY-MM-DD | --yesterday] [--generate] [--dry-run] [--json]
 ```
 
 既定（`--generate` 無し）は **DB から機械的に本文を組む**（`manor slack brief` と
@@ -152,7 +152,7 @@ Notion のためだけの常駐・別のタスクスケジューラ登録は作�
 ## CLI
 
 ```
-uv run manor notion diary [--date YYYY-MM-DD] [--generate] [--dry-run] [--json]
+uv run manor notion diary [--date YYYY-MM-DD | --yesterday] [--generate] [--dry-run] [--json]
 uv run manor notion test [--json]                 # GET /v1/users/me で疎通確認する
 ```
 

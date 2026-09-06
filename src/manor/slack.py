@@ -68,6 +68,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from pathlib import Path
+from typing import Any
 
 from . import db, decision as decision_mod, i18n, render as render_mod, runlog, util
 from .errors import ManorError
@@ -908,6 +909,64 @@ def _cmd_inbox(args: argparse.Namespace) -> int:
     return 0 if result.get("ok", True) else 1
 
 
+def morning(home: Path, *, generate: bool = True, dry_run: bool = False) -> dict[str, Any]:
+    """朝の定例。**取り込んでから送る**（v1 `apps/slack-relay/morning.ps1` の移植）。
+
+    順番に意味がある——前日に主人が Slack で下した裁定を、その日のブリーフィングへ
+    反映するため。**取り込みが失敗しても送信は続ける**（沈黙＝故障の合図を守る）。
+
+    先頭で `voice.restore()` を試すのも v1 から。夜勤が消音を戻し損ねる経路
+    （プロセスごと消える）は必ず残るので、**翌朝にもう一度戻す**（ADR-008 D10 の3つめ）。
+    **印が無ければ何もしない**——主人が自分で消した消音は触らない。
+    """
+    steps: dict[str, Any] = {}
+
+    try:
+        from . import voice as _voice
+
+        steps["voice_restored"] = _voice.restore(home)
+    except Exception as exc:  # noqa: BLE001 — 声を戻せないことは、要約を止める理由にならない
+        steps["voice_restored"] = None
+        steps["voice_error"] = str(exc)
+
+    try:
+        steps["inbox"] = inbox(home, dry_run=dry_run)
+    except Exception as exc:  # noqa: BLE001 — 取り込みの失敗で送信を止めない（v1 と同じ）
+        steps["inbox"] = {"ok": False, "reason": str(exc)}
+
+    steps["brief"] = brief(home, generate=generate, dry_run=dry_run)
+    steps["ok"] = bool(steps["brief"].get("sent") or steps["brief"].get("dry_run"))
+    return steps
+
+
+def _cmd_morning(args: argparse.Namespace) -> int:
+    home = util.manor_home()
+    result = morning(home, generate=not bool(args.no_generate), dry_run=bool(args.dry_run))
+    if args.json:
+        _print_json(result)
+        return 0 if result.get("ok") else 1
+
+    if result.get("voice_restored"):
+        print(i18n.t("slack.morning.voice_restored"))
+    ib = result.get("inbox") or {}
+    if not ib.get("ok"):
+        print(i18n.t("slack.inbox.failed", reason=ib.get("reason", "")))
+    else:
+        for r in ib.get("ruled", []):
+            tag = i18n.t("slack.inbox.tag_would_rule") if r.get("would_rule") else i18n.t("slack.inbox.tag_applied")
+            print(i18n.t("slack.inbox.ruled_line", tag=tag, decision_id=r["decision_id"], verdict=r["verdict"]))
+    br = result.get("brief") or {}
+    if br.get("sent"):
+        print(i18n.t("slack.brief.sent", channel=br.get("channel"), ts=br.get("ts")))
+    elif br.get("dry_run"):
+        # **黙って終わらせない。** 何も出ないと「動いていない」と見分けがつかない。
+        print(i18n.t("slack.brief.dry_run_header"))
+        print(br.get("text", ""))
+    else:
+        print(i18n.t("slack.brief.not_sent", reason=br.get("reason", "")))
+    return 0 if result.get("ok") else 1
+
+
 def _cmd_test(args: argparse.Namespace) -> int:
     home = util.manor_home()
     result = test_connection(home)
@@ -948,6 +1007,18 @@ def _add_slack_subcommands(sub: "argparse._SubParsersAction", *, needs_db: bool 
     )
     i.add_argument("--json", action="store_true")
     i.set_defaults(func=_cmd_inbox, **extra)
+
+    m = sub.add_parser("morning", help=i18n.t("cli.slack.morning.help"))
+    m.add_argument(
+        "--no-generate", action="store_true", dest="no_generate",
+        help=i18n.t("cli.slack.morning.no_generate.help"),
+    )
+    m.add_argument(
+        "--dry-run", action="store_true", dest="dry_run",
+        help=i18n.t("cli.slack.brief.dry_run.help"),
+    )
+    m.add_argument("--json", action="store_true")
+    m.set_defaults(func=_cmd_morning, **extra)
 
     t = sub.add_parser("test", help=i18n.t("cli.slack.test.help"))
     t.add_argument("--json", action="store_true")

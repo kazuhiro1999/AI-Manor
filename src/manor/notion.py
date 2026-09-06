@@ -71,6 +71,7 @@ Notion のページ作成・検索は `data_source_id` を親に指定する必�
 from __future__ import annotations
 
 import argparse
+import datetime
 import json
 import shutil
 import sqlite3
@@ -630,7 +631,15 @@ def _print_json(obj: object) -> None:
 
 def _cmd_diary(args: argparse.Namespace) -> int:
     home = util.manor_home()
-    result = diary(home, date=args.date, generate=bool(args.generate), dry_run=bool(args.dry_run))
+    date = args.date
+    if getattr(args, "yesterday", False):
+        if date:
+            raise ManorError(i18n.t("notion.diary.date_and_yesterday"))
+        # 夜勤の**あと**（＝日付が変わってから）に走らせる定例のための口。
+        # v1 は「昼より前に走ったら前日ぶん」と暗黙に決めていたが、暗黙の既定は
+        # 手で叩いたときに驚く。**明示の引数にして、既定は「今日」のまま残す。**
+        date = (datetime.date.today() - datetime.timedelta(days=1)).isoformat()
+    result = diary(home, date=date, generate=bool(args.generate), dry_run=bool(args.dry_run))
     if args.json:
         _print_json(result)
     else:
@@ -677,6 +686,10 @@ def register(subparsers: "argparse._SubParsersAction") -> None:
 
     d = sub.add_parser("diary", help=i18n.t("cli.notion.diary.help"))
     d.add_argument("--date", help=i18n.t("cli.notion.diary.date.help"))
+    d.add_argument(
+        "--yesterday", action="store_true",
+        help=i18n.t("cli.notion.diary.yesterday.help"),
+    )
     d.add_argument("--generate", action="store_true", help=i18n.t("cli.notion.diary.generate.help"))
     d.add_argument(
         "--dry-run", action="store_true", dest="dry_run",
@@ -705,6 +718,7 @@ def main(argv: list[str] | None = None) -> int:
 
     d = sub.add_parser("diary", help=i18n.t("cli.notion.diary.help"))
     d.add_argument("--date")
+    d.add_argument("--yesterday", action="store_true")
     d.add_argument("--generate", action="store_true")
     d.add_argument("--dry-run", action="store_true", dest="dry_run")
     d.add_argument("--json", action="store_true")
