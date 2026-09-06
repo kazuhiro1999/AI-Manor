@@ -16,6 +16,8 @@ from fastapi import FastAPI
 from ... import check as check_mod
 from ... import runlog as runlog_mod
 from ...board import api_core as board_core
+from ... import profile as profile_mod
+from ... import talk_session as talk_session_mod
 from ...night import runner as night_runner
 from .._common import WebContext, open_conn, table_exists
 
@@ -184,8 +186,17 @@ def register(app: FastAPI, ctx: WebContext) -> None:
                 )
             ][:5]
 
+            # あいさつ（2026-09-06・外部レビュー「おはようございます、○○さん」）。
+            # **語は返さない**——時間帯の判定だけ返し、画面が自分の言語で訳す。
+            # 境目は `talk_session.time_of_day` の1箇所だけに置く（通話の窓と揃える）。
+            callname = profile_mod.get_all(conn).get("master.callname", "").strip()
+
             return {
                 "today": today,
+                "greeting": {
+                    "time_of_day": talk_session_mod.time_of_day(),
+                    "name": callname,
+                },
                 "needs_you": needs_you,
                 "working": working,
                 "due_today_list": due_today,

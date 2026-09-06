@@ -160,6 +160,22 @@ function UsageCostBand({ band }: { band: DashboardData["usage_cost"] }) {
  * ③今日。既存の帯（節目・稼働・費用）はその下へ残す（見ていた人の手掛かりを消さない）。
  */
 
+/** あいさつの1行（2026-09-06・外部レビュー「おはようございます、○○さん」）。
+ *
+ * **見出しの形は変えない。** `ScreenHeader`（見出し＋薄字）にそのまま流し込むので、
+ * 他の画面と並びが揃ったままになる——変えたのは中身だけ。
+ * 時間帯の判定はバックエンド（`talk_session.time_of_day`）が持ち、ここは訳すだけ
+ * （通話の窓が「こんばんは」と言っているのに画面が「おはよう」と書く、を作らない）。
+ * 呼び名が未設定なら**名前を呼ばない**（`master.callname` が空＝まだ聞いていない）。
+ */
+function greetingTitle(g: DashboardData["greeting"], t: ReturnType<typeof useT>): string {
+  const key = (
+    { morning: "dashboard.greeting.morning", day: "dashboard.greeting.day", evening: "dashboard.greeting.evening" } as const
+  )[g.time_of_day as "morning" | "day" | "evening"];
+  const hello = t(key ?? "dashboard.greeting.day");
+  return g.name ? t("dashboard.greeting.withName", { hello, name: g.name }) : hello;
+}
+
 /** 担当の呼び名。**フックにしない**——`.map()` の中から呼ぶため（フックの規則）。
  * 訳語は `agents` の画面と同じ辞書を使う（担当の名前を2箇所で持たない）。 */
 function ownerLabel(owner: string, t: ReturnType<typeof useT>): string {
@@ -283,7 +299,10 @@ function DashboardScreen() {
 
   return (
     <div className="view" id="view-dashboard">
-      <ScreenHeader title={t("nav.dashboard")} description={t("dashboard.description", { app: APP_NAME })} />
+      <ScreenHeader
+        title={greetingTitle(data.greeting, t)}
+        description={formatDay(data.today, t)}
+      />
 
       <section className="panel panel-primary">
         <div className="panel-head">

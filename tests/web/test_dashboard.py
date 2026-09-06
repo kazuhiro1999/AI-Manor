@@ -248,3 +248,27 @@ def test_dashboard_lists_today_and_recent(conn, home: Path, monkeypatch) -> None
 
     assert [t["id"] for t in body["due_today_list"]] == [today_task]
     assert [r["id"] for r in body["recent"]] == [done]
+
+
+def test_dashboard_greeting_uses_the_callname_and_time_of_day(conn, home: Path) -> None:
+    """あいさつ（2026-09-06・外部レビュー）。
+
+    **語は返さない。** 時間帯（`morning`/`day`/`evening`）と呼び名だけを返し、訳は画面が
+    当てる——境目は `talk_session.time_of_day` の1箇所に置き、通話の窓と食い違わせない。
+    """
+    from manor import profile as profile_mod
+
+    profile_mod.set_many(conn, {"master.callname": "主人"})
+    conn.commit()
+
+    body = make_client(home).get("/api/v1/dashboard").json()
+
+    assert body["greeting"]["name"] == "主人"
+    assert body["greeting"]["time_of_day"] in {"morning", "day", "evening"}
+
+
+def test_dashboard_greeting_has_no_name_before_setup(conn, home: Path) -> None:
+    """呼び名が未設定なら空文字——画面は**名前を呼ばない**（まだ聞いていないので）。"""
+    body = make_client(home).get("/api/v1/dashboard").json()
+
+    assert body["greeting"]["name"] == ""

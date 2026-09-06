@@ -660,8 +660,17 @@ export interface DashboardRecentItem {
   at: string;
 }
 
+export interface DashboardGreeting {
+  /** `morning` / `day` / `evening`。**語ではなく時間帯**——境目はバックエンドの
+   * `talk_session.time_of_day` の1箇所にあり、訳はこちらで当てる。 */
+  time_of_day: string;
+  /** 主人の呼び名（`master.callname`）。未設定なら空文字＝名前を呼ばない。 */
+  name: string;
+}
+
 export interface DashboardData {
   today: string;
+  greeting: DashboardGreeting;
   needs_you: DashboardNeedsYou[];
   working: DashboardWorking[];
   due_today_list: DashboardTodayItem[];

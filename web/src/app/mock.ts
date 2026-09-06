@@ -1254,6 +1254,7 @@ export async function mockApi<T>(path: string, options: ApiOptions = {}): Promis
     }
     const data: DashboardData = {
       today: TODAY,
+      greeting: { time_of_day: "morning", name: "あなた" },
       needs_you: needsYou,
       working: Object.entries(doingByOwner)
         .sort(([a], [b]) => a.localeCompare(b))

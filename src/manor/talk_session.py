@@ -384,6 +384,17 @@ def _time_of_day(now: datetime) -> str:
     return "evening"
 
 
+def time_of_day(now: datetime | None = None) -> str:
+    """いまが `morning` / `day` / `evening` のどれか。**境目はここだけに置く**
+    （05:00-10:59 / 11:00-17:59 / 18:00-04:59）。
+
+    ダッシュボードのあいさつ（2026-09-06）も同じ境目を使う——通話の窓が
+    「こんばんは」と言っているのに画面が「おはようございます」と書く、を作らないため。
+    **語そのものは返さない**（画面は自分の言語で訳す。ここは時間帯の判定だけ）。
+    """
+    return _time_of_day(now or _now())
+
+
 def greeting_lines(now: datetime | None = None, rng: random.Random | None = None) -> tuple[str, str]:
     """通話ボタンを押したときの挨拶。**決まり文句を並べるだけ**（LLM は呼ばない）。"""
     now = now or _now()

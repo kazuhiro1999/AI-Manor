@@ -24,6 +24,7 @@ function renderScreen() {
 
 const fullPayload: DashboardData = {
   today: "2026-09-04",
+  greeting: { time_of_day: "morning", name: "主人" },
   needs_you: [],
   working: [],
   due_today_list: [],
@@ -58,6 +59,7 @@ const fullPayload: DashboardData = {
 
 const emptyPayload: DashboardData = {
   today: "2026-09-04",
+  greeting: { time_of_day: "morning", name: "主人" },
   needs_you: [],
   working: [],
   due_today_list: [],
@@ -157,5 +159,30 @@ describe("ダッシュボードの管制塔", () => {
 
     await waitFor(() => expect(screen.getByText(/歯医者に行く/)).toBeTruthy());
     expect(screen.getByText(/夜勤が3件片付けた/)).toBeTruthy();
+  });
+});
+
+describe("あいさつ（2026-09-06・外部レビュー）", () => {
+  afterEach(cleanup);
+
+  it("時間帯と呼び名であいさつする", async () => {
+    mockFetch({ ...fullPayload, greeting: { time_of_day: "evening", name: "主人" } });
+    renderScreen();
+
+    await waitFor(() => expect(screen.getByText("こんばんは、主人")).toBeTruthy());
+  });
+
+  it("呼び名が未設定なら**名前を呼ばない**（まだ聞いていないので）", async () => {
+    mockFetch({ ...fullPayload, greeting: { time_of_day: "morning", name: "" } });
+    renderScreen();
+
+    await waitFor(() => expect(screen.getByText("おはようございます")).toBeTruthy());
+  });
+
+  it("見出しの下に日付を出す（ScreenHeader の形は変えていない）", async () => {
+    mockFetch({ ...fullPayload, today: "2026-09-04", greeting: { time_of_day: "day", name: "主人" } });
+    renderScreen();
+
+    await waitFor(() => expect(screen.getByText(/2026-09-04/)).toBeTruthy());
   });
 });
