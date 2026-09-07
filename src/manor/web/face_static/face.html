@@ -450,8 +450,6 @@ boot();
   }
   function stopWait() { if (waitTimer) { clearInterval(waitTimer); waitTimer = null; } }
 
-  function submit() {
-    var text = (input.value || '').trim();
   // --- 声をこの端末で鳴らすか（2026-09-07・主人のご指摘） -------------------------
   //
   // サーバ側の `voice._play` は **サーバ機の PowerShell / afplay** を叩く。主人がスマホ
@@ -503,6 +501,8 @@ boot();
     document.addEventListener('keydown', fire, { once: true });
   }
 
+  function submit() {
+    var text = (input.value || '').trim();
     if (!text || busy) { return; }
     input.value = '';
     say('you', text);

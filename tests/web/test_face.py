@@ -266,3 +266,42 @@ def test_face_static_vendor_is_public(home: Path) -> None:
 def test_face_is_open_on_loopback(home: Path) -> None:
     client = TestClient(web_app_mod.create_app(home))
     assert client.get("/face").status_code == 200
+
+
+# --- 声の道具は関数の外に置く（主人のご指摘 2026-09-07） -----------------------------------
+
+
+def _face_html_source() -> str:
+    from manor.web import face as face_mod
+
+    return (face_mod.FACE_STATIC_DIR / "face.html").read_text(encoding="utf-8")
+
+
+def test_voice_helpers_live_outside_any_function() -> None:
+    """**`PLAY_HERE` と `playVoice` は関数の外（IIFE 直下）に置く。**
+
+    2026-09-07: これを `submit()` の中に書いてしまい、`openPanel()` から見えず
+    `ReferenceError: PLAY_HERE is not defined` で**挨拶が丸ごと出なくなった**
+    （チャットを送ったときだけ声が出る、という半端な壊れ方をした。実測で確認）。
+
+    IIFE 直下のインデントは2つ——関数の中に入れば4つ以上になるので、行頭の
+    空白を数えるだけで「外にあること」を確かめられる。
+    """
+    src = _face_html_source()
+    for decl in ("var PLAY_HERE", "function playVoice(", "function armReplayOnFirstTouch("):
+        assert f"\n  {decl}" in src, f"{decl} が IIFE 直下にありません（関数の中に入っていませんか）"
+
+
+def test_greeting_and_reply_both_carry_play_here() -> None:
+    """挨拶（`talk/open`）と返事（`talk`）の**両方**が `play_here` を送ること。
+
+    片方だけ通して「直った」と報告したことがある（2026-09-07）。経路は2つある。
+    """
+    src = _face_html_source()
+    assert src.count("play_here: PLAY_HERE") == 2
+
+
+def test_both_paths_play_the_returned_audio() -> None:
+    """挨拶と返事の両方が、返ってきた `audio_id` を鳴らすこと。"""
+    src = _face_html_source()
+    assert src.count("playVoice(d.audio_id)") == 2
