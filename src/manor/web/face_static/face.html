@@ -476,8 +476,31 @@ boot();
       // 送信ボタンという主人の操作から続く再生なので、自動再生の制限には当たらない。
       // それでも拒まれることはある（省電力・消音）ので、黙って諦める——文字は出ている。
       var played = voiceEl.play();
-      if (played && played.catch) { played.catch(function () {}); }
+      if (played && played.catch) {
+        // 端末に触る前の再生は拒まれることがある（自動再生の制限）。窓を開いた
+        // 直後の挨拶がこれに当たる——タブを開かせたのは親ページの操作で、この
+        // 文書ではまだ主人が何もしていない。**黙って捨てず**、次に触ったときに
+        // 鳴らし直す（2026-09-07）。
+        played.catch(function () { armReplayOnFirstTouch(); });
+      }
     } catch (e) { /* 声は落ちてよい。会話は止めない */ }
+  }
+
+  var replayArmed = false;
+  function armReplayOnFirstTouch() {
+    if (replayArmed) { return; }
+    replayArmed = true;
+    var fire = function () {
+      document.removeEventListener('pointerdown', fire);
+      document.removeEventListener('keydown', fire);
+      replayArmed = false;
+      try {
+        var again = voiceEl && voiceEl.play();
+        if (again && again.catch) { again.catch(function () {}); }
+      } catch (e) { /* ここまで来て鳴らなければ諦める */ }
+    };
+    document.addEventListener('pointerdown', fire, { once: true });
+    document.addEventListener('keydown', fire, { once: true });
   }
 
     if (!text || busy) { return; }
@@ -537,11 +560,12 @@ boot();
     fetch('/api/v1/face/talk/open', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ agent: agent })
+      body: JSON.stringify({ agent: agent, play_here: PLAY_HERE })
     })
       .then(function (r) { return r.ok ? r.json() : Promise.reject('HTTP ' + r.status); })
       .then(function (d) {
         say(d.available === false ? 'warn' : '', d.text || d.message || '');
+        playVoice(d.audio_id);
         showState(d);
       })
       .catch(function () {
@@ -572,6 +596,18 @@ boot();
       else { fetch('/api/v1/face/talk/close', { method: 'POST', keepalive: true }).catch(function () {}); }
     } catch (e) { /* 窓を閉じる動作そのものは邪魔しない */ }
   });
+
+  // 窓を開いたら、通話ボタンを押されるのを待たずに挨拶する（主人のご要望 2026-09-07
+  // 「窓を開いたときに挨拶があったらとてもいい」）。**LLM は呼ばない**——`talk/open` は
+  // 決まり文句を1つ返すだけで、1往復にも数えない（D17）。声が自動再生を拒まれたら
+  // `playVoice` が最初の操作まで待つ。
+  try {
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', function () { openPanel(); }, { once: true });
+    } else {
+      openPanel();
+    }
+  } catch (e) { /* 挨拶で窓を壊さない */ }
 
   btn.addEventListener('click', function (ev) {
     ev.stopPropagation();   // 小窓本体の click（ダッシュボードを開く）に伝えない

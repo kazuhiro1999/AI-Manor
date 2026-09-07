@@ -431,7 +431,10 @@ def _warm_engine_async(home: Path) -> bool:
     return True
 
 
-def open_session(home: Path, *, now: datetime | None = None, agent: str | None = None) -> dict[str, Any]:
+def open_session(
+    home: Path, *, now: datetime | None = None, agent: str | None = None,
+    play_here: bool = False,
+) -> dict[str, Any]:
     """小窓を開いた（通話ボタンを押した）。**決まり文句のみ。LLM は呼ばない。**
 
     押せる時間帯なら時間帯の挨拶＋ひとこと、押せなければ理由（打ち止め・時間外・無効）を
@@ -446,9 +449,16 @@ def open_session(home: Path, *, now: datetime | None = None, agent: str | None =
     st = state(home, now=now)
     lines: tuple[str, ...] = greeting_lines(now) if st["available"] else (str(st["message"]),)
     text = " ".join(lines)
-    spoke = voice.speak(home, text, agent=agent)
+    # `play_here=True` は「呼んだ側（ブラウザ）が自分で鳴らす」（2026-09-07）。
+    # ⚠ `ask` にだけ通して**ここに通し忘れていた**——スマホでは返事の声は聞こえるのに
+    # 最初の挨拶だけ無音、という半端な状態になっていた（主人のご指摘）。
+    spoken = voice.speak_detail(home, text, agent=agent, play=not play_here)
     warming = _warm_engine_async(home) if st["available"] else False
-    return {**st, "text": text, "lines": list(lines), "spoke": spoke, "warming": warming}
+    return {
+        **st, "text": text, "lines": list(lines),
+        "spoke": bool(spoken.get("ok")), "warming": warming,
+        "audio_id": str(spoken.get("audio_id") or ""),
+    }
 
 
 def close_session(home: Path) -> dict[str, Any]:

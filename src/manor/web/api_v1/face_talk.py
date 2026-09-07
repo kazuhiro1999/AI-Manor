@@ -30,9 +30,11 @@ class TalkTurn(BaseModel):
 
 
 class TalkOpenRequest(BaseModel):
-    """通話を開くときの body。`agent` だけ（省略可）。"""
+    """通話を開くときの body。`agent` と `play_here`（どちらも省略可）。"""
 
     agent: str = "butler"
+    #: 呼んだ側（ブラウザ）が自分で挨拶の声を鳴らすか（2026-09-07）。`ask` と同じ意味。
+    play_here: bool = False
 
 
 class TalkAskRequest(BaseModel):
@@ -64,7 +66,8 @@ def register(app: FastAPI, ctx: WebContext) -> None:
         """
         require_writable(ctx)
         agent = (body.agent if body is not None else None) or "butler"
-        return talk_session.open_session(ctx.home, agent=agent)
+        play_here = bool(body.play_here) if body is not None else False
+        return talk_session.open_session(ctx.home, agent=agent, play_here=play_here)
 
     @app.post("/api/v1/face/talk")
     def talk_ask(body: TalkAskRequest) -> dict[str, object]:

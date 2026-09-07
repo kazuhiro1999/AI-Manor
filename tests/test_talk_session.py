@@ -526,7 +526,10 @@ def test_open_session_speaks_the_greeting_in_the_agents_voice(
     執事の声、では揃わない。
     """
     _fix_clock(monkeypatch, NOON)
-    speak_mock = _mute_voice(monkeypatch)
+    _mute_voice(monkeypatch)
+    # 挨拶は 2026-09-07 から `speak_detail` を通る（ブラウザで鳴らせるように
+    # `play` と `audio_id` が要るため）。
+    speak_mock = _mute_voice_detail(monkeypatch)
     monkeypatch.setattr(talk_session, "_warm_engine_async", lambda home: False)
 
     result = talk_session.open_session(home, agent="housekeeper")
@@ -540,7 +543,10 @@ def test_open_session_without_an_agent_uses_the_default_voice(
 ) -> None:
     """担当を渡さない古い呼び出しはこれまでどおり既定の声（`agent=None`）。"""
     _fix_clock(monkeypatch, NOON)
-    speak_mock = _mute_voice(monkeypatch)
+    _mute_voice(monkeypatch)
+    # 挨拶は 2026-09-07 から `speak_detail` を通る（ブラウザで鳴らせるように
+    # `play` と `audio_id` が要るため）。
+    speak_mock = _mute_voice_detail(monkeypatch)
     monkeypatch.setattr(talk_session, "_warm_engine_async", lambda home: False)
 
     talk_session.open_session(home)
@@ -550,13 +556,14 @@ def test_open_session_without_an_agent_uses_the_default_voice(
 
 def test_open_session_when_locked_speaks_the_reason(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     _fix_clock(monkeypatch, NIGHT)
-    speak_mock = _mute_voice(monkeypatch)
+    _mute_voice(monkeypatch)
+    speak_mock = _mute_voice_detail(monkeypatch)
 
     result = talk_session.open_session(home)
 
     assert result["available"] is False
     assert result["text"] == talk_session.NIGHT_LOCKED
-    speak_mock.assert_called_once_with(home, talk_session.NIGHT_LOCKED, agent=None)
+    speak_mock.assert_called_once_with(home, talk_session.NIGHT_LOCKED, agent=None, play=True)
 
 
 def test_close_session_without_starting_engine_does_nothing(home: Path) -> None:

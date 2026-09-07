@@ -74,7 +74,7 @@ def test_post_talk_open_passes_the_agent_through(home: Path, monkeypatch: pytest
     monkeypatch.setenv("MANOR_NOW", NOON)
     seen: dict[str, object] = {}
 
-    def fake_open(home_arg: Path, *, agent: str | None = None) -> dict[str, object]:
+    def fake_open(home_arg: Path, *, agent: str | None = None, play_here: bool = False) -> dict[str, object]:
         seen["agent"] = agent
         return {"available": True, "text": "", "lines": [], "spoke": False, "warming": False}
 
@@ -92,7 +92,7 @@ def test_post_talk_open_without_a_body_defaults_to_the_butler(
     monkeypatch.setenv("MANOR_NOW", NOON)
     seen: dict[str, object] = {}
 
-    def fake_open(home_arg: Path, *, agent: str | None = None) -> dict[str, object]:
+    def fake_open(home_arg: Path, *, agent: str | None = None, play_here: bool = False) -> dict[str, object]:
         seen["agent"] = agent
         return {"available": True, "text": "", "lines": [], "spoke": False, "warming": False}
 
@@ -271,3 +271,31 @@ def test_voice_endpoint_rejects_anything_but_a_64_hex_key(home: Path) -> None:
 
     for bad in ["../../etc/passwd", "..", "abc", "", "g" * 64, "a" * 63, "A" * 64 + "/x"]:
         assert voice_mod.cached_wav_by_id(home, bad) is None
+
+
+def test_open_with_play_here_does_not_play_on_the_server(
+    home: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """**挨拶にも `play_here` が効くこと。**
+
+    2026-09-07 に `ask` へは通したが `open_session` へは通し忘れていた——スマホでは
+    返事の声は聞こえるのに**最初の挨拶だけ無音**、という半端な状態になっていた
+    （主人のご指摘「通話ボタンを押しても声が聞こえず、チャットを送るまで聞こえない」）。
+    """
+    monkeypatch.setenv("MANOR_NOW", NOON)
+    calls: list[bool] = []
+
+    def fake_speak_detail(_home, _text, *, agent=None, play=True):
+        calls.append(play)
+        return {"ok": True, "reason": "", "cached": True, "wav": "x.wav", "audio_id": "b" * 64}
+
+    monkeypatch.setattr(talk_session.voice, "speak_detail", fake_speak_detail)
+    monkeypatch.setattr(talk_session, "_warm_engine_async", lambda *a, **k: False)
+
+    result = talk_session.open_session(home, agent="housekeeper", play_here=True)
+    assert calls == [False]
+    assert result["audio_id"] == "b" * 64
+
+    calls.clear()
+    talk_session.open_session(home, agent="housekeeper")
+    assert calls == [True]  # 既定は従来どおりサーバ側で鳴らす
