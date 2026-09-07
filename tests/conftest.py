@@ -138,3 +138,79 @@ def fake_staff(tmp_path: Path):
         for name in list(sys.modules):
             if name == "manor.staff.fake" or name.startswith("manor.staff.fake."):
                 del sys.modules[name]
+
+
+# --- カテゴリの印（主人のご質問 2026-09-07「カテゴリごとにグループ分けできないか」） ------
+#
+# `pytest -m core` のように束で回せるようにする。**印は1箇所（この表）だけで付ける**
+# ——各ファイルに `pytestmark` を書くと、ファイルが増えるたびに書き忘れが起きる
+# （「1つの事実は1箇所に書く」。GROWTH 2026-09-07）。
+#
+# ⚠ **この表は列挙式**なので、完全性に全部を頼っている（B174 で学んだ形）。
+# 新しい試験ファイルが表から漏れたら黙って無印になる——それを防ぐため、
+# `tests/test_categories.py` が「印の無い試験が1件でもあれば落ちる」を見張る。
+
+#: 上から順に照合し、最初に当たったものを採る（`web/test_face*` は `web/` より先）。
+TEST_CATEGORIES: tuple[tuple[str, str], ...] = (
+    # 規約の番人——製品の振る舞いではなく、**書き方の規約**を見張るもの。
+    ("tests/test_i18n_no_", "guard"),
+    ("tests/test_privacy_boundary.py", "guard"),
+    ("tests/test_staff_isolation.py", "guard"),
+    ("tests/test_v1_classes.py", "guard"),
+    ("tests/test_night_entrypoints_agree.py", "guard"),
+    ("tests/board/test_frontend_parity.py", "guard"),
+    # 姿と声（VRM の小窓・VOICEVOX・通話・声かけ）。
+    ("tests/test_face_", "presence"),
+    ("tests/test_voice.py", "presence"),
+    ("tests/test_talk", "presence"),
+    ("tests/test_notify.py", "presence"),
+    ("tests/web/test_face", "presence"),
+    # 無人実行（夜勤・関門）。
+    ("tests/test_night", "night"),
+    ("tests/test_gate.py", "night"),
+    ("tests/board/test_night_parsing.py", "night"),
+    # 外部連携（Slack・Notion・カレンダー）。
+    ("tests/test_slack", "integration"),
+    ("tests/test_notion.py", "integration"),
+    ("tests/test_calendar.py", "integration"),
+    ("tests/test_ics.py", "integration"),
+    # v1 からの移行。
+    ("tests/test_import_v1.py", "migration"),
+    ("tests/test_cli_migration.py", "migration"),
+    # 環境まわり（Windows・登録・拡張）。
+    ("tests/test_winps.py", "platform"),
+    ("tests/test_shortcut.py", "platform"),
+    ("tests/test_scheduler_install.py", "platform"),
+    ("tests/test_gitsetup.py", "platform"),
+    ("tests/test_extensions.py", "platform"),
+    ("tests/test_plugin_loader.py", "platform"),
+    # 担当（料理長・家政婦・秘書・家令）。
+    ("tests/staff/", "staff"),
+    # 画面。
+    ("tests/board/", "board"),
+    ("tests/web/", "web"),
+    # `tests/` **直下**の残りは中核（DB・状態機械・グラフ・射影・整合検査・台帳）。
+    #
+    # ⚠ ここを `"tests/"` にすると**何でも拾ってしまい、見張りが空回りする**
+    # （`category_for` が `None` を返さなくなるので `test_categories.py` が
+    # 何も守らない。2026-09-07 に一度そう書いて気づいた）。直下のファイルだけに
+    # 効かせ、**新しい下位ディレクトリは必ず上の表に足させる**——`tests/web/`
+    # `tests/board/` `tests/staff/` のような束が黙って「中核」に混ざるのを防ぐ。
+    ("tests/test_", "core"),
+)
+
+
+def category_for(path: str) -> str | None:
+    """試験ファイルのパスからカテゴリを引く。当たらなければ `None`。"""
+    normalized = path.replace("\\", "/")
+    for prefix, name in TEST_CATEGORIES:
+        if prefix in normalized:
+            return name
+    return None
+
+
+def pytest_collection_modifyitems(items) -> None:
+    for item in items:
+        name = category_for(str(getattr(item, "fspath", "")))
+        if name:
+            item.add_marker(getattr(pytest.mark, name))

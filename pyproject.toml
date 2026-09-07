@@ -40,3 +40,17 @@ testpaths = ["tests"]
 # **1本を追いかけるときは ** で直列に戻せる（traceback が読みやすく、
 # print も素通しになる）。
 addopts = ["-n", "auto"]
+# カテゴリの印（2026-09-07）。付けるのは tests/conftest.py の TEST_CATEGORIES 1箇所で、
+# 各ファイルには書かない。 のように束で回せる。
+markers = [
+  "core: 中核——DB・状態機械・グラフ・射影・整合検査・台帳",
+  "guard: 規約の番人——製品の振る舞いではなく書き方の規約を見張る",
+  "integration: 外部連携——Slack・Notion・カレンダー",
+  "web: 家庭用 Web アプリ（API・認証・画面の器）",
+  "board: ダッシュボード",
+  "staff: 担当——料理長・家政婦・秘書・家令",
+  "presence: 姿と声——VRM の小窓・VOICEVOX・通話・声かけ",
+  "night: 無人実行——夜勤・関門",
+  "migration: v1 からの移行",
+  "platform: 環境まわり——Windows・登録・拡張",
+]
