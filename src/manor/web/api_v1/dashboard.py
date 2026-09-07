@@ -13,7 +13,6 @@ from typing import Any
 
 from fastapi import FastAPI
 
-from ... import check as check_mod
 from ... import runlog as runlog_mod
 from ...board import api_core as board_core
 from ... import profile as profile_mod
@@ -47,12 +46,19 @@ def register(app: FastAPI, ctx: WebContext) -> None:
             counts = board["counts"]
             today = str(board["today"])
 
-            # 状態の一行（D2 出どころ: check の警告以外／v_blocked_ready／open decision）。
-            check_results = check_mod.run(conn, ctx.home)
-            check_failures = sum(
-                len(v) for k, v in check_results.items() if k not in check_mod.WARNING_ONLY_CHECKS
-            )
-            action_needed = int(counts["pending"]) + int(counts["blocked_ready"])
+            # 状態の一行（2026-09-07 に主人のご指摘2件で書き直した）。
+            #
+            # ⚠ **数は一覧と同じものを数える。** 以前は
+            # `pending + blocked_ready` を数えて「要対応 1件」と出しながら、下の
+            # `needs_you` は `pending` しか並べていなかった——判断待ちが0で
+            # `v_blocked_ready` が1件のとき、**「1件ある」と言って何も見せない**。
+            # 主人が探しても見つからないものを数えてはいけない。
+            #
+            # ⚠ `v_blocked_ready`（ブロッカーが片付いたのに waiting/hold）と
+            # `manor check` の失敗は、**執事が自分で片付けるもの**であって主人の
+            # 出番ではない（主人のご指示「その件は執事が把握していればいいので、
+            # ダッシュボードに出す必要はありません」）。数にも一行にも出さない。
+            action_needed = int(counts["pending"])
 
             # 数字の並び。「進行中」は執事（AI）の分だけ（主人の作業を混ぜない。board_core と同じ理由）。
             due_today_n = sum(
@@ -202,10 +208,12 @@ def register(app: FastAPI, ctx: WebContext) -> None:
                 "due_today_list": due_today,
                 "recent": recent,
                 "status": {
-                    "ok": check_failures == 0 and action_needed == 0,
+                    # `ok` は**主人の出番があるかどうか**だけを言う。執事の宿題
+                    # （check の失敗・blocked_ready）では曇らせない。
+                    "ok": action_needed == 0,
                     "action_needed": action_needed,
-                    "check_failures": check_failures,
                     "open_decisions": int(counts["pending"]),
+                    # 執事が自分で片付ける材料として残す（画面には出さない）。
                     "blocked_ready": int(counts["blocked_ready"]),
                 },
                 "counts": {

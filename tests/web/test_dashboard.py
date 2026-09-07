@@ -272,3 +272,39 @@ def test_dashboard_greeting_has_no_name_before_setup(conn, home: Path) -> None:
     body = make_client(home).get("/api/v1/dashboard").json()
 
     assert body["greeting"]["name"] == ""
+
+
+# --- 数は一覧と同じものを数える（主人のご指摘 2026-09-07） --------------------------------
+
+
+def test_action_needed_matches_what_the_master_can_actually_see(home: Path, conn) -> None:
+    """**「要対応 1件」と言って何も見せない、が起きないこと。**
+
+    以前は `action_needed = pending + blocked_ready` を数えていたのに、`needs_you` は
+    `pending` しか並べていなかった。判断待ちが0で `v_blocked_ready` が1件のとき、
+    一行だけが「要対応 1件」と言い、押しても何も無い——主人が探しても見つからない
+    ものを数えていた。
+    """
+    # ブロッカーが片付いたのに hold のまま＝ v_blocked_ready に載る形を作る。
+    blocker = task_mod.add(conn, "先に片付ける仕事")
+    blocked = task_mod.add(conn, "その後にやる仕事")
+    task_mod.link_dependency(conn, blocked, blocker)
+    task_mod.status(conn, blocked, "hold", note="先の仕事待ち")
+    task_mod.status(conn, blocker, "doing")
+    task_mod.status(conn, blocker, "done")
+    conn.commit()
+
+    body = make_client(home).get("/api/v1/dashboard").json()
+
+    assert body["status"]["blocked_ready"] == 1  # 執事の宿題としては見えている
+    assert body["status"]["action_needed"] == len(body["needs_you"])
+    assert body["status"]["action_needed"] == 0  # 主人の出番は無い
+    assert body["status"]["ok"] is True
+
+
+def test_dashboard_status_does_not_carry_check_failures(home: Path) -> None:
+    """`manor check` の失敗は主人へ出さない（主人のご指示 2026-09-07
+    「その件は執事が把握していればいいので、ダッシュボードに出す必要はありません」）。
+    """
+    body = make_client(home).get("/api/v1/dashboard").json()
+    assert "check_failures" not in body["status"]

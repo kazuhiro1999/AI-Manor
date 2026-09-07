@@ -556,7 +556,6 @@ export interface RunStatsData {
 export interface DashboardStatus {
   ok: boolean;
   action_needed: number;
-  check_failures: number;
   open_decisions: number;
   blocked_ready: number;
 }

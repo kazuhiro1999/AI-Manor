@@ -29,7 +29,7 @@ const fullPayload: DashboardData = {
   working: [],
   due_today_list: [],
   recent: [],
-  status: { ok: false, action_needed: 2, check_failures: 0, open_decisions: 1, blocked_ready: 1 },
+  status: { ok: false, action_needed: 2, open_decisions: 1, blocked_ready: 1 },
   counts: { pending_decisions: 1, doing_butler: 3, due_today: 2, done_this_week: 4 },
   night: { available: true, status: "done", started_at: "2026-09-03T22:00:00", ended_at: "2026-09-03T22:10:00" },
   upcoming: [
@@ -64,7 +64,7 @@ const emptyPayload: DashboardData = {
   working: [],
   due_today_list: [],
   recent: [],
-  status: { ok: true, action_needed: 0, check_failures: 0, open_decisions: 0, blocked_ready: 0 },
+  status: { ok: true, action_needed: 0, open_decisions: 0, blocked_ready: 0 },
   counts: { pending_decisions: 0, doing_butler: 0, due_today: 0, done_this_week: 0 },
   night: { available: false, status: null, started_at: null, ended_at: null },
   upcoming: [],

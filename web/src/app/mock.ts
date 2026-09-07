@@ -1271,7 +1271,6 @@ export async function mockApi<T>(path: string, options: ApiOptions = {}): Promis
       status: {
         ok: actionNeeded === 0,
         action_needed: actionNeeded,
-        check_failures: 0,
         open_decisions: board.counts.pending,
         blocked_ready: board.counts.blocked_ready,
       },

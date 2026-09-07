@@ -318,7 +318,6 @@ export const ja = {
   "dashboard.night.failure": "失敗",
   "dashboard.status.ok": "問題ありません",
   "dashboard.status.actionNeeded": (p) => `要対応 ${p.n}件`,
-  "dashboard.status.checkFailures": (p) => `失敗 ${p.n}件`,
   "dashboard.status.needsReview": "要確認",
   "dashboard.upcoming.empty": "直近の予定・期限はありません。",
   "dashboard.upcoming.approx": "頃",

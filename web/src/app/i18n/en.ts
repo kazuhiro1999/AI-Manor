@@ -322,7 +322,6 @@ export const en: { [K in TranslationKey]: MirrorEntry<K> } = {
   "dashboard.night.failure": "Failed",
   "dashboard.status.ok": "Everything's fine",
   "dashboard.status.actionNeeded": (p) => `${p.n} need attention`,
-  "dashboard.status.checkFailures": (p) => `${p.n} failing`,
   "dashboard.status.needsReview": "Needs review",
   "dashboard.upcoming.empty": "Nothing coming up soon.",
   "dashboard.upcoming.approx": "~",

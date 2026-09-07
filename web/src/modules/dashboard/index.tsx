@@ -36,8 +36,9 @@ function StatusLine({ status }: { status: DashboardData["status"] }) {
     return <p className="dash-status dash-status-ok">{t("dashboard.status.ok")}</p>;
   }
   const parts: string[] = [];
+  // `manor check` の失敗はここに出さない（2026-09-07 主人のご指示——執事が把握して
+  // いればよく、主人の出番ではない）。この一行が言うのは**主人の出番**だけ。
   if (status.action_needed > 0) parts.push(t("dashboard.status.actionNeeded", { n: status.action_needed }));
-  if (status.check_failures > 0) parts.push(t("dashboard.status.checkFailures", { n: status.check_failures }));
   return <p className="dash-status dash-status-warn">{parts.length ? parts.join(t("common.listSeparator")) : t("dashboard.status.needsReview")}</p>;
 }
 
