@@ -225,7 +225,40 @@ function openFaceWindowPopup(agent: string, show: ShowToast): void {
  * ADR-011 D4: 「小窓を開く」ボタンは設定画面だけでなく担当の一覧・ダッシュボードにも
  * 増える。ここが唯一の実装——`web/src/modules/agents/index.tsx` はこの関数を import
  * するだけで、開く処理を書き直さない。 */
+/** **この端末で「サーバ側に窓を開く」が役に立つか。**
+ *
+ * `POST /face/open` はサーバの PC で Chrome を起こす。手元がスマホだと、窓は
+ * **主人の手元ではなくサーバ機に開く**——押した人には何も起きず、留守の PC に窓だけが
+ * 増える（主人のご指摘 2026-09-07「担当ページから小窓を開くと、サーバーPC側で
+ * ウィンドウが開く」）。
+ *
+ * 判定は「指が粗いか（`pointer: coarse`）」と画面の幅。**サーバ機かどうかを当てに
+ * いかない**——同じ PC を LAN の IP で開くこともあり、ホスト名では決められない。
+ * 誤判定しても失うものは非対称: スマホを PC と誤れば何も起きない（今の不具合のまま）、
+ * PC をスマホと誤ればタブが1つ開くだけ。だから**迷ったらタブを開く側**へ倒す。 */
+export function opensWindowOnThisDevice(): boolean {
+  try {
+    const coarse = window.matchMedia?.("(pointer: coarse)")?.matches ?? false;
+    const narrow = (window.innerWidth || 0) < 768;
+    return !coarse && !narrow;
+  } catch {
+    return true; // 判定できないなら従来どおり（サーバ側の窓を試す）
+  }
+}
+
+/** スマホ・タブレットから「担当と話す」を押したときの口。小窓と同じ中身
+ * （`/face`。`width=device-width` で組んである）を**別タブ**で開く。担当ごとに
+ * `name` を固定するので、二度押しても同じタブを使い回す。 */
+function openTalkTab(agent: string): void {
+  window.open(`/face?agent=${encodeURIComponent(agent)}`, `manor-talk-${agent}`, "noopener");
+}
+
 export async function openFaceWindow(agent: string, show: ShowToast): Promise<void> {
+  // 手元がスマホなら、サーバ機に窓を開こうとしない（開いても主人には見えない）。
+  if (!opensWindowOnThisDevice()) {
+    openTalkTab(agent);
+    return;
+  }
   try {
     const result = await api<{ opened: boolean; method: string; reason: string }>("/face/open", {
       method: "POST",

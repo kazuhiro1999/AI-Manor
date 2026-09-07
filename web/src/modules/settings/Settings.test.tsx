@@ -80,7 +80,7 @@ function mockFetchFor(handlers: {
 }) {
   const faceModels = handlers.faceModels ?? baseFaceModels();
   const taskKinds = handlers.taskKinds ?? baseTaskKinds();
-  // 既定は opened: false（サーバ側でアプリモードの窓を作れない体）——「小窓を開く」を
+  // 既定は opened: false（サーバ側でアプリモードの窓を作れない体）——「担当と話す」を
   // 何もオプション無しで呼ぶ既存試験がそのままポップアップへのフォールバックを試せるように。
   const faceOpen = handlers.faceOpen ?? { opened: false, method: "none", reason: "テスト既定: Chrome が見つからない体" };
   globalThis.fetch = vi.fn().mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -263,7 +263,7 @@ describe("settings — 姿（小窓）（ADR-008 §7 D14・D15）", () => {
     expect((form.get("file") as File).name).toBe("chef.vrm");
   });
 
-  it("「小窓を開く」はまず POST /face/open を試す。opened: true ならポップアップは開かない（本命はサーバ側のアプリモード）", async () => {
+  it("「担当と話す」は PC ではまず POST /face/open を試す。opened: true ならポップアップは開かない（本命はサーバ側のアプリモード）", async () => {
     const calls: { url: string; init?: RequestInit }[] = [];
     mockFetchFor({
       ...emptyRuns,
@@ -282,7 +282,7 @@ describe("settings — 姿（小窓）（ADR-008 §7 D14・D15）", () => {
       await waitFor(() => expect(screen.getByText("姿（小窓）")).toBeTruthy());
 
       const chefRow = (screen.getByLabelText("料理長の VRM ファイル") as HTMLElement).closest(".face-model-row") as HTMLElement;
-      await user.click(within(chefRow).getByRole("button", { name: "小窓を開く" }));
+      await user.click(within(chefRow).getByRole("button", { name: "担当と話す" }));
 
       await waitFor(() =>
         expect(calls.some((c) => c.url.includes("/api/v1/face/open") && (c.init?.method || "").toUpperCase() === "POST")).toBe(true)
@@ -294,6 +294,49 @@ describe("settings — 姿（小窓）（ADR-008 §7 D14・D15）", () => {
       expect(openSpy).not.toHaveBeenCalled();
     } finally {
       window.open = originalOpen;
+    }
+  });
+
+  it("スマホからは POST /face/open を叩かず、会話のタブを開く（窓はサーバ機に開いてしまうため）", async () => {
+    // 主人のご指摘 2026-09-07:「担当ページから小窓を開くと、サーバーPC側でウィンドウが
+    // 開く」。手元がスマホのときは押した人に何も起きず、留守の PC に窓だけが増えていた。
+    const calls: { url: string; init?: RequestInit }[] = [];
+    mockFetchFor({
+      ...emptyRuns,
+      faceModels: baseFaceModels(),
+      faceOpen: { opened: true, method: "app", reason: "" },
+      onFetch: (url, init) => calls.push({ url, init }),
+    });
+
+    const openSpy = vi.fn().mockReturnValue({ focus: vi.fn() });
+    const originalOpen = window.open;
+    const originalMatchMedia = window.matchMedia;
+    const originalWidth = window.innerWidth;
+    window.open = openSpy as unknown as typeof window.open;
+    window.matchMedia = ((q: string) => ({
+      matches: q.includes("pointer: coarse"),
+      media: q, onchange: null, addListener() {}, removeListener() {},
+      addEventListener() {}, removeEventListener() {}, dispatchEvent: () => false,
+    })) as unknown as typeof window.matchMedia;
+    Object.defineProperty(window, "innerWidth", { value: 390, configurable: true });
+
+    try {
+      const user = userEvent.setup();
+      render(<MemoryRouter><ToastProvider>{SettingsScreen}</ToastProvider></MemoryRouter>);
+      await waitFor(() => expect(screen.getByText("姿（小窓）")).toBeTruthy());
+
+      const chefRow = (screen.getByLabelText("料理長の VRM ファイル") as HTMLElement).closest(".face-model-row") as HTMLElement;
+      await user.click(within(chefRow).getByRole("button", { name: "担当と話す" }));
+
+      await waitFor(() => expect(openSpy).toHaveBeenCalled());
+      // サーバ機に窓を開かせない。
+      expect(calls.some((c) => c.url.includes("/api/v1/face/open"))).toBe(false);
+      // 会話の中身（/face）を、担当ごとに固定した名前のタブで開く。
+      expect(openSpy).toHaveBeenCalledWith("/face?agent=chef", "manor-talk-chef", "noopener");
+    } finally {
+      window.open = originalOpen;
+      window.matchMedia = originalMatchMedia;
+      Object.defineProperty(window, "innerWidth", { value: originalWidth, configurable: true });
     }
   });
 
@@ -321,7 +364,7 @@ describe("settings — 姿（小窓）（ADR-008 §7 D14・D15）", () => {
       await waitFor(() => expect(screen.getByText("姿（小窓）")).toBeTruthy());
 
       const chefRow = (screen.getByLabelText("料理長の VRM ファイル") as HTMLElement).closest(".face-model-row") as HTMLElement;
-      await user.click(within(chefRow).getByRole("button", { name: "小窓を開く" }));
+      await user.click(within(chefRow).getByRole("button", { name: "担当と話す" }));
 
       await waitFor(() => expect(openSpy).toHaveBeenCalledTimes(1));
       const [url, name, features] = openSpy.mock.calls[0];
@@ -355,7 +398,7 @@ describe("settings — 姿（小窓）（ADR-008 §7 D14・D15）", () => {
       await waitFor(() => expect(screen.getByText("姿（小窓）")).toBeTruthy());
 
       const chefRow = (screen.getByLabelText("料理長の VRM ファイル") as HTMLElement).closest(".face-model-row") as HTMLElement;
-      await user.click(within(chefRow).getByRole("button", { name: "小窓を開く" }));
+      await user.click(within(chefRow).getByRole("button", { name: "担当と話す" }));
 
       await waitFor(() => expect(openSpy).toHaveBeenCalledTimes(2));
       // 2回目はタブへのフォールバック。

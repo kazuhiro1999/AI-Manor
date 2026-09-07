@@ -282,8 +282,12 @@ table.grid td.col-wide, table.grid th.col-wide { min-width: 220px; }
 .days-left.near { color: var(--warn); }
 
 /* ---------- timeline ---------- */
-.timeline { overflow-x: auto; }
+.timeline { overflow-x: auto; -webkit-overflow-scrolling: touch; overscroll-behavior-x: contain; }
 .tl-table { display: flex; flex-direction: column; border: 1px solid var(--border); border-radius: 9px; overflow: hidden; }
+/* 狭い画面では列が潰れて読めなくなる（主人のご指摘 2026-09-07・スマホ）。
+   1列 44px を最低として確保し、入りきらないぶんは .timeline 側で横スクロールさせる。
+   幅を固定してしまうと広い画面で間延びするので min-width にとどめる。 */
+.tl-table { min-width: calc(190px + var(--tl-cols) * 44px); }
 .tl-row { display: grid; grid-template-columns: 190px minmax(0, 1fr); border-top: 1px solid var(--border); }
 .tl-row:first-child { border-top: 0; }
 .tl-row.tl-header { background: var(--bg-panel-2); position: sticky; top: 0; }
@@ -307,6 +311,8 @@ table.grid td.col-wide, table.grid th.col-wide { min-width: 220px; }
 .tl-deadline { border-left-color: var(--warn); }
 .tl-remind { border-left-color: var(--text-faint); }
 .tl-task { border-left-color: var(--info); }
+/* 予定（カレンダー由来）。主人が実際に出向くもの——他より目立たせる。2026-09-07 */
+.tl-event { border-left-color: var(--accent); border-left-width: 4px; font-weight: 650; }
 .tl-approx { border-style: dashed; }
 .tl-overdue { background: var(--danger-bg); border-color: var(--danger); }
 .tl-done { border-left-color: var(--ok) !important; }

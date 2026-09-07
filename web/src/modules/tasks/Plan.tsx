@@ -21,6 +21,8 @@ const TL_KIND_KEY: Record<string, TranslationKey> = {
   deadline: "tlKind.deadline",
   remind: "tlKind.remind",
   task: "tlKind.task",
+  // カレンダー由来の予定（2026-09-07）。ここに無いと札が生の "event" のまま出る。
+  event: "tlKind.event",
 };
 
 export function Plan({ readOnly }: { readOnly: boolean }) {

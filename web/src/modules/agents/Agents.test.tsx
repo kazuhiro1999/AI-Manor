@@ -83,10 +83,10 @@ describe("担当の一覧画面（ADR-011 D3）", () => {
     await waitFor(() => expect(screen.getByText("検分")).toBeTruthy());
     const qaCard = screen.getByText("検分").closest(".card") as HTMLElement;
     expect(qaCard).toBeTruthy();
-    // qa のカードの中に「へ」で終わるページ遷移リンクが無い（小窓を開くボタンだけ）。
+    // qa のカードの中に「へ」で終わるページ遷移リンクが無い（「担当と話す」ボタンだけ）。
     const links = qaCard.querySelectorAll("a");
     expect(links.length).toBe(0);
-    expect(screen.getAllByRole("button", { name: "小窓を開く" }).length).toBe(agents.length);
+    expect(screen.getAllByRole("button", { name: "担当と話す" }).length).toBe(agents.length);
   });
 
   it("未導入の担当には badge を出す", async () => {
