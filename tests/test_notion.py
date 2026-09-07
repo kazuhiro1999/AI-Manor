@@ -454,3 +454,20 @@ def test_extension_is_registered_in_real_registry(home: Path):
     assert "notion" in ids
     detail = ext_mod.detail(home, "notion")
     assert detail["status"] in ("not_installed", "needs_config", "ready", "ok", "error")
+
+
+def test_diary_generate_prompt_carries_the_structure():
+    """日誌の指示が構成を渡していること（長さの上限は置かない）。
+
+    2026-09-07 まではここが「8〜12行程度」の1文だけで、30件が片付いた 2026-09-06 の
+    日誌が地の文3段落に圧縮されて投函されていた。v1 `apps/notion-diary/diary-prompt.txt`
+    は見出しを指定し、長さの上限を置いていなかった。
+    """
+    prompt = notion_mod._build_generate_prompt("（資料）", "2026-09-06")
+
+    for heading in ("## やったこと", "## できるようになったこと", "## 気づいたこと", "## 明日の自分へ"):
+        assert heading in prompt
+    assert "長さの上限は決めない" in prompt
+    assert "8〜12行" not in prompt
+    assert "2026-09-06" in prompt
+    assert "（資料）" in prompt
