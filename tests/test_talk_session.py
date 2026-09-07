@@ -737,3 +737,59 @@ def test_cli_ask_accepts_agent_flag() -> None:
 
     args = parser.parse_args(["talk-session", "ask", "こんにちは", "--agent", "housekeeper"])
     assert args.agent == "housekeeper"
+
+
+# --- 担当の窓は担当の人格で答える（主人のご指摘 2026-09-07） -------------------------------
+
+
+def test_ask_launches_the_agent_persona_for_non_butler_windows(
+    home: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """家政婦の窓なら `--agent housekeeper` で起こす。
+
+    旧 D22 は「人格は切り替えない」で、声だけ担当のものだった。結果、家政婦の窓に
+    「要対応の件はありません」というタスクの話が返り、主人から「家政婦らしい返答が
+    ほしい」とご指摘。`.claude/agents/housekeeper.md` に人格も担当範囲も書いてあるのに、
+    通話の口だけがそれを読んでいなかった。
+    """
+    _fix_clock(monkeypatch)
+    _mock_success(monkeypatch, reply="承知しました。")
+    _mute_voice(monkeypatch)
+    _mute_voice_detail(monkeypatch)
+
+    talk_session.ask(home, "ゴミの日を教えてください", agent="housekeeper")
+
+    argv = talk_session.subprocess.run.call_args[0][0]
+    assert "--agent" in argv
+    assert argv[argv.index("--agent") + 1] == "housekeeper"
+
+
+def test_ask_leaves_the_butler_as_the_default_persona(
+    home: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """執事は素で起こす——ワークスペースの `CLAUDE.md` が効き、それが執事の人格。"""
+    _fix_clock(monkeypatch)
+    _mock_success(monkeypatch, reply="承知しました。")
+    _mute_voice(monkeypatch)
+    _mute_voice_detail(monkeypatch)
+
+    talk_session.ask(home, "状況を教えてください", agent="butler")
+
+    assert "--agent" not in talk_session.subprocess.run.call_args[0][0]
+
+
+def test_ask_falls_back_to_the_default_persona_for_an_unknown_agent(
+    home: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """語彙外の担当は黙って既定へ倒す——存在しない担当で `claude` を起こすと通話ごと
+    失敗するが、人格が既定へ戻るだけなら会話は続く（声が倒れるのと同じ作法）。
+    """
+    _fix_clock(monkeypatch)
+    _mock_success(monkeypatch, reply="承知しました。")
+    _mute_voice(monkeypatch)
+    _mute_voice_detail(monkeypatch)
+
+    result = talk_session.ask(home, "こんにちは", agent="そんな担当はいません")
+
+    assert result["ok"] is True
+    assert "--agent" not in talk_session.subprocess.run.call_args[0][0]

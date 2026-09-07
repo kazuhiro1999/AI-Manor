@@ -502,6 +502,25 @@ def _safe_for_argv(text: str) -> str:
     return " ".join(str(text or "").split()).replace("%", "％")
 
 
+def _agent_for_command(agent: str | None) -> str | None:
+    """窓の担当名を `--agent` に渡してよい形へ（2026-09-07）。
+
+    執事（既定）は `None`——`claude` を素で起こすとワークスペースの `CLAUDE.md` が
+    効き、それが執事の人格そのもの。**語彙外の名前は黙って `None` へ倒す**
+    ——存在しない担当で `claude` を起こすと通話ごと失敗するが、人格が既定へ戻るだけなら
+    会話は続く（声が既定へ倒れるのと同じ作法。`voice._speaker_for`）。
+    """
+    name = (agent or "").strip()
+    if not name or name == "butler":
+        return None
+    try:
+        from . import talk as talk_mod
+
+        return name if name in talk_mod.available_agents() else None
+    except Exception:  # noqa: BLE001 - 人格の解決で通話を落とさない
+        return None
+
+
 def _system_prompt(now: datetime) -> str:
     """`--append-system-prompt` へ渡す一式。**時刻と時間帯だけ**（D22）。
 
@@ -564,6 +583,7 @@ def build_command(
     allowed_tools: Sequence[str] = ALLOWED_TOOLS,
     deny_tools: Sequence[str] = DENY_TOOLS,
     max_turns: int = DEFAULT_MAX_TURNS,
+    agent: str | None = None,
 ) -> list[str]:
     """`claude -p` の一式。`tests/behavior/run.py`（51〜66行・195〜206行）と同じ実績のある
     形——`--permission-mode manual` ＋ `--allowed-tools` にパターンで事前承認し、
@@ -572,6 +592,14 @@ def build_command(
     全部塞ぐ／許さない用途で、こちらは「manor のコマンドだけ実際に打てる」必要があるため）。
 
     **`--strict-mcp-config` は付けない**（D21。MCP を使ってよい）。
+
+    `agent`: 執事以外の担当の窓なら `--agent <name>` を付ける（2026-09-07）。
+    **旧 D22 は「人格は切り替えない」だった**——声だけ担当のもので、答えるのは常に執事。
+    その結果、家政婦の窓に「要対応の件はありません」というタスクの話が返り、主人から
+    「家政婦らしい返答がほしい」とご指摘。`.claude/agents/<name>.md` に人格も担当範囲も
+    書いてあるのに、通話の口だけがそれを読んでいなかった。`manor talk <name>` は最初から
+    `--agent` で起こしている（`talk.build_command`）ので、**同じ担当が窓と CLI で
+    別人になっていた**のも直る。
     """
     return [
         exe,
@@ -584,6 +612,7 @@ def build_command(
         "--disallowed-tools", *deny_tools,
         "--no-session-persistence",
         "--append-system-prompt", system_prompt_text,
+        *(["--agent", agent] if agent else []),
     ]
 
 
@@ -707,7 +736,11 @@ def ask(
     started = time.time()
     try:
         sys_prompt = _system_prompt(now)
-        cmd = build_command(exe, model=model, system_prompt_text=sys_prompt)
+        # 執事は既定のまま（`--agent butler` は無い）。それ以外は担当として起こす。
+        cmd = build_command(
+            exe, model=model, system_prompt_text=sys_prompt,
+            agent=_agent_for_command(agent),
+        )
         _check_argv(cmd)
         prompt_text = _build_prompt(text, history)
         try:
