@@ -13,7 +13,11 @@ CREATE TABLE IF NOT EXISTS secretary_event (
   start TEXT NOT NULL, "end" TEXT,                  -- ISO 日時（終日は日付だけ）
   title TEXT NOT NULL, place TEXT NOT NULL DEFAULT '', note TEXT NOT NULL DEFAULT '',
   source TEXT NOT NULL DEFAULT 'manual',            -- manual / ics / connector（④の道具が入れる）
-  external_id TEXT, created_at TEXT NOT NULL
+  external_id TEXT, created_at TEXT NOT NULL,
+  -- どのプロジェクトの予定か（2026-09-07）。NULL は「どれでもない」。
+  -- カレンダーは誰の予定かを知らないので、ここは**人が結ぶ**——件名から推測しない。
+  -- タイムラインはこの列でレーンを決める（未設定なら「その他」へ落ちる）。
+  project_id TEXT REFERENCES node(id)
 );
 
 CREATE TABLE IF NOT EXISTS secretary_inbox (

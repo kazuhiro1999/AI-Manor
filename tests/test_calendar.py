@@ -456,3 +456,36 @@ def test_cli_calendar_list_empty_home_reports_error(
     _fix_clock(monkeypatch)
     rc = cli_mod.main(["calendar", "list"])
     assert rc == 2  # ManorError(code=2)
+
+
+def test_sync_keeps_project_link_when_an_event_moves(home, conn):
+    """**予定を動かしても、結んだプロジェクトが外れない。**
+
+    `external_id` は `UID::開始時刻` なので、カレンダー上で日付を動かすと鍵が変わり、
+    同期からは「削除＋追加」に見える。素朴に作り直すと、主人が結んだプロジェクトが
+    移動のたびに消える（2026-09-07 に予定の結びを入れたときに気づいた）。
+    """
+    from manor import calendar as calendar_mod
+    from manor import project as project_mod
+
+    project_mod.add(conn, "nedo", "実証実験")
+    pid = project_mod.resolve(conn, "nedo")["id"]
+    uid = "abc123@google.com"
+
+    calendar_mod.apply_events(conn, [
+        {"external_id": f"{uid}::2026-09-07T15:00:00", "start": "2026-09-07T15:00:00",
+         "end": "2026-09-07T18:00:00", "title": "受け取り", "place": "研究室", "note": ""},
+    ])
+    row = conn.execute("SELECT id FROM secretary_event WHERE source = 'ics'").fetchone()
+    conn.execute("UPDATE secretary_event SET project_id = ? WHERE id = ?", (pid, row["id"]))
+
+    # 主人がカレンダーで 9/8 へ動かした（鍵が変わる）。
+    calendar_mod.apply_events(conn, [
+        {"external_id": f"{uid}::2026-09-08T15:00:00", "start": "2026-09-08T15:00:00",
+         "end": "2026-09-08T18:00:00", "title": "受け取り", "place": "研究室", "note": ""},
+    ])
+
+    rows = conn.execute("SELECT start, project_id FROM secretary_event WHERE source = 'ics'").fetchall()
+    assert len(rows) == 1
+    assert str(rows[0]["start"]).startswith("2026-09-08")
+    assert rows[0]["project_id"] == pid

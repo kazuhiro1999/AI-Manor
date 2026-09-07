@@ -313,8 +313,13 @@ def add_event(
     place: str = "",
     note: str = "",
     source: str = "manual",
+    project_id: str | None = None,
 ) -> int:
-    """予定を1件入れて `id` を返す。`start`/`end` は絶対日時（`validate_datetime` の形）。"""
+    """予定を1件入れて `id` を返す。`start`/`end` は絶対日時（`validate_datetime` の形）。
+
+    `project_id` はタイムラインのレーンを決める（2026-09-07）。**件名から推測しない**
+    ——「定期ミーティング」がどの計画のものかは書いてある人にしか分からない。
+    """
     from manor import util
 
     title = title.strip()
@@ -323,11 +328,32 @@ def add_event(
     start = validate_datetime(start, field="--start")
     end = validate_datetime(end, field="--end") if end else None
     cur = conn.execute(
-        'INSERT INTO secretary_event (start, "end", title, place, note, source, created_at)'
-        " VALUES (?, ?, ?, ?, ?, ?, ?)",
-        (start, end, title, place or "", note or "", source, util.now()),
+        'INSERT INTO secretary_event (start, "end", title, place, note, source, created_at, project_id)'
+        " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        (start, end, title, place or "", note or "", source, util.now(), project_id),
     )
     return int(cur.lastrowid or 0)
+
+
+def set_event_project(
+    conn: "sqlite3.Connection", event_id: int, project_id: str | None
+) -> dict[str, object]:
+    """予定をプロジェクトへ結ぶ／外す（2026-09-07）。
+
+    ICS 由来の予定にも効く。`calendar.apply_events` は**同じ UID の行から結びを
+    引き継ぐ**ので、主人がカレンダー上で予定を動かしても外れない
+    （`external_id` は `UID::開始時刻` なので、動かすと削除＋追加になる）。
+    """
+    row = conn.execute("SELECT * FROM secretary_event WHERE id = ?", (event_id,)).fetchone()
+    if row is None:
+        raise ManorError(
+            f"予定が見つかりません: {event_id}",
+            code=2, key="error.sec.event_not_found", params={"id": event_id},
+        )
+    conn.execute(
+        "UPDATE secretary_event SET project_id = ? WHERE id = ?", (project_id, event_id)
+    )
+    return {"id": event_id, "title": row["title"], "project_id": project_id}
 
 
 def add_reminder(

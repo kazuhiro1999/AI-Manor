@@ -484,8 +484,10 @@ def get_timeline(conn: sqlite3.Connection, days: int) -> dict[str, object]:
             if ed < today or sd > horizon:
                 continue
             place = str(ev["place"] or "").strip()
+            # 結ばれていれば、その計画のレーンへ（2026-09-07 主人のご指摘——NEDO の
+            # 打ち合わせが「その他」に落ちて、当の P10 が「予定の無い計画」に見えていた）。
             add_event(
-                None,
+                (ev["project_id"] if "project_id" in ev.keys() else None) or None,
                 {
                     "kind": "event",
                     "start": max(sd, today).isoformat(), "end": min(ed, horizon).isoformat(),

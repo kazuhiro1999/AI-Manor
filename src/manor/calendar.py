@@ -141,6 +141,15 @@ def apply_events(conn, events: list[dict[str, object]]) -> dict[str, object]:
         ).fetchall()
     }
 
+    # `external_id` は `UID::開始時刻` なので、**予定を動かすと鍵が変わる**——削除＋追加に
+    # 見える。それだけだと、主人が結んだプロジェクト（`project_id`）が移動のたびに外れる。
+    # UID ごとに結びを覚えておき、新しい行へ引き継ぐ（2026-09-07）。
+    project_by_uid: dict[str, str] = {}
+    for ext_id, row in existing.items():
+        pid = row.get("project_id")
+        if pid:
+            project_by_uid.setdefault(ext_id.split("::", 1)[0], str(pid))
+
     seen: set[str] = set()
     added = 0
     updated = 0
@@ -150,9 +159,10 @@ def apply_events(conn, events: list[dict[str, object]]) -> dict[str, object]:
         row = existing.get(ext_id)
         if row is None:
             conn.execute(
-                'INSERT INTO secretary_event (start, "end", title, place, note, source, external_id, created_at)'
-                " VALUES (?, ?, ?, ?, ?, 'ics', ?, ?)",
-                (ev["start"], ev.get("end"), ev["title"], ev.get("place") or "", ev.get("note") or "", ext_id, now),
+                'INSERT INTO secretary_event (start, "end", title, place, note, source, external_id, created_at, project_id)'
+                " VALUES (?, ?, ?, ?, ?, 'ics', ?, ?, ?)",
+                (ev["start"], ev.get("end"), ev["title"], ev.get("place") or "", ev.get("note") or "",
+                 ext_id, now, project_by_uid.get(ext_id.split("::", 1)[0])),
             )
             added += 1
             continue

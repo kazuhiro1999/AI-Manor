@@ -149,6 +149,11 @@ def migrate_core(home: Path) -> None:
         _add_column_if_missing(conn, "task", "kind", "TEXT NOT NULL DEFAULT ''")
         # 済んだ節目（2026-09-05）。既存 DB は全部 NULL＝「まだ」から始まる。
         _add_column_if_missing(conn, "milestone", "done_at", "TEXT")
+        # 予定をプロジェクトへ結ぶ列（2026-09-07）。**秘書の表だが、ここで足してよい**
+        # ——`_add_column_if_missing` は表が無ければ何もしないので、秘書を導入して
+        # いない home に表を作ってしまうことはない（上の「部下のスキーマを当てては
+        # いけない」は `executescript` で表ごと作る話）。
+        _add_column_if_missing(conn, "secretary_event", "project_id", "TEXT")
         # **既定の8つもここで入れる**（執事の裁定 2026-09-04）。`manor init` だけに任せると、
         # 更新後に init を忘れた home は「表はあるが空」になり、種類を1つも選べない——
         # `run`／`notion_page` で2度踏んだのと**同じ穴**（GROWTH G5）。

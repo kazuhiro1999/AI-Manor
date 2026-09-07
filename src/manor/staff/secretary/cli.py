@@ -126,6 +126,29 @@ def cmd_remind_list(conn, home, args) -> object:
 # --- event -----------------------------------------------------------------------
 
 
+def _resolve_project(conn, ref: str) -> str | None:
+    """プロジェクトの code か id を id へ。空なら None（＝結ばない）。
+
+    **推測しない**——見つからなければ黙って None にせず、はっきり失敗させる。
+    """
+    ref = (ref or "").strip()
+    if not ref:
+        return None
+    from manor import project as project_mod
+
+    return str(project_mod.resolve(conn, ref)["id"])
+
+
+def cmd_event_project(conn, home, args) -> object:
+    project_id = _resolve_project(conn, args.ref)
+    result = ops.set_event_project(conn, args.id, project_id)
+    if args.json:
+        return result
+    if project_id is None:
+        return i18n.t("sec.event.project.cleared", id=args.id)
+    return i18n.t("sec.event.project.done", id=args.id, project=project_id)
+
+
 def cmd_event_add(conn, home, args) -> object:
     title = args.title.strip()
     if not title:
@@ -133,9 +156,11 @@ def cmd_event_add(conn, home, args) -> object:
     start = ops.validate_datetime(args.start, field="--start")
     end = ops.validate_datetime(args.end, field="--end") if args.end else None
     # 書き込みは `ops` の1本に寄せる（Slack の `#cal` も同じ関数を通る。T14）
+    project_id = _resolve_project(conn, getattr(args, "project", "") or "")
     event_id = ops.add_event(
         conn, start=start, title=title, end=end,
         place=args.place or "", note=args.note or "", source="manual",
+        project_id=project_id,
     )
     if args.json:
         return {"id": event_id, "start": start, "end": end, "title": title}
@@ -161,6 +186,8 @@ def cmd_event_list(conn, home, args) -> object:
     lines = []
     for r in rows:
         place = f" @{r['place']}" if r["place"] else ""
+        if r.get("project_id"):
+            place += f" [{r['project_id']}]"
         lines.append(i18n.t("sec.event.list.line", start=r["start"], title=r["title"], place=place, id=r["id"]))
     return "\n".join(lines)
 
@@ -382,9 +409,18 @@ def register(subparsers) -> None:
     p.add_argument("--end")
     p.add_argument("--place", default="")
     p.add_argument("--note", default="")
+    p.add_argument("--project", default="")
     p.add_argument("--json", action="store_true")
     p.add_argument("--no-render", action="store_true")
     p.set_defaults(func=cmd_event_add, is_write=True)
+
+    # 予定をプロジェクトへ結ぶ（2026-09-07）。ICS 由来の予定にも効く。
+    p = event_sub.add_parser("project")
+    p.add_argument("id", type=int)
+    p.add_argument("ref", nargs="?", default="", help=i18n.t("cli.sec.event.project.ref.help"))
+    p.add_argument("--json", action="store_true")
+    p.add_argument("--no-render", action="store_true")
+    p.set_defaults(func=cmd_event_project, is_write=True)
 
     p = event_sub.add_parser("list")
     p.add_argument("--days", type=int, default=7)

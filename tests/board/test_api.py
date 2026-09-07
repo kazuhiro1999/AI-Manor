@@ -1084,3 +1084,28 @@ def test_timeline_hides_finished_milestones(conn, home: Path):
     refs = {e["ref"] for ln in body["lanes"] for e in ln["events"] if e["kind"] == "milestone"}
     assert live in refs
     assert finished not in refs
+
+
+def test_timeline_puts_event_in_its_project_lane(conn, home: Path):
+    """**結ばれた予定は、その計画のレーンに出る。**
+
+    2026-09-07: 予定を出せるようにした直後、主人から「NEDO の打ち合わせが出てこない。
+    当の P10 が『予定のないプロジェクト』になっている」とご指摘。`secretary_event` に
+    プロジェクトの結びが無く、全部が「その他」へ落ちていた。
+    """
+    project_mod.add(conn, "nedo", "実証実験")
+    pid = project_mod.resolve(conn, "nedo")["id"]
+    today = datetime.now().date()
+    when = (today + timedelta(days=1)).isoformat()
+    conn.execute(
+        "INSERT INTO secretary_event (start, \"end\", title, place, note, source, created_at, project_id)"
+        " VALUES (?, ?, ?, '', '', 'ics', ?, ?)",
+        (f"{when}T15:00:00", f"{when}T18:00:00", "機材の受け取り", datetime.now().isoformat(), pid),
+    )
+    conn.commit()
+
+    body = make_client(home).get("/api/timeline?days=30").json()
+    lane = next(ln for ln in body["lanes"] if ln["project_id"] == pid)
+    assert [e["title"] for e in lane["events"] if e["kind"] == "event"] == ["機材の受け取り"]
+    other = next((ln for ln in body["lanes"] if ln["id"] == "__none__"), None)
+    assert other is None or not [e for e in other["events"] if e["kind"] == "event"]
