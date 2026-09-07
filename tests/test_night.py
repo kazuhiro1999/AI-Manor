@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+import time
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -731,3 +732,56 @@ def _child_env(tmp_path: Path) -> dict:
     env = dict(os.environ)
     env["MANOR_HOME"] = str(tmp_path)
     return env
+
+
+def test_kill_fires_on_time_even_with_a_full_size_prompt(home: Path):
+    """**打ち切りはプロンプトの大きさに左右されない。**
+
+    2026-09-07 の実測: `communicate(input=prompt, timeout=...)` に渡していたとき、
+    Windows の CPython は stdin を呼び出しスレッドで同期的に書くため、子が読まないまま
+    バッファが埋まると `timeout` が効かなかった。
+
+        プロンプト 1 字     → 1.4 秒で打ち切り
+        プロンプト 2,735 字 → 30.4 秒（＝子が自分で終わるまで待った）
+
+    `tasks.md` が約束する「締切＋15分で機械が強制的に打ち切ります」に穴があった。
+    プロンプトを一時ファイルから渡すことで、`timeout` が素直に効くようにした。
+
+    ここは**実時間を測る**——「打ち切ったつもり」ではなく「実際に早く戻ること」が
+    確かめたいこと。子は 30 秒眠るので、素通しなら 30 秒かかる。
+    """
+    argv = runner.build_exec_argv(
+        f'"{sys.executable}" -c "import time; time.sleep(30)"', model="sonnet", max_turns=4
+    )
+    big_prompt = "あ" * 20000  # 本番の雛形（約 2,700 字）より十分大きく
+
+    started = time.time()
+    child = runner._run_child(
+        argv, cwd=Path("."), env=dict(os.environ), prompt=big_prompt, timeout_seconds=1.0
+    )
+    elapsed = time.time() - started
+
+    assert child["killed"] is True
+    assert elapsed < 15, f"打ち切りに {elapsed:.1f} 秒かかりました（子の寿命 30 秒を待っています）"
+
+
+def test_the_child_still_receives_the_whole_prompt(home: Path):
+    """一時ファイル経由にしても、子が受け取るバイト列は変わらないこと。
+
+    **文字数ではなくバイト数で見る。** 子が stdin をどの符号化で読むかは子の勝手
+    （Windows の素の python は cp932 で読む）で、こちらが保証できるのは
+    「同じバイト列を渡すこと」まで——実際 `print(len(sys.stdin.read()))` で書いたら
+    5,000 字が 7,500 と返り、渡した中身ではなく子の復号を測っていた（2026-09-07）。
+    """
+    argv = runner.build_exec_argv(
+        f'"{sys.executable}" -c "import sys; print(len(sys.stdin.buffer.read()))"',
+        model="sonnet", max_turns=4,
+    )
+    prompt = "あ" * 5000
+
+    child = runner._run_child(
+        argv, cwd=Path("."), env=dict(os.environ), prompt=prompt, timeout_seconds=30.0
+    )
+
+    assert child["killed"] is False
+    assert child["stdout"].strip() == str(len(prompt.encode("utf-8")))

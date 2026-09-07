@@ -20,7 +20,9 @@ dependencies = [
 manor = "manor.cli:main"
 
 [dependency-groups]
-dev = ["pytest>=8.0", "httpx>=0.27"]
+# pytest-xdist: 試験を並列で回す（2026-09-07 主人のご質問）。24コアの機械で
+# 1本ずつ回していた。試験どうしは tmp_path で隔離されているので分けて走らせられる。
+dev = ["pytest>=8.0", "httpx>=0.27", "pytest-xdist>=3.6"]
 
 [build-system]
 requires = ["hatchling"]
@@ -31,3 +33,10 @@ packages = ["src/manor"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# 既定で並列に回す（2026-09-07 主人のご質問「試験内容を落とさずに短縮できないか」）。
+# 実測（24コアの機械・1704件）: 直列 175〜380秒 → 並列 23〜24秒。
+# 試験どうしは tmp_path と monkeypatch で隔離されているので、分けて走らせても
+# 結果は変わらない（件数が同じことを実測で確認）。
+# **1本を追いかけるときは ** で直列に戻せる（traceback が読みやすく、
+# print も素通しになる）。
+addopts = ["-n", "auto"]

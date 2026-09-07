@@ -40,6 +40,7 @@ import shlex
 import shutil
 import sqlite3
 import subprocess
+import tempfile
 import sys
 import time
 from datetime import datetime, timedelta
@@ -399,14 +400,27 @@ def _run_child(
 ) -> dict[str, Any]:
     """1本の子プロセスを起動し、`timeout_seconds` 待って、超えたら殺す。
 
-    `subprocess.Popen.communicate(timeout=...)` を使う——stdin へのプロンプト書き込みと
-    stdout/stderr の読み取りを別スレッドでやってくれるので、子がプロンプトを読まなくても
-    （このモジュールの試験のモックのように）デッドロックしない。
+    **プロンプトはパイプではなく一時ファイルから渡す**（2026-09-07）。
+
+    以前は `communicate(input=prompt, timeout=...)` に渡していた。ところが Windows の
+    CPython は **stdin を呼び出しスレッドで同期的に書く**（stdout/stderr だけが別スレッド）
+    ——子がプロンプトを読まないまま stdin のバッファが埋まると、**`timeout` が効かず
+    そこで止まる**。実測（2026-09-07）:
+
+        プロンプト 1 字     → 1.4 秒で打ち切り
+        プロンプト 2,735 字 → 30.4 秒（＝子が自分で終わるまで待った）
+        プロンプト 64 KB    → 30.4 秒（同上）
+
+    つまり `tasks.md` が約束している「締切＋15分で機械が強制的に打ち切ります」に穴が
+    あった。本番の子（`claude -p`）は stdin を読むので普段は表に出ないが、**読む前に
+    固まった子は打ち切れない**——打ち切りは最後の安全網なので、そこが条件付きでは困る。
+
+    一時ファイルを stdin に与えれば書き込みは OS が面倒を見る。こちらは stdout/stderr を
+    読むだけになり、`timeout` が素直に効く。子が受け取る中身は一字も変わらない。
     """
     popen_kwargs: dict[str, Any] = dict(
         cwd=str(cwd),
         env=env,
-        stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
@@ -415,21 +429,26 @@ def _run_child(
     )
     if not sys.platform.startswith("win"):
         popen_kwargs["start_new_session"] = True
-    proc = subprocess.Popen(argv, **popen_kwargs)
+
     killed = False
-    try:
-        stdout, stderr = proc.communicate(input=prompt, timeout=timeout_seconds)
-    except subprocess.TimeoutExpired:
-        killed = True
-        _kill_tree(proc.pid)
-        try:
-            stdout, stderr = proc.communicate(timeout=15)
-        except subprocess.TimeoutExpired:
-            proc.kill()
+    with tempfile.TemporaryDirectory(prefix="manor-night-") as tmpdir:
+        prompt_path = Path(tmpdir) / "prompt.txt"
+        prompt_path.write_text(prompt, encoding="utf-8")
+        with prompt_path.open("r", encoding="utf-8") as stdin_file:
+            proc = subprocess.Popen(argv, stdin=stdin_file, **popen_kwargs)
             try:
-                stdout, stderr = proc.communicate(timeout=5)
-            except Exception:
-                stdout, stderr = "", ""
+                stdout, stderr = proc.communicate(timeout=timeout_seconds)
+            except subprocess.TimeoutExpired:
+                killed = True
+                _kill_tree(proc.pid)
+                try:
+                    stdout, stderr = proc.communicate(timeout=15)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                    try:
+                        stdout, stderr = proc.communicate(timeout=5)
+                    except Exception:
+                        stdout, stderr = "", ""
     code = 124 if killed else (proc.returncode if proc.returncode is not None else 125)
     return {"code": code, "killed": killed, "stdout": stdout or "", "stderr": stderr or ""}
 
