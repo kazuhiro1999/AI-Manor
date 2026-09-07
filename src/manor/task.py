@@ -255,7 +255,19 @@ def set(
     recommendation: str | None = None,
     risk: str | None = None,
     kind: str | None = None,
+    status_note: str | None = None,
 ) -> str:
+    """`status_note` は**状態を変えずに、待っている理由だけを書き直す**ための口。
+
+    射影（`render.format_active`）は `waiting` / `hold` のタスクについて `now` ではなく
+    `status_note` を出す。ところが `status_note` を書けるのは `status()` だけで、
+    `waiting -> waiting` は許された遷移ではない——**待ちのまま理由を直す道が無く、
+    板の一行が古いまま固まっていた**（2026-09-07、主人が「9/7 の打ち合わせ」の表示に
+    お気づきになって発覚。`--now` を直しても板は変わらなかった）。
+
+    履歴（`task_event`）には積まない。状態は動いていないので、積むと「動いた」という
+    嘘の行が増える。**動かさずに直せる**ことがここの要点。
+    """
     row = _row(conn, task_id)
     if level is not None and level not in VALID_LEVELS:
         raise ManorError(
@@ -295,6 +307,8 @@ def set(
         fields["risk"] = risk
     if kind is not None:
         fields["kind"] = kind
+    if status_note is not None:
+        fields["status_note"] = status_note
     if fields:
         sets = ", ".join(f"{k} = ?" for k in fields)
         conn.execute(f"UPDATE task SET {sets} WHERE id = ?", (*fields.values(), task_id))

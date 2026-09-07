@@ -127,6 +127,7 @@ def cmd_task_set(conn, home, args) -> object:
         recommendation=args.recommendation,
         risk=args.risk,
         kind=args.kind,
+        status_note=args.status_note,
     )
     if args.json:
         return {"id": task_id}
@@ -818,6 +819,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("id")
     p.add_argument("--goal")
     p.add_argument("--now")
+    # 待ち／保留のタスクは、板に `now` ではなく status_note が出る。状態を変えずに
+    # その一行だけを直す口（2026-09-07）。
+    p.add_argument("--status-note", dest="status_note")
     p.add_argument("--next")
     p.add_argument("--due")
     p.add_argument("--owner")

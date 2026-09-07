@@ -302,6 +302,8 @@ table.grid td.col-wide, table.grid th.col-wide { min-width: 220px; }
 .tl-deadline { border-left-color: var(--warn); }
 .tl-remind { border-left-color: var(--text-faint); }
 .tl-task { border-left-color: var(--info); }
+/* 予定（カレンダー由来）。主人が実際に出向くもの。2026-09-07 に追加 */
+.tl-event { border-left-color: var(--accent); font-weight: 600; }
 .tl-approx { border-style: dashed; }
 .tl-overdue { background: var(--danger-bg); border-color: var(--danger); }
 .tl-done { border-left-color: var(--ok) !important; }

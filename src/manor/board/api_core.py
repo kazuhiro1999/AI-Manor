@@ -382,7 +382,12 @@ def get_timeline(conn: sqlite3.Connection, days: int) -> dict[str, object]:
         lane_for(project_id)["events"].append(ev)  # type: ignore[union-attr]
 
     # --- milestone（点） ---
+    # ⚠ 2026-09-07: ここは done を **常に False で書いていた**——`milestone.done_at` が
+    # 入っていても帯が「まだ」の顔で残り、済んだ節目が先の予定として並んでいた
+    # （主人のご指摘「完了済の…論文修正が残ったまま」）。済んだものは出さない。
     for m in graph.milestone_list(conn):
+        if m.get("done_at"):
+            continue
         d = date.fromisoformat(str(m["date"])[:10])
         if d < today or d > horizon:
             continue
@@ -418,10 +423,15 @@ def get_timeline(conn: sqlite3.Connection, days: int) -> dict[str, object]:
         )
 
     # --- task（start/end/due のどれかを持つものだけ。書いていないものは出さない） ---
+    # ⚠ 2026-09-07: 済んだ課題も帯として残していた（取り消し線は引かれるが場所は取る）。
+    # タイムラインは「この先どうなるか」を見る画面なので、終わったものは出さない
+    # ——済んだ仕事は「最近の動き」と日誌が持っている（主人のご指摘）。
     task_rows = conn.execute(
         "SELECT t.id, t.project_id, t.status, t.due, t.start, t.\"end\", n.title AS title"
         " FROM task t JOIN node n ON n.id = t.id"
-        " WHERE t.due IS NOT NULL OR t.start IS NOT NULL OR t.\"end\" IS NOT NULL"
+        " WHERE (t.due IS NOT NULL OR t.start IS NOT NULL OR t.\"end\" IS NOT NULL)"
+        f" AND t.status NOT IN ({', '.join('?' for _ in _CLOSED_STATUSES)})",
+        tuple(sorted(_CLOSED_STATUSES)),
     ).fetchall()
     for t in task_rows:
         start_raw = t["start"]
@@ -452,6 +462,40 @@ def get_timeline(conn: sqlite3.Connection, days: int) -> dict[str, object]:
                 "ref": t["id"], "detail": f"{t['title']}\n状態: {t['status']}", "overdue": False,
             },
         )
+
+    # --- secretary_event（予定。secretary が居なければ黙って空） ---
+    # ⚠ 2026-09-07: タイムラインは **カレンダーを1行も読んでいなかった**——9/8 の
+    # 打ち合わせが画面に出ないと主人からご指摘。節目・期限・課題・控えだけを見ていて、
+    # 実際に主人が出向く予定が抜けていた（朝のブリーフィングと同じ穴。同日に両方直した）。
+    event_table = conn.execute(
+        "SELECT * FROM sqlite_master WHERE type = 'table' AND name = 'secretary_event'"
+    ).fetchone()
+    if event_table is not None:
+        for ev in conn.execute("SELECT * FROM secretary_event ORDER BY start").fetchall():
+            sd_s = str(ev["start"])[:10]
+            ed_s = str(ev["end"] or ev["start"])[:10]
+            try:
+                sd = date.fromisoformat(sd_s)
+                ed = date.fromisoformat(ed_s)
+            except ValueError:
+                continue
+            if ed < sd:
+                sd, ed = ed, sd
+            if ed < today or sd > horizon:
+                continue
+            place = str(ev["place"] or "").strip()
+            add_event(
+                None,
+                {
+                    "kind": "event",
+                    "start": max(sd, today).isoformat(), "end": min(ed, horizon).isoformat(),
+                    "start_days": (max(sd, today) - today).days,
+                    "end_days": (min(ed, horizon) - today).days,
+                    "title": str(ev["title"]), "approximate": False, "done": False,
+                    "overdue": False, "ref": ev["id"],
+                    "detail": f"{ev['start']}\n{ev['title']}" + (f"\n場所: {place}" if place else ""),
+                },
+            )
 
     # --- secretary_reminder（未済。過ぎたものも出す。secretary が居なければ黙って空） ---
     remind_rows = conn.execute(

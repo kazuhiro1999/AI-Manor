@@ -275,7 +275,7 @@ LINE_ALLOWLIST: set[str] = {
     "staff/steward/cli.py:315",
     # [データ] task.py: link_dependency/dup が task_event.note へ書く定型の一言。
     # 台帳に永続する記録(decision.py の ruling と同じ扱い)。
-    "task.py:238", "task.py:528",
+    "task.py:238", "task.py:542",
     # [データ] board/__init__.py・web/__init__.py・archive.py・gate.py・night/__init__.py の
     # `LABEL` 定数。`manor.cli` の `_run_init` が「部下: {name}」の一覧に使う想定の
     # 表示名だが、実際に読まれるのは `staff/*` 配下の担当モジュールだけ(grep で確認)。

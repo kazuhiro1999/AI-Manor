@@ -226,3 +226,43 @@ def test_rule_modified_requires_text(conn):
         decision_mod.rule(conn, did, "modified", ruling="   ")
     decision_mod.rule(conn, did, "modified", ruling="期限を1週間延ばして")
     assert conn.execute("SELECT status FROM decision WHERE id = ?", (did,)).fetchone()["status"] == "modified"
+
+
+# --- 待ちのまま理由だけ直す（主人のご指摘 2026-09-07） -----------------------------------
+
+
+def test_set_can_rewrite_status_note_without_a_transition(conn):
+    """**待ちのまま、待っている理由だけを書き直せること。**
+
+    射影は `waiting` / `hold` のタスクについて `now` ではなく `status_note` を出す。
+    ところが `status_note` を書けるのは `status()` だけで、`waiting -> waiting` は
+    許された遷移ではない——**板の一行が古いまま固まり、`--now` を直しても変わらなかった**
+    （主人が「9/7 の打ち合わせ」の表示にお気づきになって発覚）。
+    """
+    tid = task_mod.add(conn, "打ち合わせ待ちのタスク")
+    task_mod.status(conn, tid, "waiting", note="9/7 の打ち合わせ待ち")
+    before = conn.execute(
+        "SELECT COUNT(*) AS n FROM task_event WHERE task_id = ?", (tid,)
+    ).fetchone()["n"]
+
+    task_mod.set(conn, tid, status_note="9/8 の打ち合わせ待ち（9/7 は勘違い）")
+
+    row = conn.execute("SELECT * FROM task WHERE id = ?", (tid,)).fetchone()
+    assert row["status_note"] == "9/8 の打ち合わせ待ち（9/7 は勘違い）"
+    assert row["status"] == "waiting"  # 状態は動かさない
+    after = conn.execute(
+        "SELECT COUNT(*) AS n FROM task_event WHERE task_id = ?", (tid,)
+    ).fetchone()["n"]
+    assert after == before  # 履歴に「動いた」という嘘の行を増やさない
+
+
+def test_set_leaves_status_note_alone_when_not_given(conn):
+    """`status_note` を渡さないときは、既存の一行に触らない。"""
+    tid = task_mod.add(conn, "触らないことの確認")
+    task_mod.status(conn, tid, "hold", note="主人の裁定待ち")
+
+    task_mod.set(conn, tid, now="別の欄だけ書き換える")
+
+    row = conn.execute("SELECT * FROM task WHERE id = ?", (tid,)).fetchone()
+    assert row["status_note"] == "主人の裁定待ち"
+    assert row["now"] == "別の欄だけ書き換える"

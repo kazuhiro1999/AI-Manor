@@ -863,7 +863,7 @@ function renderMilestones(board) {
   if (!rows.length) wrap.innerHTML = `<p class="panel-note">（なし）</p>`;
 }
 
-const TL_KIND_LABEL = { milestone: "節目", deadline: "期限", remind: "控え", task: "課題" };
+const TL_KIND_LABEL = { milestone: "節目", deadline: "期限", remind: "控え", task: "課題", event: "予定" };
 
 /** クリックした帯の全文を下に描く。控え（remind）は「済にする」から
  *  `POST /api/staff/sec/remind/{id}/done` を呼べる（v1 README §2-4「控えは画面から

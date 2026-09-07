@@ -1019,3 +1019,68 @@ def test_night_report_falls_back_to_ok_false_on_unstructured_text(home: Path):
     client = make_client(home)
     body = client.get("/api/night/reports/2026-09-01").json()
     assert body["parsed"]["ok"] is False
+
+
+# --- タイムラインの3つの穴（主人のご指摘 2026-09-07） -----------------------------------
+
+
+def test_timeline_shows_calendar_events(conn, home: Path):
+    """**カレンダーの予定がタイムラインに出ること。**
+
+    2026-09-07 まで `get_timeline` は節目・期限・課題・控えだけを見ていて、
+    `secretary_event` を1行も読んでいなかった——主人が実際に出向く 9/8 の打ち合わせが
+    画面に出ないとご指摘いただいて発覚（朝のブリーフィングと同じ穴）。
+    """
+    today = datetime.now().date()
+    when = (today + timedelta(days=1)).isoformat()
+    conn.execute(
+        "INSERT INTO secretary_event (start, \"end\", title, place, note, source, created_at)"
+        " VALUES (?, ?, ?, ?, '', 'ics', ?)",
+        (f"{when}T15:00:00", f"{when}T18:00:00", "機材の受け取り", "研究室", datetime.now().isoformat()),
+    )
+    conn.commit()
+
+    body = make_client(home).get("/api/timeline?days=30").json()
+    events = [e for ln in body["lanes"] for e in ln["events"] if e["kind"] == "event"]
+    assert [e["title"] for e in events] == ["機材の受け取り"]
+    assert events[0]["start"] == when
+    assert "研究室" in events[0]["detail"]
+
+
+def test_timeline_hides_finished_tasks(conn, home: Path):
+    """済んだ課題は帯を占めない（取り消し線ではなく、出さない）。"""
+    project_mod.add(conn, "vr", "VR")
+    today = datetime.now().date()
+    due = (today + timedelta(days=1)).isoformat()
+    live = task_mod.add(conn, "まだの仕事", project="vr", due=due)
+    finished = task_mod.add(conn, "済んだ仕事", project="vr", due=due)
+    task_mod.status(conn, finished, "doing")
+    task_mod.status(conn, finished, "done")
+    conn.commit()
+
+    body = make_client(home).get("/api/timeline?days=30").json()
+    refs = {e["ref"] for ln in body["lanes"] for e in ln["events"] if e["kind"] == "task"}
+    assert live in refs
+    assert finished not in refs
+
+
+def test_timeline_hides_finished_milestones(conn, home: Path):
+    """済んだ節目も出さない。
+
+    `done` を**常に False で書いていた**ので、`milestone.done_at` が入っていても
+    「まだ」の顔で先の予定として並んでいた（主人のご指摘「完了済の…論文修正が
+    残ったまま」）。
+    """
+    project_mod.add(conn, "p", "計画")
+    pid = project_mod.resolve(conn, "p")["id"]
+    today = datetime.now().date()
+    when = (today + timedelta(days=2)).isoformat()
+    live = graph.milestone_add(conn, "まだの節目", date=when, project_id=pid)
+    finished = graph.milestone_add(conn, "済んだ節目", date=when, project_id=pid)
+    graph.milestone_done(conn, finished)
+    conn.commit()
+
+    body = make_client(home).get("/api/timeline?days=30").json()
+    refs = {e["ref"] for ln in body["lanes"] for e in ln["events"] if e["kind"] == "milestone"}
+    assert live in refs
+    assert finished not in refs
