@@ -74,6 +74,7 @@ from typing import Any
 
 from . import db, decision as decision_mod, i18n, render as render_mod, runlog, util
 from .errors import ManorError
+from .night import runner as night_runner
 
 CONFIG_FILE_NAME = "config.toml"
 SLACK_API_BASE = "https://slack.com/api"
@@ -296,32 +297,171 @@ def _clip(text: object, limit: int = 88) -> str:
     return flat if len(flat) <= limit else flat[: limit - 1] + "…"
 
 
+def brief_data(conn: sqlite3.Connection, home: Path) -> dict[str, object]:
+    """「まとめ」の材料。`render.active_data` に、v1 のブリーフィングが持っていて
+    v2 が落としていた3つ——**本日の予定・昨夜の作業・控え**——を足す。
+
+    ⚠ 2026-09-07 の主人のご指摘で足した。それまでの `format_mechanical_brief` は
+    open decision と section A と今日の milestone しか見ておらず、**カレンダーを
+    1行も読んでいなかった**。予定が入っている日にも「本日、主人待ち・今日の
+    マイルストーンはともにありません」と送り、`--generate` がそれを
+    「今日は予定がありません」と書き換えて主人に届いていた（実測: 2026-09-07 07:30、
+    同日 15:00 に予定があった）。v1 `apps/slack-relay/brief-prompt.txt` の
+    【本日の予定】【昨夜の作業】【忘れずに】に対応する。
+
+    **新しいクエリ層は作らない**——`secretary_event` / `secretary_reminder` は
+    `staff/secretary/cli.py:cmd_agenda` と同じ読み方をし、夜勤は
+    `night/runner.py:report` をそのまま呼ぶ。
+    """
+    data = dict(render_mod.active_data(conn))
+    today = util.today()
+    data["today_events"] = [
+        dict(r)
+        for r in conn.execute(
+            'SELECT id, start, "end", title, place FROM secretary_event'
+            " WHERE substr(start, 1, 10) = ? ORDER BY start",
+            (today,),
+        ).fetchall()
+    ]
+    # 「今日が空なだけで、明日を知らないままにしない」（v1 brief-prompt.txt）。
+    nxt = conn.execute(
+        'SELECT id, start, "end", title, place FROM secretary_event'
+        " WHERE substr(start, 1, 10) > ? ORDER BY start LIMIT 1",
+        (today,),
+    ).fetchone()
+    data["next_event"] = dict(nxt) if nxt is not None else None
+    data["reminders"] = [
+        dict(r)
+        for r in conn.execute(
+            "SELECT id, on_date, at_time, text FROM secretary_reminder"
+            " WHERE done_at IS NULL AND on_date <= ? ORDER BY on_date, id",
+            (today,),
+        ).fetchall()
+    ]
+    # 今朝 02:00 に回った夜勤の報告は、今日の日付で綴じられている。
+    data["night"] = night_runner.report(Path(home), today)
+    return data
+
+
+def _event_when(ev: dict[str, object]) -> str:
+    """予定の時刻を「15:00–18:00」「15:00」「終日」のいずれかに整える。
+    `secretary_event.start` は ISO 日時（終日は日付だけ）。
+    """
+    def hhmm(value: object) -> str:
+        s = str(value or "")
+        return s[11:16] if len(s) >= 16 and "T" in s else ""
+
+    a, b = hhmm(ev.get("start")), hhmm(ev.get("end"))
+    if a and b:
+        return f"{a}–{b}"
+    return a or "終日"
+
+
+def _format_event_line(ev: dict[str, object], *, with_date: bool = False) -> str:
+    place = str(ev.get("place") or "").strip()
+    title = str(ev.get("title") or "")
+    # ICS の件名は場所を含んでいることが多い（「… — 研究室」）。重ねて〔研究室〕とは書かない。
+    tail = f"〔{place}〕" if place and place not in title else ""
+    head = f"{str(ev.get('start') or '')[:10]} " if with_date else ""
+    return f"- {head}{_event_when(ev)} {_clip(ev.get('title'), 40)}{tail}"
+
+
+def _night_summary(text: str) -> list[str]:
+    """夜勤の作業報告（`home/night/reports/<date>.md`）から「見出し ＋ どこまで」だけを
+    機械的に抜く。報告そのものは数千字あるので、まとめの通にはこの一覧だけを載せる
+    （`--generate` にも同じものを渡す。全文を渡すと事実を足す余地が増える）。
+    """
+    out: list[str] = []
+    for chunk in text.split("\n## ")[1:]:
+        lines = chunk.splitlines()
+        if not lines:
+            continue
+        title = lines[0].strip()
+        done = ""
+        for ln in lines:
+            s = ln.strip()
+            if s.startswith("- **どこまで**"):
+                done = s.split("**", 4)[-1].lstrip(":：").strip()
+                break
+        out.append(f"- {title}" + (f" — {done}" if done else ""))
+    return out
+
+
 def format_mechanical_brief(data: dict[str, object]) -> str:
-    """「まとめ」の1通。`render.active_data` が既に計算した値だけから組む
-    （`--generate` 無しの既定。D10: `claude` が壊れていても「今日の要対応は N 件」は
-    送れる）。**新しいクエリ層は作らない**——ここは整形だけ。open decision の詳細
-    （推奨・risk 等）はここには出さない——decision ごとの個別の通（`_format_decision_message`）
-    が担当する。まとめは件数と ID・件名の一覧に留める。
+    """「まとめ」の1通。`brief_data` が集めた値だけから組む（`--generate` 無しの既定。
+    D10: `claude` が壊れていても予定と要対応は送れる）。**ここは整形だけ。**
+
+    見出しは v1 `brief-prompt.txt` の並びに合わせてある——主人が3か月読んできた形を
+    変えない。open decision の詳細（推奨・risk）はここには出さない——decision ごとの
+    個別の通（`_format_decision_message`）が担当する。
     """
     open_decisions = list(data["open_decisions"])  # type: ignore[arg-type]
     section_a = list(data["section_a"])  # type: ignore[arg-type]
+    section_b = list(data.get("section_b") or [])  # type: ignore[arg-type]
     milestones = list(data["milestones"])  # type: ignore[arg-type]
+    today_events = list(data.get("today_events") or [])  # type: ignore[arg-type]
+    next_event = data.get("next_event")
+    reminders = list(data.get("reminders") or [])  # type: ignore[arg-type]
+    night = dict(data.get("night") or {})  # type: ignore[arg-type]
     today = util.today()
-    today_milestones = [m for m in milestones if str(m["date"]) == today]
 
-    lines: list[str] = [f"主人待ち: 判断 {len(open_decisions)}件 / タスク {len(section_a)}件"]
+    lines: list[str] = [f"{today} の状況です。"]
+
+    lines.append("")
+    lines.append("【本日の予定】")
+    if today_events:
+        lines.extend(_format_event_line(e) for e in today_events)
+    elif isinstance(next_event, dict):
+        lines.append("- 本日の予定はありません。次の予定:")
+        lines.append(_format_event_line(next_event, with_date=True))
+    else:
+        lines.append("- 本日の予定はありません（この先の予定も入っていません）")
+
+    lines.append("")
+    lines.append("【昨夜の作業】")
+    if night.get("found"):
+        summary = _night_summary(str(night.get("text") or ""))
+        lines.extend(summary or ["- 夜勤は動きましたが、報告の見出しを読めませんでした"])
+    else:
+        lines.append("- 昨夜の自動作業はありません")
+
+    if reminders:
+        lines.append("")
+        lines.append("【忘れずに】")
+        for r in reminders:
+            when = str(r.get("at_time") or "").strip()
+            lines.append(f"- {(when + ' ') if when else ''}{_clip(r.get('text'), 50)}")
+
+    lines.append("")
+    lines.append(f"【ご判断ください】判断 {len(open_decisions)}件 / タスク {len(section_a)}件")
+    if not open_decisions and not section_a:
+        lines.append("- ありません")
     for d in open_decisions:
         lines.append(f"- {d['id']}（{d['days']}日）{_clip(d['title'], 70)}")
     for t in section_a:
         rec = _clip(t.get("recommendation") or "", 40)
         tail = f"（推奨: {rec}）" if rec else ""
         lines.append(f"- {t['id']} {_clip(t['title'], 60)}{tail}")
-    if today_milestones:
-        lines.append(f"今日のマイルストーン: {len(today_milestones)}件")
-        for m in today_milestones:
-            lines.append(f"- {_clip(m['title'], 70)}")
-    if not open_decisions and not section_a and not today_milestones:
-        lines.append("本日、主人待ち・今日のマイルストーンはともにありません。")
+
+    # 【期限】——直近7日の milestone と、期日の付いた未完了タスク。
+    today_milestones = [m for m in milestones if str(m["date"]) == today]
+    due_tasks = [t for t in section_b if str(t.get("due") or "")[:10]]
+    if milestones or due_tasks:
+        # 節目と期日つきタスクを日付順に1本へ混ぜ、近いものから6件まで。
+        # （v1 は出力を2件までに絞っていたが、ここは `--generate` が読む資料でもあるので
+        #  「今日やるとよいこと」を選べる程度には残す）
+        deadlines = [(str(m["date"]), "", str(m["title"])) for m in milestones]
+        deadlines += [(str(t["due"])[:10], str(t["id"]), str(t["title"])) for t in due_tasks]
+        lines.append("")
+        lines.append("【期限】")
+        for when, tid, title in sorted(deadlines)[:6]:
+            mark = "本日" if when == today else when
+            head = f"{mark} {tid} " if tid else f"{mark} "
+            lines.append(f"- {head}{_clip(title, 50)}")
+
+    if not today_events and not today_milestones and not open_decisions and not section_a:
+        lines.append("")
+        lines.append("本日ご対応いただくものはありません。")
     return "\n".join(lines)
 
 
@@ -343,12 +483,74 @@ def _format_decision_message(decision_id: str, detail: dict[str, object], days: 
     return "\n".join(lines)
 
 
+#: `--generate` に渡す指示。v1 `apps/slack-relay/brief-prompt.txt` の**規則の部分**を移した
+#: （PowerShell と資料の組み立ては移さない——資料は `format_mechanical_brief` が作る）。
+#:
+#: ⚠ 2026-09-07 に書き直した。それまでは「6行程度、絵文字は使わない」の1文だけで、
+#: 見出しも書いてよいことの線引きも渡していなかった——結果、主人が3か月読んできた
+#: 【本日の予定】【昨夜の作業】…の形が地の文4行に潰れて届いていた。v1 が持っていた
+#: **書いてはいけないこと**（固有名詞・カレンダーの件名をそのまま写す等）も一緒に
+#: 落ちていたので、同時に戻している。
+_BRIEF_GENERATE_RULES = """あなたはAI執事です。主人が朝食をとりながら読む Slack 通知を1通作ります。
+
+## 出力フォーマット（プレーンテキスト・20行以内・絵文字は使わない）
+
+おはようございます。<M月D日（曜）>の状況です。
+
+【本日の予定】
+・<HH:MM–HH:MM> <用件を10字以内で・抽象化して> <場所があれば〔学内〕等>
+（資料の予定が空で「次の予定」があるなら、それを1行書く。
+ 例:「本日の予定はありません。明日13時から打ち合わせ〔学内〕です。」）
+
+【昨夜の作業】
+・<やったこと> ✓ もしくは <どこまで進んだか>
+（資料に無ければ「昨夜の自動作業はありません」。
+ **「どこまで」は資料の言葉をそのまま使い、理由を言い換えない**——
+ 「対象の月が無い」を「手が回らなかった」と書くのは事実の改変）
+
+【忘れずに】
+・<内容。20字を超えるなら要点だけ>
+（資料に控えが無ければこの見出しごと省く。急かさない。責めない）
+
+【ご判断ください】
+・<ID> <件名を30字以内で> → 推奨: <推奨案を15字以内で>
+（0件なら「ありません」。滞留3日以上は行頭に ! を付ける）
+
+【今日やるとよいこと】
+1. <タスク名> — <なぜ今日か 15字以内>
+（多くて3件。資料の期限と推奨から選ぶ。選べる材料が無ければこの見出しごと省く）
+
+【期限】
+・<件名> あと<N>日
+（近い順に2件まで。無ければ省略）
+
+## 書いてはいけないこと
+
+- 個人名・所属・大学名・PC名・絶対パス・URL・トークン
+- 固有名詞（誌名・製品名・サービス名・会社名・イベント名）。通称に置き換えるか書かない
+- カレンダーの件名をそのまま写すこと。予定は「時刻＋抽象化した用件」に置き換える
+  - 悪い例: 「15:00-18:00 実機（人型ロボット）の受け取り〔研究室〕」
+  - 良い例: 「15:00-18:00 機材の受け取り〔学内〕」
+  - 機微なもの（通院・金融・家族の事情）は「私用」とだけ書く
+- 推測。資料に無いことは書かない。事実を足さない・数字を変えない
+- 道具は使わない（ファイルを読まない・検索しない）。読んで、考えて、本文を出力するだけ
+
+## 原則
+
+- 報告事項がゼロでも必ず本文を作る。通知が来ない日＝故障、と主人が判断できるようにするため
+- 資料に予定があるなら、必ず【本日の予定】に出す。「予定はありません」と書いてよいのは
+  資料の予定が空のときだけ
+- 朝食中に読める長さにする。迷ったら短くする
+- 本文だけを出力する（前置き・後書き・コードブロックの囲みを付けない）
+"""
+
+
 def _build_generate_prompt(mechanical: str) -> str:
     return (
-        "以下は今日の状況を DB から機械的に組んだ下書きです。この内容だけをもとに、"
-        "Slack に送る短い日本語のブリーフィングを書いてください。"
-        "事実を足さない・数字を変えない・道具は使わない。6行程度、絵文字は使わない。"
-        "本文だけを出力してください（前置き・後書きは不要）。\n\n---\n" + mechanical
+        _BRIEF_GENERATE_RULES
+        + "\n===== ここから資料（読み取り専用。ここに無いことは書かない） =====\n"
+        + mechanical
+        + "\n===== ここまで資料 =====\n"
     )
 
 
@@ -430,7 +632,7 @@ def brief(
     home = Path(home)
     conn = db.connect(home)
     try:
-        data = render_mod.active_data(conn)
+        data = brief_data(conn, home)
         open_decisions = list(data["open_decisions"])  # type: ignore[assignment]
         mechanical = format_mechanical_brief(data)
         summary_text = mechanical

@@ -254,7 +254,7 @@ def test_mechanical_brief_works_with_claude_absent(
     assert result["generated"] is False
     assert decision_id in result["decisions"]
     assert "機械組みの確認" in result["decision_texts"][decision_id]
-    assert "主人待ち" in result["text"]
+    assert "【ご判断ください】" in result["text"]
 
 
 def test_generate_falls_back_to_mechanical_when_claude_missing(
@@ -270,7 +270,7 @@ def test_generate_falls_back_to_mechanical_when_claude_missing(
     result = slack_mod.brief(home, generate=True, dry_run=True)
 
     assert result["generated"] is False
-    assert "主人待ち" in result["text"]
+    assert "【ご判断ください】" in result["text"]
     assert "claude が見つからない" in result["generate_note"]
 
 
@@ -695,3 +695,93 @@ def test_extension_registered_via_real_registry_contract(home: Path, monkeypatch
     check_result = slack_ext.check(home)
     assert isinstance(check_result, dict)
     assert "ok" in check_result and "reason" in check_result
+
+
+# --- 本日の予定を落とさない（主人のご指摘 2026-09-07） -------------------------------------
+
+
+def test_brief_shows_todays_calendar_events(
+    home: Path, conn, monkeypatch: pytest.MonkeyPatch, leak_terms
+):
+    """**予定がある日に「予定はありません」と言わない。**
+
+    2026-09-07 の朝、15:00 に予定が入っている日のブリーフィングが「本日は主人待ちの
+    判断・タスクともになく…」とだけ送られた。原因は `format_mechanical_brief` が
+    `secretary_event` を1行も読んでいなかったこと——`--generate` はその資料に予定が
+    無いので、正直に「予定はありません」と書いていた。**資料に入っていないものは
+    生成では取り戻せない。**
+    """
+    leak_terms([])
+    monkeypatch.setenv("MANOR_TODAY", "2026-09-07")
+    conn.execute(
+        "INSERT INTO secretary_event (start, \"end\", title, place, note, source, created_at)"
+        " VALUES (?, ?, ?, ?, '', 'ics', ?)",
+        ("2026-09-07T15:00:00", "2026-09-07T18:00:00", "機材の受け取り", "研究室", util.now()),
+    )
+    conn.commit()
+
+    result = slack_mod.brief(home, generate=False, dry_run=True)
+    text = str(result["text"])
+
+    assert "【本日の予定】" in text
+    assert "機材の受け取り" in text
+    assert "15:00–18:00" in text
+    assert "本日の予定はありません" not in text
+
+
+def test_brief_points_at_the_next_event_when_today_is_empty(
+    home: Path, conn, monkeypatch: pytest.MonkeyPatch, leak_terms
+):
+    """今日が空でも、明日を知らないままにしない（v1 `brief-prompt.txt` の規則）。"""
+    leak_terms([])
+    monkeypatch.setenv("MANOR_TODAY", "2026-09-07")
+    conn.execute(
+        "INSERT INTO secretary_event (start, \"end\", title, place, note, source, created_at)"
+        " VALUES (?, NULL, ?, '', '', 'ics', ?)",
+        ("2026-09-08T21:00:00", "定例の打ち合わせ", util.now()),
+    )
+    conn.commit()
+
+    text = str(slack_mod.brief(home, generate=False, dry_run=True)["text"])
+
+    assert "本日の予定はありません" in text
+    assert "定例の打ち合わせ" in text
+    assert "2026-09-08" in text
+
+
+def test_brief_reports_last_nights_shift(
+    home: Path, monkeypatch: pytest.MonkeyPatch, leak_terms
+):
+    """【昨夜の作業】は夜勤の作業報告の「見出し＋どこまで」から組む。"""
+    leak_terms([])
+    monkeypatch.setenv("MANOR_TODAY", "2026-09-07")
+    reports = Path(home) / "night" / "reports"
+    reports.mkdir(parents=True, exist_ok=True)
+    (reports / "2026-09-07.md").write_text(
+        "# 夜勤の作業報告 2026-09-07\n\n"
+        "## N1 見張り\n\n- **背景**: 定例\n- **どこまで**: 保留。対象が無い\n\n"
+        "## N3 数える\n\n- **どこまで**: 完了\n",
+        encoding="utf-8",
+    )
+
+    text = str(slack_mod.brief(home, generate=False, dry_run=True)["text"])
+
+    assert "【昨夜の作業】" in text
+    assert "N1 見張り — 保留。対象が無い" in text
+    assert "N3 数える — 完了" in text
+    assert "昨夜の自動作業はありません" not in text
+
+
+def test_brief_generate_prompt_carries_the_format_rules(leak_terms):
+    """`--generate` に渡す指示が、見出しと「書いてはいけないこと」を含んでいること。
+
+    2026-09-07 まではここが「6行程度」の1文だけで、主人が3か月読んできた見出しが
+    地の文に潰れていた。v1 が持っていた privacy の規則も一緒に落ちていた。
+    """
+    prompt = slack_mod._build_generate_prompt("（資料）")
+
+    for heading in ("【本日の予定】", "【昨夜の作業】", "【ご判断ください】", "【期限】"):
+        assert heading in prompt
+    assert "カレンダーの件名をそのまま写すこと" in prompt
+    assert "資料に無いことは書かない" in prompt
+    assert "（資料）" in prompt
