@@ -452,6 +452,34 @@ boot();
 
   function submit() {
     var text = (input.value || '').trim();
+  // --- 声をこの端末で鳴らすか（2026-09-07・主人のご指摘） -------------------------
+  //
+  // サーバ側の `voice._play` は **サーバ機の PowerShell / afplay** を叩く。主人がスマホ
+  // から話していると、声は留守の PC から出て手元では何も聞こえない——小窓をサーバ機に
+  // 開いてしまうのと同じ形の不具合。指が粗い／画面が狭い端末では、サーバに鳴らさせず
+  // `audio_id` を貰ってこのページで鳴らす。
+  //
+  // PC は従来どおりサーバ側で鳴らす（据え置き。既に動いているものを変えない）。
+  var PLAY_HERE = (function () {
+    try {
+      var coarse = window.matchMedia && window.matchMedia('(pointer: coarse)').matches;
+      return !!coarse || (window.innerWidth || 0) < 768;
+    } catch (e) { return false; }
+  })();
+
+  var voiceEl = null;
+  function playVoice(audioId) {
+    if (!PLAY_HERE || !audioId) { return; }
+    try {
+      if (!voiceEl) { voiceEl = new Audio(); }
+      voiceEl.src = '/api/v1/face/voice/' + encodeURIComponent(audioId) + '.wav';
+      // 送信ボタンという主人の操作から続く再生なので、自動再生の制限には当たらない。
+      // それでも拒まれることはある（省電力・消音）ので、黙って諦める——文字は出ている。
+      var played = voiceEl.play();
+      if (played && played.catch) { played.catch(function () {}); }
+    } catch (e) { /* 声は落ちてよい。会話は止めない */ }
+  }
+
     if (!text || busy) { return; }
     input.value = '';
     say('you', text);
@@ -464,7 +492,7 @@ boot();
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       // ADR-011 D11: 返事は窓の担当の声で話す。`agent` はページ冒頭で query string から
       // 採っている（?agent=。既定は butler）ので、そのまま乗せるだけでよい。
-      body: JSON.stringify({ text: text, history: sendHistory, agent: agent })
+      body: JSON.stringify({ text: text, history: sendHistory, agent: agent, play_here: PLAY_HERE })
     })
       .then(function (r) { return r.ok ? r.json() : Promise.reject('HTTP ' + r.status); })
       .then(function (d) {
@@ -476,6 +504,7 @@ boot();
           history.push({ role: 'assistant', content: d.reply || '' });
           while (history.length > 6) { history.shift(); }
         }
+        playVoice(d.audio_id);
         busy = false;
         showState(d);
       })

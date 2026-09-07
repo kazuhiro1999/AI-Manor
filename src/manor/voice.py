@@ -621,9 +621,19 @@ def speak(home: Path, text: str, *, agent: str | None = None) -> bool:
     return bool(speak_detail(home, text, agent=agent)["ok"])
 
 
-def speak_detail(home: Path, text: str, *, agent: str | None = None) -> dict[str, object]:
-    """`speak()` の詳細版。戻り値: `ok` / `reason`（1行。空文字は成功） / `cached` / `wav`。
+def speak_detail(
+    home: Path, text: str, *, agent: str | None = None, play: bool = True
+) -> dict[str, object]:
+    """`speak()` の詳細版。戻り値: `ok` / `reason`（1行。空文字は成功） / `cached` / `wav`
+    / `audio_id`（`wav` の名前から拡張子を除いたもの。ブラウザへ渡す鍵）。
     `agent` の解決は `_speaker_for`（D9）——語彙外・値が読めない担当は既定へ倒す。
+
+    `play=False` は**合成して置くだけ**で、この機械のスピーカーからは鳴らさない
+    （2026-09-07）。`_play` はサーバ機の PowerShell / afplay を叩くので、主人が
+    スマホから話していると**声は留守の PC から出て、手元では何も聞こえない**
+    ——小窓をサーバ機に開いてしまうのと同じ形の不具合。ブラウザが自分で鳴らせる
+    ときは `play=False` で合成だけさせ、`audio_id` で `.wav` を取りに来てもらう。
+    口の予定表（D6）は `play` に関わらず公開する——鳴らすのが誰であれ口は動く。
     """
     home = Path(home)
     try:
@@ -646,12 +656,18 @@ def speak_detail(home: Path, text: str, *, agent: str | None = None) -> dict[str
             # 経路なので、ここでしか公開できない）。無ければ黙って諦める——口パクは
             # 付け足しであって、無くても再生は止めない。
             _publish_cached_mouth(home, text, speaker)
+            if not play:
+                return {
+                    "ok": True, "reason": "", "cached": True,
+                    "wav": str(wav_path), "audio_id": wav_path.stem,
+                }
             played = _play(wav_path)
             return {
                 "ok": played,
                 "reason": "" if played else "再生できませんでした",
                 "cached": True,
                 "wav": str(wav_path),
+                "audio_id": wav_path.stem,
             }
 
         started_by_us = False
@@ -677,15 +693,22 @@ def speak_detail(home: Path, text: str, *, agent: str | None = None) -> dict[str
         cues = outcome.get("cues")
         if isinstance(cues, list):
             _publish_mouth(home, cues)
-        played = _play(Path(str(outcome["wav"])))
+        wav_out = Path(str(outcome["wav"]))
+        if not play:
+            return {
+                "ok": True, "reason": "", "cached": False,
+                "wav": str(wav_out), "audio_id": wav_out.stem,
+            }
+        played = _play(wav_out)
         return {
             "ok": played,
             "reason": "" if played else "再生できませんでした",
             "cached": False,
             "wav": str(outcome["wav"]),
+            "audio_id": wav_out.stem,
         }
     except Exception as exc:  # noqa: BLE001 - 声は落ちてよいが、呼び出し元は落とさない
-        return {"ok": False, "reason": f"予期しないエラー: {exc}", "cached": False, "wav": None}
+        return {"ok": False, "reason": f"予期しないエラー: {exc}", "cached": False, "wav": None, "audio_id": ""}
 
 
 # --- warm() — 決まり文句の作り置き（D11） ----------------------------------------------------
@@ -970,3 +993,17 @@ def register(subparsers: "argparse._SubParsersAction") -> None:
     e = engine_sub.add_parser("status")
     e.add_argument("--json", action="store_true")
     e.set_defaults(func=_cmd_engine_status, needs_db=False)
+
+
+def cached_wav_by_id(home: Path, audio_id: str) -> Path | None:
+    """`audio_id`（`speak_detail` が返す鍵＝sha256 の16進64桁）から `.wav` を引く。
+
+    ブラウザへ声を渡すための口（2026-09-07）。**16進64桁だけを受ける**——`..` や
+    区切り文字を弾き、`cache_dir` の外へは決して出ない。鍵は本文の hash なので、
+    URL に載っても本文そのものは漏れない。
+    """
+    audio_id = (audio_id or "").strip().lower()
+    if len(audio_id) != 64 or any(c not in "0123456789abcdef" for c in audio_id):
+        return None
+    path = cache_dir(Path(home)) / f"{audio_id}.wav"
+    return path if path.is_file() else None

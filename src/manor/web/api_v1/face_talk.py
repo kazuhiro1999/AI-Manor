@@ -14,10 +14,11 @@
 
 from __future__ import annotations
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
-from ... import talk_session
+from ... import talk_session, voice
 from .._common import WebContext, require_writable
 
 
@@ -40,6 +41,11 @@ class TalkAskRequest(BaseModel):
     #: 小窓の担当（ADR-011 D11）。窓は自分の `?agent=` を知っているので、それをそのまま
     #: 乗せて返す契約——省略・語彙外は `voice._speaker_for` が既定へ倒す（ここでは検査しない）。
     agent: str = "butler"
+    #: **呼んだ側（ブラウザ）が自分で声を鳴らすか**（2026-09-07）。`True` なら
+    #: サーバ機のスピーカーからは出さず、`audio_id` を返すだけにする——スマホから
+    #: 話しているとき、`voice._play` はサーバ機で鳴らすので手元では無音だった。
+    #: 既定は `False`＝従来どおり（古い窓・CLI を壊さない）。
+    play_here: bool = False
 
 
 def register(app: FastAPI, ctx: WebContext) -> None:
@@ -67,7 +73,21 @@ def register(app: FastAPI, ctx: WebContext) -> None:
         """
         require_writable(ctx)
         history = [t.model_dump() for t in body.history]
-        return talk_session.ask(ctx.home, body.text, history, agent=body.agent)
+        return talk_session.ask(
+            ctx.home, body.text, history, agent=body.agent, play_here=body.play_here
+        )
+
+    @app.get("/api/v1/face/voice/{audio_id}.wav")
+    def talk_voice(audio_id: str) -> FileResponse:
+        """合成済みの `.wav` を渡す（2026-09-07）。**鍵は本文の sha256**——16進64桁
+        以外は `voice.cached_wav_by_id` が弾き、キャッシュの外へは出ない。本文そのものは
+        URL に載らない。読み取りだけなので `require_writable` は掛けない
+        （`/api/v1/…` なので認証の内側にはある）。
+        """
+        path = voice.cached_wav_by_id(ctx.home, audio_id)
+        if path is None:
+            raise HTTPException(status_code=404, detail="音声が見つかりません")
+        return FileResponse(path, media_type="audio/wav")
 
     @app.post("/api/v1/face/talk/close")
     def talk_close() -> dict[str, object]:

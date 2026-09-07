@@ -61,9 +61,21 @@ def _mock_failure(monkeypatch: pytest.MonkeyPatch, exc: Exception | None = None)
 
 
 def _mute_voice(monkeypatch: pytest.MonkeyPatch) -> Mock:
+    """`voice.speak` を塞ぐ（あいさつ・上限の通知はこちらを通る）。"""
     speak_mock = Mock(return_value=True)
     monkeypatch.setattr(talk_session.voice, "speak", speak_mock)
     return speak_mock
+
+
+def _mute_voice_detail(monkeypatch: pytest.MonkeyPatch) -> Mock:
+    """`voice.speak_detail` を塞ぐ。**返事はこちらを通る**（2026-09-07）——
+    ブラウザが自分で鳴らせるように `play` と `audio_id` を扱う必要があり、
+    `speak`（真偽だけ）では足りなくなった。
+    """
+    mock = Mock(return_value={"ok": True, "reason": "", "cached": True, "wav": "x.wav",
+                              "audio_id": "a" * 64})
+    monkeypatch.setattr(talk_session.voice, "speak_detail", mock)
+    return mock
 
 
 # --- state（D17。残り回数を隠さない） ---------------------------------------------------------
@@ -212,7 +224,8 @@ def test_timeout_is_a_failure_and_does_not_speak(home: Path, monkeypatch: pytest
 def test_success_speaks_once_and_records_a_run_row(home: Path, conn, monkeypatch: pytest.MonkeyPatch) -> None:
     _fix_clock(monkeypatch)
     _mock_success(monkeypatch, reply="かしこまりました、主人。")
-    speak_mock = _mute_voice(monkeypatch)
+    _mute_voice(monkeypatch)
+    speak_mock = _mute_voice_detail(monkeypatch)
 
     result = talk_session.ask(home, "調子はどうですか")
 
@@ -220,7 +233,7 @@ def test_success_speaks_once_and_records_a_run_row(home: Path, conn, monkeypatch
     assert result["reply"] == "かしこまりました、主人。"
     assert result["used"] == 1
     assert result["remaining"] == talk_session.DEFAULT_LIMIT - 1
-    speak_mock.assert_called_once_with(home, "かしこまりました、主人。", agent=None)
+    speak_mock.assert_called_once_with(home, "かしこまりました、主人。", agent=None, play=True)
 
     rows = [dict(r) for r in conn.execute("SELECT * FROM run WHERE kind = 'talk'").fetchall()]
     assert len(rows) == 1
@@ -599,21 +612,23 @@ def test_now_line_drops_minutes(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_ask_speaks_with_the_passed_agent(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     _fix_clock(monkeypatch)
     _mock_success(monkeypatch, reply="かしこまりました。")
-    speak_mock = _mute_voice(monkeypatch)
+    _mute_voice(monkeypatch)
+    speak_mock = _mute_voice_detail(monkeypatch)
 
     talk_session.ask(home, "在庫を確認して", agent="housekeeper")
 
-    speak_mock.assert_called_once_with(home, "かしこまりました。", agent="housekeeper")
+    speak_mock.assert_called_once_with(home, "かしこまりました。", agent="housekeeper", play=True)
 
 
 def test_ask_without_agent_passes_none_through(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     _fix_clock(monkeypatch)
     _mock_success(monkeypatch, reply="かしこまりました。")
-    speak_mock = _mute_voice(monkeypatch)
+    _mute_voice(monkeypatch)
+    speak_mock = _mute_voice_detail(monkeypatch)
 
     talk_session.ask(home, "こんにちは")
 
-    speak_mock.assert_called_once_with(home, "かしこまりました。", agent=None)
+    speak_mock.assert_called_once_with(home, "かしこまりました。", agent=None, play=True)
 
 
 def test_refusal_message_is_also_spoken_with_the_passed_agent(

@@ -110,7 +110,8 @@ def test_post_talk_ask_shape_on_success(home: Path, monkeypatch: pytest.MonkeyPa
     res = client.post("/api/v1/face/talk", json={"text": "こんにちは", "history": []})
     assert res.status_code == 200
     body = res.json()
-    assert set(body) == {"ok", "reply", "seconds", "remaining", "used", "limit"}
+    # audio_id（2026-09-07）: ブラウザが自分で声を鳴らすための鍵。
+    assert set(body) == {"ok", "reply", "seconds", "remaining", "used", "limit", "audio_id"}
     assert body["ok"] is True
     assert body["reply"] == "かしこまりました。"
     assert body["used"] == 1
@@ -234,3 +235,39 @@ def test_is_guarded_path_covers_all_four_routes() -> None:
     ):
         assert web_app_mod._is_guarded_path(path) is True
         assert path not in web_app_mod._PUBLIC_API_PATHS
+
+
+# --- スマホでも声が聞こえる（主人のご指摘 2026-09-07） -----------------------------------
+
+
+def test_ask_with_play_here_does_not_play_on_the_server(
+    home: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`play_here=True` なら**サーバ機のスピーカーからは鳴らさない**。
+
+    `voice._play` は PowerShell / afplay を叩く——主人がスマホから話していると、
+    声は留守の PC から出て手元では無音だった（小窓をサーバ機に開いてしまうのと同じ形）。
+    """
+    calls: list[bool] = []
+
+    def fake_speak_detail(_home, _text, *, agent=None, play=True):
+        calls.append(play)
+        return {"ok": True, "reason": "", "cached": True, "wav": "x.wav", "audio_id": "a" * 64}
+
+    _mock_success(monkeypatch)
+    monkeypatch.setattr(talk_session.voice, "speak_detail", fake_speak_detail)
+
+    talk_session.ask(home, "在庫は足りていますか", [], agent="housekeeper", play_here=True)
+    assert calls == [False]  # play=False で呼ばれる＝サーバでは鳴らさない
+
+    calls.clear()
+    talk_session.ask(home, "在庫は足りていますか", [], agent="housekeeper")
+    assert calls == [True]  # 既定は従来どおり
+
+
+def test_voice_endpoint_rejects_anything_but_a_64_hex_key(home: Path) -> None:
+    """鍵は sha256 の16進64桁だけ。`..` や区切りでキャッシュの外へ出さない。"""
+    from manor import voice as voice_mod
+
+    for bad in ["../../etc/passwd", "..", "abc", "", "g" * 64, "a" * 63, "A" * 64 + "/x"]:
+        assert voice_mod.cached_wav_by_id(home, bad) is None

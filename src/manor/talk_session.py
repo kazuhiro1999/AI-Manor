@@ -649,6 +649,7 @@ def ask(
     now: datetime | None = None,
     claude_bin: str | None = None,
     timeout: float = DEFAULT_TIMEOUT_SEC,
+    play_here: bool = False,
 ) -> dict[str, Any]:
     """1往復。**同期で待つ**（D18）。manor のワークスペースで起こす（D21）——`manor …`
     コマンド（`Bash(manor:*)` 等）と `mcp__*`・`Read`/`Glob`/`Grep` を事前承認する
@@ -758,10 +759,15 @@ def ask(
     if conn is not None:
         conn.close()
 
-    voice.speak(home, reply, agent=agent)
+    # `play_here=True` は「呼んだ側（ブラウザ）が自分で鳴らす」の意。サーバ機の
+    # スピーカーからは出さず、鍵（`audio_id`）だけ返す（2026-09-07・主人のご指摘
+    # 「スマホから話すと声が聞こえない」——`_play` はサーバ機で鳴らすので、
+    # 手元では無音だった。小窓をサーバ機に開いてしまうのと同じ形）。
+    spoken = voice.speak_detail(home, reply, agent=agent, play=not play_here)
     return {
         "ok": True, "reply": reply, "seconds": seconds,
         "remaining": remaining, "used": used, "limit": limit,
+        "audio_id": str(spoken.get("audio_id") or ""),
     }
 
 
