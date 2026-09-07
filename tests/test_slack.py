@@ -775,7 +775,7 @@ def test_brief_reports_last_nights_shift(
 def test_brief_generate_prompt_carries_the_format_rules(leak_terms):
     """`--generate` に渡す指示が、見出しと「書いてはいけないこと」を含んでいること。
 
-    2026-09-07 まではここが「6行程度」の1文だけで、主人が3か月読んできた見出しが
+    2026-09-07 まではここが「6行程度」の1文だけで、v1 が届けていた見出しが
     地の文に潰れていた。v1 が持っていた privacy の規則も一緒に落ちていた。
     """
     prompt = slack_mod._build_generate_prompt("（資料）")

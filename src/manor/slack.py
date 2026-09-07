@@ -391,7 +391,7 @@ def format_mechanical_brief(data: dict[str, object]) -> str:
     """「まとめ」の1通。`brief_data` が集めた値だけから組む（`--generate` 無しの既定。
     D10: `claude` が壊れていても予定と要対応は送れる）。**ここは整形だけ。**
 
-    見出しは v1 `brief-prompt.txt` の並びに合わせてある——主人が3か月読んできた形を
+    見出しは v1 `brief-prompt.txt` の並びに合わせてある——v1 が届けていた形を
     変えない。open decision の詳細（推奨・risk）はここには出さない——decision ごとの
     個別の通（`_format_decision_message`）が担当する。
     """
@@ -487,7 +487,7 @@ def _format_decision_message(decision_id: str, detail: dict[str, object], days: 
 #: （PowerShell と資料の組み立ては移さない——資料は `format_mechanical_brief` が作る）。
 #:
 #: ⚠ 2026-09-07 に書き直した。それまでは「6行程度、絵文字は使わない」の1文だけで、
-#: 見出しも書いてよいことの線引きも渡していなかった——結果、主人が3か月読んできた
+#: 見出しも書いてよいことの線引きも渡していなかった——結果、v1 が届けていた
 #: 【本日の予定】【昨夜の作業】…の形が地の文4行に潰れて届いていた。v1 が持っていた
 #: **書いてはいけないこと**（固有名詞・カレンダーの件名をそのまま写す等）も一緒に
 #: 落ちていたので、同時に戻している。
