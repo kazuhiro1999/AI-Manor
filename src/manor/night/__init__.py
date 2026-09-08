@@ -36,6 +36,7 @@ def register(subparsers: "argparse._SubParsersAction") -> None:
     _add_install(sub)
     _add_uninstall(sub)
     _add_report(sub)
+    _add_review(sub)
 
 
 def _add_run(sub: "argparse._SubParsersAction") -> None:
@@ -107,6 +108,25 @@ def _cmd_status(args: "argparse.Namespace") -> int:
     else:
         print(runner.format_status(data))
     return 0
+
+
+def _add_review(sub: "argparse._SubParsersAction") -> None:
+    p = sub.add_parser("review", help=i18n.t("cli.night.review.help"))
+    p.add_argument("--date", default=None, help=i18n.t("cli.night.review.date.help"))
+    p.add_argument("--dry-run", action="store_true", dest="dry_run", help=i18n.t("cli.night.review.dry_run.help"))
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=_cmd_review, is_write=True, needs_db=True)
+
+
+def _cmd_review(conn, home, args) -> object:
+    """朝の点検（2026-09-08・主人のご要望）。判断は `night/review.py` に1箇所だけ置く
+    ——`manor slack morning` も同じ関数を呼ぶ。"""
+    from . import review as review_mod
+
+    result = review_mod.run(conn, home, date=args.date, record=not args.dry_run)
+    if args.json:
+        return result
+    return runner.format_review(result)
 
 
 def _add_install(sub: "argparse._SubParsersAction") -> None:

@@ -14,10 +14,11 @@
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 
 from .. import i18n
-from . import _add_install, _add_report, _add_run, _add_status, _add_uninstall
+from . import _add_install, _add_report, _add_review, _add_run, _add_status, _add_uninstall
 
 
 def _build_arg_parser() -> argparse.ArgumentParser:
@@ -28,6 +29,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     _add_install(sub)
     _add_uninstall(sub)
     _add_report(sub)
+    _add_review(sub)
     return parser
 
 
@@ -42,6 +44,25 @@ def main(argv: list[str] | None = None) -> int:
     if func is None:
         parser.print_help()
         return 2
+    # ⚠ DB が要る口（`review`）は `cli.py` と同じ3引数で呼ぶ。**能力を起動口ごとに
+    # 変えない**——`--sleep-back` を片方だけに足して夜勤が丸ごと落ちかけた前例がある
+    # （2026-09-06・G15）。
+    if getattr(args, "needs_db", False):
+        from .. import db as db_mod
+        from .. import util as util_mod
+
+        home = util_mod.manor_home()
+        conn = db_mod.connect(home)
+        try:
+            out = func(conn, home, args)
+            if getattr(args, "is_write", False):
+                conn.commit()
+        finally:
+            conn.close()
+        if out is not None and not isinstance(out, int):
+            print(out if isinstance(out, str) else json.dumps(out, ensure_ascii=False, indent=2, default=str))
+            return 0
+        return int(out or 0)
     return int(func(args) or 0)
 
 

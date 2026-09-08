@@ -704,6 +704,17 @@ def _run_impl(
 
             _runlog_finish(run_conn, run_id, code=code, killed=killed, raw=raw, parsed=parsed, why=why)
 
+            # ⚠ 拒まれた道具を捨てない（2026-09-08・主人のご要望）。`claude` の結果 JSON は
+            # `permission_denials` を持っており、夜勤はそれを `parsed` として手にしていながら
+            # usage と cost だけを取って捨てていた。**「何ができなかったか」は報告の散文にしか
+            # 残らず、朝に機械が読めなかった。**
+            if isinstance(parsed, dict):
+                denials = parsed.get("permission_denials")
+                if isinstance(denials, list) and denials:
+                    result["permission_denials"] = denials
+                    names = sorted({str(d.get("tool_name") or "?") for d in denials if isinstance(d, dict)})
+                    log.write("WARN", f"道具を {len(denials)} 回拒まれました: {', '.join(names)}")
+
             if killed:
                 log.write(
                     "WARN", f"締切＋猶予 {grace_minutes} 分を過ぎても終わらないため打ち切ります"
@@ -1232,9 +1243,158 @@ def health(home: Path, *, within_hours: float = 24.0) -> dict[str, Any]:
     if isinstance(attempts, int) and attempts > 1:
         reasons.append(f"{attempts} 回目の起動で終わっています（一度落ちて再開しました）")
 
+    denials = info.get("permission_denials")
+    if isinstance(denials, list) and denials:
+        names = sorted({str(d.get("tool_name") or "?") for d in denials if isinstance(d, dict)})
+        reasons.append(
+            f"道具を {len(denials)} 回拒まれました（{', '.join(names)}）——"
+            "許可を足すか、指示のほうを変える必要があります"
+        )
+
     # 「done と言っているのに報告が無い」——status と成果物の食い違い
     if state == "done" and started[:10]:
         if not (reports_dir(home) / f"{started[:10]}.md").is_file():
             reasons.append(f"完了と記録されていますが、{started[:10]} の作業報告がありません")
 
     return {"ok": not reasons, "reasons": reasons, "last_run": info}
+
+
+#: 報告の中で「どこまで」を答える行。夜勤の書式（`tasks.md` が要求する4欄）に合わせる。
+_REPORT_HEADING_RE = re.compile(r"^##\s+(.+?)\s*$")
+_REPORT_STATE_RE = re.compile(r"^[-*]\s*\**\s*どこまで\s*\**\s*[:：]\s*(.+?)\s*$")
+
+#: 「片付かなかった」と読む語。⚠ **語で判定するのは脆い**（B188: 記号 `N` 決め打ちで
+#: 黙った前例がある）。夜勤の書式が変わったら効かなくなるので、`review()` は
+#: 「節は見つかったが状態行が1つも無い」も異常として返す。
+_PENDING_WORDS: tuple[str, ...] = ("保留", "できません", "できなかった", "断念", "見送り", "未完")
+
+
+def pending_items(home: Path, date: str) -> dict[str, Any]:
+    """その日の作業報告から「片付かなかった節」を拾う（2026-09-08・主人のご要望）。
+
+    主人は毎朝ご自分で夜勤の様子を執事にお尋ねになり、保留を処理させていました。
+    **その往復をなくすのがこの関数の目的**です。報告は `## <見出し>` ごとに
+    「どこまで」の1行を持つので、そこだけを読みます——散文全体を `claude` に
+    読ませる必要はありません（安く・確実に・毎朝回せる形にする）。
+    """
+    rep = report(home, date)
+    if not rep.get("found"):
+        return {"found": False, "date": date, "pending": [], "sections": 0, "states": 0}
+
+    pending: list[dict[str, str]] = []
+    heading = ""
+    sections = 0
+    states = 0
+    for line in str(rep.get("text") or "").splitlines():
+        m = _REPORT_HEADING_RE.match(line)
+        if m:
+            heading = m.group(1)
+            sections += 1
+            continue
+        sm = _REPORT_STATE_RE.match(line.strip())
+        if not sm:
+            continue
+        states += 1
+        state = sm.group(1)
+        if any(w in state for w in _PENDING_WORDS):
+            pending.append({"heading": heading, "state": state})
+    return {
+        "found": True,
+        "date": date,
+        "pending": pending,
+        "sections": sections,
+        "states": states,
+    }
+
+
+def _streak_path(home: Path) -> Path:
+    return night_dir(Path(home)) / "pending-streak.json"
+
+
+def review(home: Path, *, date: str | None = None, record: bool = True) -> dict[str, Any]:
+    """朝の点検。**走ったか**（`health`）と**何が片付かなかったか**（`pending_items`）を
+    1つの答えにし、**同じ保留が何晩続いているか**を数える。
+
+    連続を数えるのは、1晩の保留は普通のこと（時間切れ・順番待ち）だが、
+    **3晩続く保留は自力で外れない詰まり**だからです——そこで初めて主人にお伺いする
+    価値が出ます。台帳 E13「走ったが何もしていない、を別に見る」と同じ考えで、
+    **不在ではなく“変わらなさ”を信号にします**。
+
+    `record=False` なら数えるだけで書きません（下見用）。
+    """
+    home = Path(home)
+    target = date or util.today()
+    result: dict[str, Any] = {
+        "date": target,
+        "health": health(home),
+        "items": pending_items(home, target),
+    }
+
+    path = _streak_path(home)
+    try:
+        previous = json.loads(path.read_text(encoding="utf-8")) if path.is_file() else {}
+    except Exception:  # noqa: BLE001
+        previous = {}
+    if not isinstance(previous, dict):
+        previous = {}
+    old_streaks = previous.get("streaks") if isinstance(previous.get("streaks"), dict) else {}
+
+    # ⚠ **同じ朝に2度回しても増えない**（冪等）。この関数は `manor night review` と
+    # `manor slack morning` の両方から呼ばれるので、数え上げが呼び出し回数に依存すると
+    # 連続日数が水増しされ、2晩目の朝に「3晩続いた」と主人へ伺いを立ててしまう。
+    same_day = previous.get("date") == target
+    streaks: dict[str, int] = {}
+    for item in result["items"]["pending"]:
+        key = str(item["heading"])
+        seen = int(old_streaks.get(key, 0))
+        streaks[key] = seen if same_day else seen + 1
+        item["nights"] = streaks[key]
+
+    result["streaks"] = streaks
+    result["stuck"] = sorted(k for k, v in streaks.items() if v >= 3)
+
+    # 書式が変わって読めなくなったことに気づけるように（B188 の再発防止）
+    if result["items"]["found"] and result["items"]["sections"] and not result["items"]["states"]:
+        result["health"]["reasons"].append(
+            "作業報告に「どこまで」の行が1つもありません（報告の書式が変わった可能性）"
+        )
+        result["health"]["ok"] = False
+
+    if record and previous.get("date") != target:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            json.dumps({"date": target, "streaks": streaks}, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+    return result
+
+
+def format_review(result: dict[str, Any]) -> str:
+    """`manor night review` の人が読む形。**異常が先、保留が次**（走ったかのほうが大事）。"""
+    lines: list[str] = [f"朝の点検 {result.get('date')}"]
+    health_info = dict(result.get("health") or {})
+    reasons = list(health_info.get("reasons") or [])
+    if reasons:
+        for r in reasons:
+            lines.append(f"  注意: {r}")
+    else:
+        lines.append("  夜勤は正常に終わっています")
+
+    items = dict(result.get("items") or {})
+    pending = list(items.get("pending") or [])
+    if not items.get("found"):
+        lines.append("  作業報告がありません")
+    elif not pending:
+        lines.append("  片付かなかった件はありません")
+    else:
+        lines.append(f"  片付かなかった件: {len(pending)}")
+        for item in pending:
+            nights = item.get("nights")
+            tail = f"（{nights}晩連続）" if isinstance(nights, int) and nights > 1 else ""
+            lines.append(f"    - {item.get('heading')}{tail}: {item.get('state')}")
+    stuck = list(result.get("stuck") or [])
+    if stuck:
+        lines.append(f"  3晩以上そのまま: {', '.join(stuck)}")
+    for did in list(result.get("asked") or []):
+        lines.append(f"  {did} として主人にお伺いを立てました")
+    return "\n".join(lines)

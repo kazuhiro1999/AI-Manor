@@ -342,6 +342,8 @@ def brief_data(conn: sqlite3.Connection, home: Path) -> dict[str, object]:
     data["night"] = night_runner.report(Path(home), today)
     # 「報告があれば読む」だけでは、落ちた晩に気づけない（2026-09-08・主人のご質問）
     data["night_health"] = night_runner.health(Path(home))
+    # 何が片付かなかったか。**記録はしない**（数えるのは morning の点検の仕事）
+    data["night_pending"] = night_runner.review(Path(home), record=False)
     return data
 
 
@@ -430,6 +432,14 @@ def format_mechanical_brief(data: dict[str, object]) -> str:
         lines.extend(summary or ["- 夜勤は動きましたが、報告の見出しを読めませんでした"])
     elif not health.get("reasons"):
         lines.append("- 昨夜の自動作業はありません")
+    # ⚠ 1晩目は出さない——報告の要約（上）に既に「保留」と出ており、二重になる。
+    # ここで言う値打ちがあるのは「**続いている**」という事実だけ。
+    pending = list((dict(data.get("night_pending") or {}).get("items") or {}).get("pending") or [])
+    for item in pending:
+        nights = item.get("nights")
+        if not isinstance(nights, int) or nights < 2:
+            continue
+        lines.append(f"- {nights}晩続けて片付いていません: {item.get('heading')}")
 
     if reminders:
         lines.append("")
@@ -1732,6 +1742,23 @@ def _record_intake(
     )
 
 
+def _review_night(home: Path, *, dry_run: bool = False) -> dict[str, Any]:
+    """朝の点検を回し、3晩続いた保留があれば decision に積む。
+
+    ⚠ **同じ判断を CLI と2箇所に書かない**——`manor night review` はこの関数を呼ぶ。
+    """
+    from .night import review as night_review
+
+    conn = db.connect(home)
+    try:
+        result = night_review.run(conn, home, record=not dry_run)
+        if not dry_run:
+            conn.commit()
+        return result
+    finally:
+        conn.close()
+
+
 def morning(home: Path, *, generate: bool = True, dry_run: bool = False) -> dict[str, Any]:
     """朝の定例。**取り込んでから送る**（v1 `apps/slack-relay/morning.ps1` の移植）。
 
@@ -1756,6 +1783,15 @@ def morning(home: Path, *, generate: bool = True, dry_run: bool = False) -> dict
         steps["inbox"] = inbox(home, dry_run=dry_run)
     except Exception as exc:  # noqa: BLE001 — 取り込みの失敗で送信を止めない（v1 と同じ）
         steps["inbox"] = {"ok": False, "reason": str(exc)}
+
+    # 夜勤の点検を**送る前に**回す（2026-09-08・主人のご要望「毎朝わたしが聞いて処理
+    # している部分を自動化したい」）。3晩続いた保留はここで decision へ積まれ、
+    # 同じ朝の便にその伺いが載る——**主人が尋ねる前に、答えと問いが揃っている**形。
+    # 点検が転んでも送信は止めない（沈黙＝故障の合図を守る。inbox と同じ扱い）。
+    try:
+        steps["night_review"] = _review_night(home, dry_run=dry_run)
+    except Exception as exc:  # noqa: BLE001
+        steps["night_review"] = {"ok": False, "reason": str(exc)}
 
     steps["brief"] = brief(home, generate=generate, dry_run=dry_run)
     steps["ok"] = bool(steps["brief"].get("sent") or steps["brief"].get("dry_run"))
