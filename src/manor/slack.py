@@ -340,6 +340,8 @@ def brief_data(conn: sqlite3.Connection, home: Path) -> dict[str, object]:
     ]
     # 今朝 02:00 に回った夜勤の報告は、今日の日付で綴じられている。
     data["night"] = night_runner.report(Path(home), today)
+    # 「報告があれば読む」だけでは、落ちた晩に気づけない（2026-09-08・主人のご質問）
+    data["night_health"] = night_runner.health(Path(home))
     return data
 
 
@@ -403,6 +405,7 @@ def format_mechanical_brief(data: dict[str, object]) -> str:
     next_event = data.get("next_event")
     reminders = list(data.get("reminders") or [])  # type: ignore[arg-type]
     night = dict(data.get("night") or {})  # type: ignore[arg-type]
+    health = dict(data.get("night_health") or {})  # type: ignore[arg-type]
     today = util.today()
 
     lines: list[str] = [f"{today} の状況です。"]
@@ -419,10 +422,13 @@ def format_mechanical_brief(data: dict[str, object]) -> str:
 
     lines.append("")
     lines.append("【昨夜の作業】")
+    # 異常が先。報告の中身より「そもそも走ったか」のほうが大事（台帳 E1: 不在を信号にする）
+    for reason in list(health.get("reasons") or []):
+        lines.append(f"- 注意: {reason}")
     if night.get("found"):
         summary = _night_summary(str(night.get("text") or ""))
         lines.extend(summary or ["- 夜勤は動きましたが、報告の見出しを読めませんでした"])
-    else:
+    elif not health.get("reasons"):
         lines.append("- 昨夜の自動作業はありません")
 
     if reminders:

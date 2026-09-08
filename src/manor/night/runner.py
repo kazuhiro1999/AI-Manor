@@ -996,6 +996,17 @@ def _query_scheduled_task(task_name: str) -> dict[str, Any]:
     return {"platform": sys.platform, "registered": None, "detail": "このOSでは自動確認していません"}
 
 
+def _read_last_run(home: Path, *, dry_run: bool = False) -> dict[str, Any] | None:
+    """`last-run.json` を読む（壊れていたら None）。`status()` と `health()` の共通の口。"""
+    path = last_run_path(home, dry_run=dry_run)
+    if not path.is_file():
+        return None
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def status(home: Path, *, task_name: str = DEFAULT_TASK_NAME) -> dict[str, Any]:
     home = Path(home)
     lp = lock_path(home)
@@ -1011,20 +1022,12 @@ def status(home: Path, *, task_name: str = DEFAULT_TASK_NAME) -> dict[str, Any]:
             "age_minutes": round(age_min, 1),
         }
 
-    def _read(path: Path) -> dict[str, Any] | None:
-        if not path.is_file():
-            return None
-        try:
-            return json.loads(path.read_text(encoding="utf-8"))
-        except Exception:  # noqa: BLE001
-            return None
-
     # **`last_run` は本番だけ。** dry-run は別枠で見せる（S11）——混ぜると
     # 「昨夜ちゃんと走ったか」を答えられなくなる。
     return {
         "lock": lock_info,
-        "last_run": _read(last_run_path(home)),
-        "last_dry_run": _read(last_run_path(home, dry_run=True)),
+        "last_run": _read_last_run(home),
+        "last_dry_run": _read_last_run(home, dry_run=True),
         "scheduled": _query_scheduled_task(task_name),
     }
 
@@ -1179,3 +1182,59 @@ def report(home: Path, date: str | None = None) -> dict[str, Any]:
         }
     text = "利用できる日付:\n" + "\n".join(f"  {d}" for d in available)
     return {"found": False, "date": None, "text": text, "available": available}
+
+
+def health(home: Path, *, within_hours: float = 24.0) -> dict[str, Any]:
+    """昨夜ちゃんと走ったかを1つの答えにする（2026-09-08 新設）。
+
+    ⚠ **材料は最初からありました**——`last_run` は `status()` が返しており、その docstring は
+    「混ぜると**昨夜ちゃんと走ったか**を答えられなくなる」とまで書いています。
+    **朝の便が、それを一度も読んでいませんでした**（主人のご質問「夜間タスクのチェックは
+    朝に自動実行するようになってますか？」）。ブリーフィングの【昨夜の作業】は報告ファイルが
+    **あれば**読む形で、無い場合の1行（「昨夜の自動作業はありません」）は
+    **①起動しなかった ②起動したが報告を書く前に落ちた ③指示が空だった**を区別しません。
+    9/5 に夜勤がプロセスごと消えた晩、気づいたのは**翌々日の夜勤自身**でした。
+
+    台帳 E1（**不在のほうを信号にする**）と E13（**走ったが何もしていない**を別に見る）が
+    指していたのはこの形です。
+
+    ⚠ **所要時間の異常（E13 の②）は入れていません。** 「何秒なら異常か」の根拠がまだ無く、
+    根拠のない閾値は誤検出を生みます（B99「誤検出を出す検査は入れない」）。
+    **再燃条件**: 「正常なのに短く終わった晩」と「落ちて短く終わった晩」が
+    `last_run` の他の欄で見分けられないと分かったとき。
+    """
+    home = Path(home)
+    info = _read_last_run(home)
+    reasons: list[str] = []
+
+    if info is None:
+        return {"ok": False, "reasons": ["夜勤の記録がありません（起動していない可能性）"], "last_run": None}
+
+    started = str(info.get("started_at") or "")
+    try:
+        age_h = (datetime.now() - datetime.fromisoformat(started)).total_seconds() / 3600
+    except ValueError:
+        age_h = None
+    if age_h is None:
+        reasons.append("最後の実行の時刻を読めません")
+    elif age_h > within_hours:
+        reasons.append(f"昨夜は動いていません（最後の実行は {started[:16]}）")
+
+    state = str(info.get("status") or "")
+    if state and state != "done":
+        reasons.append(f"夜勤は `{state}` で終わっています")
+    if info.get("killed"):
+        reasons.append("締切で打ち切られました")
+    exit_code = info.get("exit_code")
+    if isinstance(exit_code, int) and exit_code != 0:
+        reasons.append(f"終了コードが {exit_code} です")
+    attempts = info.get("attempts")
+    if isinstance(attempts, int) and attempts > 1:
+        reasons.append(f"{attempts} 回目の起動で終わっています（一度落ちて再開しました）")
+
+    # 「done と言っているのに報告が無い」——status と成果物の食い違い
+    if state == "done" and started[:10]:
+        if not (reports_dir(home) / f"{started[:10]}.md").is_file():
+            reasons.append(f"完了と記録されていますが、{started[:10]} の作業報告がありません")
+
+    return {"ok": not reasons, "reasons": reasons, "last_run": info}
