@@ -424,6 +424,50 @@ def test_secretary_cli_full_flow(
     assert check_out["ok"] is True
 
 
+# --- agenda: 執事自身のプロジェクト（project.kind='執事'）の件は出さない（T26） -----------------
+
+
+def test_agenda_excludes_butler_project_milestone_and_task(
+    home_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    """主人の関心事を整理する場所なので、済のものに加え執事自身の件も出ない。
+
+    owner ではなく project.kind で判定すること（主人の仕事にも owner=butler の行がある）。
+    """
+    monkeypatch.setenv("MANOR_TODAY", "2026-09-02")
+    assert cli.main(["init"]) == 0
+    capsys.readouterr()
+
+    assert cli.main(["project", "add", "x1", "執事の実験", "--kind", "執事"]) == 0
+    capsys.readouterr()
+    assert cli.main(["project", "add", "p1", "主人の仕事"]) == 0
+    capsys.readouterr()
+
+    assert cli.main(["milestone", "add", "執事の節目", "--date", "2026-09-04", "--project", "x1"]) == 0
+    capsys.readouterr()
+    assert cli.main(["milestone", "add", "主人の節目", "--date", "2026-09-04", "--project", "p1"]) == 0
+    capsys.readouterr()
+
+    assert (
+        cli.main(
+            ["task", "add", "執事の課題", "--project", "x1", "--due", "2026-09-05",
+             "--owner", "master"]  # owner を master にしても kind='執事' なら隠れることの検算
+        )
+        == 0
+    )
+    capsys.readouterr()
+    assert cli.main(["task", "add", "主人の課題", "--project", "p1", "--due", "2026-09-05"]) == 0
+    capsys.readouterr()
+
+    assert cli.main(["sec", "agenda", "--days", "10", "--json"]) == 0
+    items = json.loads(capsys.readouterr().out)
+    titles = {it["title"] for it in items}
+    assert "主人の節目" in titles
+    assert "主人の課題" in titles
+    assert "執事の節目" not in titles
+    assert "執事の課題" not in titles
+
+
 # --- agenda（CLI テキスト）: 空の日は見出しに出ない ------------------------------------------
 
 

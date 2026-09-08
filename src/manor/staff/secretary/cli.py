@@ -13,6 +13,7 @@ from pathlib import Path
 
 from manor import graph
 from manor import i18n
+from manor import project as project_mod
 from manor import task as task_mod
 from manor import util
 from manor.errors import ManorError
@@ -232,14 +233,20 @@ def cmd_agenda(conn, home, args) -> object:
         ).fetchall()
     ]
     # core（milestone/task）は読むだけ。core の読み取り API を使い、直接 INSERT/UPDATE しない。
+    # ここは主人の関心事を整理する場所なので、済のものに加え執事自身の件も出さない
+    # （project.kind で判定。owner では判定しない。2026-09-08 主人のご指摘・T26）。
     milestones = [
         m
-        for m in graph.milestone_list(conn, include_done=False)
+        for m in graph.milestone_list(
+            conn, include_done=False, exclude_project_kind=project_mod.BUTLER_PROJECT_KIND
+        )
         if today_s <= str(m["date"]) <= end_s
     ]
     tasks = [
         t
-        for t in task_mod.list_tasks(conn, include_settled=False)
+        for t in task_mod.list_tasks(
+            conn, include_settled=False, exclude_project_kind=project_mod.BUTLER_PROJECT_KIND
+        )
         if t.get("due") and today_s <= str(t["due"])[:10] <= end_s
     ]
 

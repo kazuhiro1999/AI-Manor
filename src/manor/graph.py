@@ -200,6 +200,7 @@ def milestone_list(
     project_id: str | None = None,
     upcoming_days: int | None = None,
     include_done: bool = True,
+    exclude_project_kind: str | None = None,
 ) -> list[dict[str, object]]:
     """節目の一覧。
 
@@ -210,6 +211,11 @@ def milestone_list(
     素の SQL を書く3箇所の**合わせて8箇所すべてが渡し忘れていました**。
     既定を変えないのは、履歴として全部見たい場所（`manor milestone list`・
     プロジェクトの詳細）が現にあるためです。
+
+    `exclude_project_kind`: 渡すと、その `kind`（例: `執事`）を持つプロジェクトの節目を
+    除く。**主人の関心事の一覧（秘書の agenda 等）から執事自身の件を隠すため**
+    （2026-09-08 主人のご指摘・T26）。`owner` では判定しない——主人の仕事にも
+    `owner=butler` が付く行があるため、`project.kind` だけを見る。
     """
     sql = (
         "SELECT m.id, n.title, m.date, m.approximate, m.project_id, m.done_at"
@@ -224,6 +230,12 @@ def milestone_list(
     if upcoming_days is not None:
         sql += " AND date(m.date) BETWEEN date('now','localtime') AND date('now','localtime', ?)"
         params.append(f"+{upcoming_days} days")
+    if exclude_project_kind:
+        sql += (
+            " AND (m.project_id IS NULL OR m.project_id NOT IN"
+            " (SELECT id FROM project WHERE kind = ?))"
+        )
+        params.append(exclude_project_kind)
     sql += " ORDER BY m.date"
     return [dict(r) for r in conn.execute(sql, params).fetchall()]
 

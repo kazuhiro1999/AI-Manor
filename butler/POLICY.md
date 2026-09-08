@@ -68,7 +68,7 @@ evidence:       根拠（実行ログ・参照ファイル・出典）
 
 | 経路 | ①非公開データ | ②外部テキスト | ③外部送信 | いま |
 |---|:---:|:---:|:---:|---|
-| | | | | |
+| **夜勤**（`manor night run`） | ✅ `Read` で `home/` が読める | ✅ `WebSearch`/`WebFetch`（主人の裁定 D12・2026-09-09） | **塞いだ** | ③を `--disallowed-tools` で機構的に落として2つに保つ——`curl`/`wget`/`Invoke-WebRequest`/`Invoke-RestMethod`/`git push`/`git remote`。MCP は `--strict-mcp-config` で丸ごと無い |
 
 <!-- 新しい配線（コネクタ・チャンネル・自動化・道具の追加）を足すたびに、この表に1行足す。
      3つ揃うなら、足す前にどれか1つを落とす。 -->

@@ -50,10 +50,9 @@ def _days_left(value: object, today: date) -> int | None:
     return (d - today).days
 
 
-#: 執事自身のプロジェクト（v1 の X 系）を示す project.kind。常に関心順の最下部へ落とす
-#: （主人の裁定「3のプロジェクト別」）。project.kind は自由文だがこの1語だけは import_v1
-#: 側で固定して入れている。
-_BUTLER_PROJECT_KIND = "執事"
+#: 常に関心順の最下部へ落とす（主人の裁定「3のプロジェクト別」）。定数の定義は
+#: `project.BUTLER_PROJECT_KIND` に一本化（T26）。
+_BUTLER_PROJECT_KIND = project_mod.BUTLER_PROJECT_KIND
 
 
 def _project_interest(

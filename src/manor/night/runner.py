@@ -68,34 +68,59 @@ DEFAULT_MODEL = "sonnet"
 DEFAULT_MAX_TURNS = 80
 DEFAULT_TASK_NAME = "manor-night"
 
-#: 外部送信の道具は意図的に含めない（POLICY.md の lethal trifecta 判定器）。
-#: `--strict-mcp-config` と合わせ、mcp__* / WebFetch / WebSearch / SendMessage 等は
-#: そもそも道具立てに無い。
+#: 夜勤に持たせる道具。**主人の裁定（D11・D12・2026-09-09）で広げました**:
+#:
+#: > 夜間タスクも特にツールを制限する必要性はない。git push などの HG さえ不正であれば問題ない。（D11）
+#: > 夜間タスクも Web サーチなどの道具を使用可にする。（D12）
+#:
+#: ⚠ **それまでの設計は間違っていました。** `WebFetch` / `WebSearch` を外していたのは
+#: POLICY の lethal trifecta 判定器に沿った判断でしたが、`tasks.md` の N2①（外部の視点を
+#: 毎晩1件採り入れる）は**外部の URL を読む作業そのもの**で、道具立てと指示が
+#: 真正面から矛盾していました。**5晩ぶん（E1〜E25）は昼のセッションで書かれたもの**で、
+#: 夜勤は一度も自力で回せていません。2026-09-09 の夜勤が自分でそれに気づき、
+#: T39 / D12 として上げてきました。
 ALLOWED_TOOLS: list[str] = [
     "Read",
     "Glob",
     "Grep",
-    "Bash(uv run manor:*)",
-    "Bash(uv run --no-sync manor:*)",
-    "Bash(manor:*)",
-    "Bash(uv run pytest:*)",
-    "Bash(git status:*)",
-    "Bash(git diff:*)",
-    "Bash(git add:*)",
-    "Bash(git commit:*)",
+    "Bash",
     "Edit",
     "Write",
-]
-
-#: 何かの拍子に紛れ込んでいないかを試験で機械的に確かめるための禁句リスト。
-FORBIDDEN_TOOL_MARKERS: tuple[str, ...] = (
-    "mcp__",
     "WebFetch",
     "WebSearch",
+    "TodoWrite",
+]
+
+#: **本当に塞ぐもの**（`--disallowed-tools` に渡る。主人の裁定 D11「git push などの HG さえ
+#: 不正であれば問題ない」）。
+#:
+#: ⚠ **`--allowed-tools` は「これ以外を禁止」ではありません。** 2026-09-08 に対話セッションから
+#: 実測して「絞りが効いていない」と主人へご報告しましたが、**夜勤の実環境では効いていました**
+#: （2026-09-09 の `permission_denials` に `Bash`・`WebSearch`・`WebFetch` が実際に並んだ）。
+#: 起動元によって信頼状態が違い、対話セッションでの実測が夜勤の実態を表していなかった
+#: ——**測る場所を間違えると、結論ごと間違えます**。
+#:
+#: いずれにせよ**歯止めは「命じる」ではなく「渡さない」側に置く**のが筋なので、
+#: HG に当たるものは名指しで塞ぎます。
+DISALLOWED_TOOLS: list[str] = [
+    "Bash(git push:*)",
+    "Bash(git remote:*)",
+    "Bash(git reset --hard:*)",
+    "Bash(git rebase:*)",
+    "Bash(rm -rf:*)",
+    "Bash(curl:*)",
+    "Bash(wget:*)",
+    "Bash(Invoke-WebRequest:*)",
+    "Bash(Invoke-RestMethod:*)",
+]
+
+#: 何かの拍子に**許可の側**へ紛れ込んでいないかを試験で機械的に確かめるための禁句。
+#: ⚠ MCP は `--strict-mcp-config` で丸ごと落としているので、名前が現れること自体が異常。
+FORBIDDEN_TOOL_MARKERS: tuple[str, ...] = (
+    "mcp__",
     "SendMessage",
-    "Task",
     # git は add/commit まで許す（執事の裁定 2026-09-02。v1 の 1タスク1コミットを機能させる）。
-    # 外部送信・不可逆な git だけを塞ぐ。
+    # 不可逆な git と外部への送信は `DISALLOWED_TOOLS` で塞ぐ。
     "git push",
     "git remote",
     "git reset --hard",
@@ -361,6 +386,10 @@ def default_exec_argv(
         model,
         "--allowed-tools",
         *ALLOWED_TOOLS,
+        # **塞ぐ側を明示する**（主人の裁定 D11・2026-09-09）。`--allowed-tools` は
+        # 「これ以外を禁止」ではないので、HG に当たるものはここで名指しする。
+        "--disallowed-tools",
+        *DISALLOWED_TOOLS,
     ]
 
 

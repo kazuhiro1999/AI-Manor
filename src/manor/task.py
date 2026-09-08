@@ -512,7 +512,15 @@ def list_tasks(
     project: str | None = None,
     owner: str | None = None,
     include_settled: bool = False,
+    exclude_project_kind: str | None = None,
 ) -> list[dict[str, object]]:
+    """課題の一覧。
+
+    `exclude_project_kind`: 渡すと、その `kind`（例: `執事`）を持つプロジェクトの課題を
+    除く。**主人の関心事の一覧（秘書の agenda 等）から執事自身の件を隠すため**
+    （2026-09-08 主人のご指摘・T26）。`owner` では判定しない——主人の仕事にも
+    `owner=butler` が付く行があるため、`project.kind` だけを見る。
+    """
     sql = "SELECT t.*, n.title AS title FROM task t JOIN node n ON n.id = t.id WHERE 1=1"
     params: list[object] = []
     if status_filter:
@@ -530,6 +538,12 @@ def list_tasks(
     if owner:
         sql += " AND t.owner = ?"
         params.append(owner)
+    if exclude_project_kind:
+        sql += (
+            " AND (t.project_id IS NULL OR t.project_id NOT IN"
+            " (SELECT id FROM project WHERE kind = ?))"
+        )
+        params.append(exclude_project_kind)
     sql += " ORDER BY CAST(substr(t.id, 2) AS INTEGER)"
     return [dict(r) for r in conn.execute(sql, params).fetchall()]
 

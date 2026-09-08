@@ -119,12 +119,48 @@ def test_build_clock_block_resume_note_when_resumed():
 
 
 def test_default_exec_argv_has_no_external_send_tools():
+    """禁句が**許可の側**へ紛れ込んでいないこと。
+
+    ⚠ 2026-09-09 に意味が変わった。それまでは argv 全体を1本の文字列にして禁句を
+    探していたが、主人の裁定（D11）で `--disallowed-tools` を足したので、
+    **`git push` は塞ぐ側に「意図的に」現れる**。全体を見ると、正しく塞いだ日に赤くなる。
+    見るのは許可の側だけにし、塞ぐ側は次の試験で「入っていること」を確かめる。
+    """
     argv = runner.default_exec_argv()
-    joined = " ".join(argv)
+    allowed = argv[argv.index("--allowed-tools") + 1 : argv.index("--disallowed-tools")]
+    joined = " ".join(allowed)
     for marker in runner.FORBIDDEN_TOOL_MARKERS:
         assert marker not in joined, f"許可リストに紛れ込んでいます: {marker}"
     assert "--strict-mcp-config" in argv
     assert "--permission-mode" in argv and "dontAsk" in argv
+
+
+def test_default_exec_argv_blocks_the_human_gate_tools():
+    """HG に当たるものが**塞ぐ側に必ずある**こと（主人の裁定 D11・2026-09-09）。
+
+    > 夜間タスクも特にツールを制限する必要性はない。git push などの HG さえ不正であれば問題ない。
+
+    ⚠ **「命じてある」だけでは歯止めになりません。** `tasks.md` に「外部送信はしない」と
+    書いてあっても、道具が手元にあれば通ります（台帳 E9・B174 で執事自身が指摘した形）。
+    ここが空になった日は、その歯止めが文章だけに戻った日です。
+    """
+    argv = runner.default_exec_argv()
+    blocked = " ".join(argv[argv.index("--disallowed-tools") + 1 :])
+    for must in ("git push", "git reset --hard", "curl", "rm -rf"):
+        assert must in blocked, f"塞ぐ側から消えています: {must}"
+
+
+def test_night_can_reach_the_web_now():
+    """外部の視点（`tasks.md` N2①）を回すのに要る道具が手元にあること。
+
+    ⚠ 2026-09-09 の夜勤が「**手段が無い**」と報告して初めて分かった——毎晩やれと
+    命じていた仕事が、道具立てと真正面から矛盾していた（T39 → D12）。
+    主人の裁定「夜間タスクも Web サーチなどの道具を使用可にする」。
+    """
+    argv = runner.default_exec_argv()
+    allowed = argv[argv.index("--allowed-tools") + 1 : argv.index("--disallowed-tools")]
+    assert "WebSearch" in allowed
+    assert "WebFetch" in allowed
 
 
 def test_build_exec_argv_uses_exec_override_wholesale():

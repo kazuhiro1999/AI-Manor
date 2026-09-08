@@ -10,6 +10,13 @@ from .errors import ManorError
 VALID_STATUS = {"active", "paused", "done"}
 VALID_PRESET = {"careful", "standard", "fast"}
 
+#: 執事自身のプロジェクト（v1 の X 系）を示す project.kind。project.kind は自由文だが
+#: この1語だけは import_v1 側で固定して入れている。**owner では判定しない**——
+#: 主人の仕事にも owner=butler が付く行があるため。主人の関心事の一覧から執事自身の件を
+#: 隠す・関心順の最下部へ落とす、といった判定はすべてここを参照する（2026-09-08 主人の
+#: ご指摘・T26。同じ判定を複数箇所に書き直す事故が続いたための一本化）。
+BUTLER_PROJECT_KIND = "執事"
+
 
 def resolve(conn: sqlite3.Connection, ref: str) -> sqlite3.Row:
     """`code` か `id`（P で始まる）のどちらでも project 行を引く。"""
