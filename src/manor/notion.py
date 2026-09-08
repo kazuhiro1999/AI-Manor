@@ -81,7 +81,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-from . import db, decision as decision_mod, i18n, runlog, secrets as secrets_mod, slack as slack_mod, util
+from . import db, decision as decision_mod, i18n, project as project_mod, runlog, secrets as secrets_mod, slack as slack_mod, util
 from .errors import ManorError
 from .night import runner as night_runner
 
@@ -307,6 +307,7 @@ def _completed_tasks(conn: sqlite3.Connection, date: str) -> list[dict[str, obje
         "SELECT DISTINCT t.id, n.title AS title, t.owner AS owner FROM task_event ev"
         " JOIN task t ON t.id = ev.task_id JOIN node n ON n.id = t.id"
         " WHERE ev.to_status = 'done' AND date(ev.at) = ?"
+        "   AND COALESCE(t.owner, 'butler') <> 'master'"
         " ORDER BY CAST(substr(t.id, 2) AS INTEGER)",
         (date,),
     )
@@ -321,15 +322,25 @@ def _ruled_decisions(conn: sqlite3.Connection, date: str) -> list[dict[str, obje
 
 
 def _passed_milestones(conn: sqlite3.Connection, date: str) -> list[dict[str, object]]:
-    """その日が期日の milestone（＝その日に過ぎた）。`render.active_data` は「いまから
-    先7日」を見る前方参照のクエリで任意の過去日には使えないため、同じ書き方
-    （`milestone` を直接見る）を並行して持つ。
+    """その日が期日の milestone（＝その日に過ぎた）。**執事のプロジェクトのものだけ**。
+
+    `render.active_data` は「いまから先7日」を見る前方参照のクエリで任意の過去日には
+    使えないため、同じ書き方（`milestone` を直接見る）を並行して持つ。
+
+    ⚠ **主人の節目は日誌に出さない**（2026-09-09 主人のご要望「執事日誌には私のタスクの
+    話は出さないように。執事自身の改善などにフォーカスしてほしい」）。9/8 の日誌は
+    冒頭で論文と定期ミーティングに触れており、**主人の仕事だと明記してあっても、
+    そもそも書く場所ではありません**。判定は `project.kind` ——`owner` では判定しない
+    （T26 と同じ理由。主人の仕事にも `owner=butler` が付く行がある）。
     """
     return _rows(
         conn,
-        "SELECT m.id, n.title AS title, m.done_at AS done_at FROM milestone m JOIN node n ON n.id = m.id"
-        " WHERE date(m.date) = ? ORDER BY CAST(substr(m.id, 2) AS INTEGER)",
-        (date,),
+        "SELECT m.id, n.title AS title, m.done_at AS done_at FROM milestone m"
+        " JOIN node n ON n.id = m.id"
+        " JOIN project p ON p.id = m.project_id"
+        " WHERE date(m.date) = ? AND p.kind = ?"
+        " ORDER BY CAST(substr(m.id, 2) AS INTEGER)",
+        (date, project_mod.BUTLER_PROJECT_KIND),
     )
 
 
@@ -357,19 +368,13 @@ def format_mechanical_diary(data: dict[str, object]) -> str:
     milestones = list(data["milestones"])  # type: ignore[arg-type]
     night = dict(data["night"])  # type: ignore[arg-type]
 
-    # ⚠ owner で分ける（2026-09-08・主人のご指摘）。混ぜて「完了したタスク」と書いていたため、
-    # 主人がご自分で終えられた仕事が執事の手柄として日誌に出ていた。
-    mine = [t for t in tasks if str(t.get("owner") or "butler") != "master"]
-    masters = [t for t in tasks if str(t.get("owner") or "butler") == "master"]
-
+    # ⚠ **主人の仕事は材料から来ない**（`_completed_tasks` が `owner='master'` を除く。
+    # 2026-09-09 主人のご要望）。ここで分けるのではなく、そもそも渡さない——
+    # 9/8 は「主人の仕事だと明記して書く」形にしたが、主人は**書く場所ではない**と仰った。
     lines: list[str] = [f"{date} の記録"]
-    if mine:
+    if tasks:
         lines.append("執事が終えたタスク:")
-        for t in mine:
-            lines.append(f"- {t['id']} {_clip(t['title'], 70)}")
-    if masters:
-        lines.append("主人が終えられたタスク（執事の仕事ではありません）:")
-        for t in masters:
+        for t in tasks:
             lines.append(f"- {t['id']} {_clip(t['title'], 70)}")
     if decisions:
         lines.append("裁定:")
@@ -403,13 +408,15 @@ _DIARY_GENERATE_RULES = """\nあなたはAI執事です。その日の「執事�
 「気が向いたときの主人」です。**資料の書き写しにしないでください**——
 資料は出来事の索引で、日誌はそれを自分の言葉で語り直したものです。
 
-## 誰の仕事かを取り違えない（最重要）
+## 主人のお仕事は書かない（最重要）
 
-資料は「執事が終えたタスク」と「主人が終えられたタスク」を**分けて**渡します。
+**この日誌は執事自身の記録です。** 主人の研究・会社のお仕事・私的な予定には**触れません**——
+「主人が◯◯を終えられました」と正しく書くことも含めて、**書きません**
+（2026-09-09 主人のご要望「執事日誌には私のタスクの話は出さないように。
+執事自身の改善などにフォーカスしてほしい」）。
 
-- **主人が終えられた仕事を、執事がやったこととして書かない。**
-  触れるなら「主人が◯◯を終えられました」と、主人の仕事として書く
-- 執事がしたのは、その周りで自分が動かした部分だけです
+資料には執事の分しか入っていませんが、**夜勤の報告の中に主人の案件名が出てくることがあります**。
+そこも同じで、**執事が自分の仕組みに何をしたか**だけを書いてください。
 
 ## 構成（この見出しの並びを守る）
 

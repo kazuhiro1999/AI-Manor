@@ -19,6 +19,7 @@ import pytest
 from manor import decision as decision_mod
 from manor import graph as graph_mod
 from manor import notion as notion_mod
+from manor import project as project_mod
 from manor import task as task_mod
 from manor import util
 
@@ -201,7 +202,8 @@ def test_format_mechanical_diary_includes_all_categories(
     _fix_clock(monkeypatch)
     _complete_task(conn, title="完了したタスクの件")
     _make_ruled_decision(conn, title="裁定した件", verdict="approved")
-    graph_mod.milestone_add(conn, "節目の件", date="2026-09-04")
+    _pid = project_mod.add(conn, "x8", "執事の仕組み", kind=project_mod.BUTLER_PROJECT_KIND)
+    graph_mod.milestone_add(conn, "節目の件", date="2026-09-04", project_id=_pid)
     conn.commit()
 
     reports_dir = Path(home) / "night" / "reports"
@@ -216,33 +218,36 @@ def test_format_mechanical_diary_includes_all_categories(
     assert "承認" in text
     assert "節目の件" in text
     assert "夜勤の報告" in text or "作業しました" in text
-def test_format_mechanical_diary_separates_master_tasks(
+def test_format_mechanical_diary_omits_the_masters_work(
     home: Path, conn, monkeypatch: pytest.MonkeyPatch
 ):
-    """主人がご自分で終えられた仕事を、執事の手柄として並べないこと（2026-09-08）。
+    """主人のお仕事は**そもそも材料に入れない**（2026-09-09 主人のご要望）。
 
-    主人のご指摘「執事自身の日誌の想定が、私のタスクについて書かれています」。
-    `_completed_tasks` が `owner` を持たずに返しており、その日 `done` になったものを
-    誰の仕事かを問わず「完了したタスク」として渡していた。9/7 に画面の「最近の動き」で
-    直したのと**同じ穴が日誌にも空いていた**（同じことをする経路が複数あった）。
+    > 執事日誌には私のタスクの話は出さないようにできませんか？
+    > 執事自身の改善などにフォーカスしてほしいので。
+
+    ⚠ 9/8 は「主人の仕事だと明記して書く」形にしましたが、それでも主人は
+    **書く場所ではない**と仰いました。分けるのではなく、渡しません。
+    節目も同じで、**執事のプロジェクトのものだけ**を材料にします。
     """
     _fix_clock(monkeypatch)
-    mine = _complete_task(conn, title="執事が直した件")
+    _complete_task(conn, title="執事が直した件")
     master_task = task_mod.add(conn, "主人が終えられた件", owner="master")
     task_mod.status(conn, master_task, "doing")
     task_mod.status(conn, master_task, "done")
+
+    butler_project = project_mod.add(conn, "x9", "執事の仕組み", kind=project_mod.BUTLER_PROJECT_KIND)
+    master_project = project_mod.add(conn, "p9", "主人の研究", kind="研究")
+    graph_mod.milestone_add(conn, "執事の節目", date="2026-09-04", project_id=butler_project)
+    graph_mod.milestone_add(conn, "主人の節目", date="2026-09-04", project_id=master_project)
     conn.commit()
 
-    data = notion_mod.diary_data(conn, home, "2026-09-04")
-    text = notion_mod.format_mechanical_diary(data)
+    text = notion_mod.format_mechanical_diary(notion_mod.diary_data(conn, home, "2026-09-04"))
 
-    assert "執事が終えたタスク:" in text
-    assert "主人が終えられたタスク（執事の仕事ではありません）:" in text
-    # 執事の節に主人の仕事が混ざらない
-    mine_block = text.split("主人が終えられたタスク")[0]
-    assert "執事が直した件" in mine_block
-    assert "主人が終えられた件" not in mine_block
-    assert mine in mine_block
+    assert "執事が直した件" in text
+    assert "主人が終えられた件" not in text, "主人のお仕事が日誌の材料に入っている"
+    assert "執事の節目" in text
+    assert "主人の節目" not in text, "主人の節目が日誌の材料に入っている"
 
 
 def test_format_mechanical_diary_empty_day_says_nothing_happened(
