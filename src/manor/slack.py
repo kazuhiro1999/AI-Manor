@@ -1139,9 +1139,21 @@ def _cmd_inbox(args: argparse.Namespace) -> int:
 
 # --- intake（`#task` / `#log`。v1 watch-inbox.ps1 の移植。T4） -------------------
 
-#: 接頭辞 → 何として読むか。v1 の即応（`watch-inbox.ps1`）と同じ4つ
-#: （v1 にあった `#idea` は v2 に受け皿が無いので入れていない）。
-INTAKE_PREFIXES = {"#task": "task", "#log": "log", "#cal": "cal", "#remind": "remind"}
+#: 接頭辞 → 何として読むか。v1 の即応（`watch-inbox.ps1`）と同じ。
+#:
+#: ⚠ 2026-09-08 に `#idea` / `#improve` を戻した。v2 への移行時に「受け皿が無いので
+#: 入れていない」と書いて落としており、**主人が「意見箱を読んで改善するルートはまだ
+#: 生きてますか？」とお尋ねになるまで、死んでいることに誰も気づいていなかった**。
+#: v1 の要件は「**チャットで言うのをやめたい**」——対話で言うと ①その場で執事が動き出す
+#: ②言った本人が忘れると消える ③執事が手で書き写すので漏れる（v1 03_design/改善要望の取り込み §1）。
+INTAKE_PREFIXES = {
+    "#task": "task",
+    "#log": "log",
+    "#cal": "cal",
+    "#remind": "remind",
+    "#idea": "idea",
+    "#improve": "idea",
+}
 
 #: `#cal` / `#remind` で日付のあとに置ける時刻。`14:00` / `9:05`。
 _INTAKE_TIME_RE = re.compile(r"^([01]?\d|2[0-3]):([0-5]\d)$")
@@ -1587,7 +1599,7 @@ def _intake_ack(
     if kind == "remind" and when:
         return f"・{_format_when(when)} 「{when['text']}」を控えました（{marker}）"
     head = body.splitlines()[0][:INTAKE_TITLE_MAX]
-    label = "起票しました" if kind == "task" else "控えました"
+    label = "起票しました" if kind == "task" else ("意見箱へ入れました" if kind == "idea" else "控えました")
     return f"・{marker} として{label}: {head}"
 
 
@@ -1711,6 +1723,24 @@ def _create_from_intake(
         return task_mod.add(
             conn, title, cls="general", now="Slack から受け取りました（#task）", body=body
         )
+    if kind == "idea":
+        from . import task as task_mod
+
+        # 改善要望は **`hold`（仕分け待ち）** で入れる。`todo` で入れると板の未着手に
+        # 紛れ、題名だけが並ぶ——⚠ 主人がご自分で起こされた T26 が実際にそうなり、
+        # 「どこにいったか分からなくなった」と仰った（2026-09-08）。
+        task_id = task_mod.add(
+            conn,
+            title,
+            cls="self_config",
+            body=body,
+            goal=i18n.t("slack.intake.idea.goal"),
+            now=i18n.t("slack.intake.idea.now"),
+            next_=i18n.t("slack.intake.idea.next"),
+            owner="master",
+        )
+        task_mod.status(conn, task_id, "hold")
+        return task_id
     if kind == "cal" and when:
         from .staff.secretary import ops as sec_ops
 

@@ -549,6 +549,7 @@ def run(
     lock_max_min: int = DEFAULT_LOCK_MAX_MIN,
     echo: bool = True,
     sleep_back_after: bool = False,
+    diary_after: bool = False,
 ) -> dict[str, Any]:
     """`manor night run` の入口。D10: まず戻し、それから消音する。**声の失敗（VOICEVOX 未設定
     含む）で夜勤自体は止めない**——本体（`_run_impl`）は変えず、その前後を薄く包むだけ。
@@ -573,6 +574,14 @@ def run(
             lock_max_min=lock_max_min,
             echo=echo,
         )
+        # **日誌は夜勤の一部にする**（2026-09-08・主人のご要望「日誌を書くのは朝ではなく
+        # 夜間タスクの1つにできませんか。トークン消費の面でも朝より夜中のほうがいい」）。
+        # ⚠ **`claude` に Notion を触らせない。** 本文の生成は独立した `claude -p`
+        # （道具を持たない）で、投函するのは機械です——夜勤の歯止め「Notion へは夜間に
+        # 書かない」は claude への指示であって、定例5つの常時ご許可（D6）はそのまま効きます。
+        # 夜勤が落ちた晩は日誌も出ませんが、それは朝の点検（`health`）が鳴らします。
+        if diary_after and not dry_run and result and result.get("status") not in ("locked", "empty"):
+            result["diary"] = _write_diary_safely(home, echo=echo)
         return result
     finally:
         _voice_restore_safely(home)
@@ -590,6 +599,25 @@ def run(
             )
             result["sleep_back"] = sb
             _write_last_run(home, result, dry_run=dry_run)
+
+
+def _write_diary_safely(home: Path, *, echo: bool = True) -> dict[str, Any]:
+    """前日ぶんの執事日誌を投函する。**日誌の失敗で夜勤を失敗にしない**（声と同じ扱い）。"""
+    log = NightLog(home, echo=echo)
+    try:
+        from .. import notion as notion_mod
+        from .. import util as util_mod
+
+        yesterday = (datetime.fromisoformat(util_mod.today()) - timedelta(days=1)).date().isoformat()
+        out = notion_mod.diary(home, date=yesterday, generate=True)
+        if out.get("posted"):
+            log.write("INFO", f"日誌を投函しました（{yesterday}）")
+        else:
+            log.write("INFO", f"日誌は投函しませんでした（{yesterday}: {out.get('reason') or out.get('note') or '既にあります'}）")
+        return {"ok": True, "date": yesterday, "result": out}
+    except Exception as exc:  # noqa: BLE001
+        log.write("WARN", f"日誌を書けませんでした: {exc}")
+        return {"ok": False, "reason": str(exc)}
 
 
 def _run_impl(
@@ -1087,11 +1115,19 @@ def build_install_command(
     repo_root: Path | None = None,
     task_name: str = DEFAULT_TASK_NAME,
     sleep_back_after: bool = False,
+    diary_after: bool = False,
 ) -> str:
     repo = Path(repo_root) if repo_root else util.repo_root()
     # **登録するコマンドに書く**（設定ファイルへ隠さない）。`schtasks /Query` を見れば
     # 「この機械の夜勤は終わったら眠る」と分かるほうが、後から読む人に親切。
-    verb = "run --sleep-back" if sleep_back_after else "run"
+    # ⚠ **引数を書き写さない。** 起動口が2つあり（`manor night` と `python -m manor.night`）、
+    # ここで組む文字列は**スケジューラに登録されるほう**を指す（2026-09-06 に食い違って
+    # 夜勤が丸ごと落ちかけた・G15）。
+    verb = "run"
+    if sleep_back_after:
+        verb += " --sleep-back"
+    if diary_after:
+        verb += " --diary"
     if sys.platform.startswith("win"):
         python_exe = repo / ".venv" / "Scripts" / "python.exe"
         # `/TR` の中の `"` は `\"` で逃がす。**逃がさないと、空白を含むパス
@@ -1121,9 +1157,11 @@ def install(
     repo_root: Path | None = None,
     task_name: str = DEFAULT_TASK_NAME,
     sleep_back_after: bool = False,
+    diary_after: bool = False,
 ) -> dict[str, Any]:
     cmd = build_install_command(
-        at=at, repo_root=repo_root, task_name=task_name, sleep_back_after=sleep_back_after
+        at=at, repo_root=repo_root, task_name=task_name,
+        sleep_back_after=sleep_back_after, diary_after=diary_after,
     )
     result: dict[str, Any] = {"command": cmd, "executed": False, "ok": None}
     if execute:

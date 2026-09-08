@@ -63,6 +63,10 @@ def _add_run(sub: "argparse._SubParsersAction") -> None:
         "--sleep-back", action="store_true", dest="sleep_back",
         help=i18n.t("cli.night.run.sleep_back.help"),
     )
+    p.add_argument(
+        "--diary", action="store_true", dest="diary",
+        help=i18n.t("cli.night.run.diary.help"),
+    )
     p.add_argument("--json", action="store_true")
     p.set_defaults(func=_cmd_run, is_write=False, needs_db=False)
 
@@ -82,6 +86,7 @@ def _cmd_run(args: "argparse.Namespace") -> int:
         no_resume=args.no_resume,
         echo=not args.json,
         sleep_back_after=bool(getattr(args, "sleep_back", False)),
+        diary_after=bool(getattr(args, "diary", False)),
     )
     if args.json:
         print(json.dumps(result, ensure_ascii=False, indent=2))
@@ -140,6 +145,10 @@ def _add_install(sub: "argparse._SubParsersAction") -> None:
         "--sleep-back", action="store_true", dest="sleep_back",
         help=i18n.t("cli.night.install.sleep_back.help"),
     )
+    p.add_argument(
+        "--diary", action="store_true", dest="diary",
+        help=i18n.t("cli.night.install.diary.help"),
+    )
     p.add_argument("--json", action="store_true")
     p.set_defaults(func=_cmd_install, is_write=False, needs_db=False)
 
@@ -149,6 +158,7 @@ def _cmd_install(args: "argparse.Namespace") -> int:
     result = runner.install(
         at=args.at, execute=execute,
         sleep_back_after=bool(getattr(args, "sleep_back", False)),
+        diary_after=bool(getattr(args, "diary", False)),
     )
     if args.json:
         print(json.dumps(result, ensure_ascii=False, indent=2))
