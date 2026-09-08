@@ -10,7 +10,7 @@
  */
 import { useEffect, useState } from "react";
 import { api, ApiError } from "../../app/api";
-import type { NightReport } from "../../app/types";
+import type { NightReport, NightReview } from "../../app/types";
 import { Markdown } from "../../components/Markdown";
 import { useT, type TranslationKey } from "../../app/i18n";
 
@@ -27,8 +27,14 @@ export function NightPanel() {
   const [date, setDate] = useState<string | null>(null);
   const [report, setReport] = useState<NightReport | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [review, setReview] = useState<NightReview | null>(null);
 
   useEffect(() => {
+    // 朝の点検。**走ったかどうかは報告の中身より先に見たい**（台帳 E1: 不在を信号にする）。
+    // 落ちても報告の表示は続ける——点検が読めないことと、夜勤が動かなかったことは別。
+    api<NightReview>("/night/review")
+      .then(setReview)
+      .catch(() => setReview(null));
     api<{ dates: string[] }>("/night/reports")
       .then((res) => {
         setDates(res.dates || []);
@@ -67,6 +73,35 @@ export function NightPanel() {
           </select>
         )}
       </div>
+      {review && (
+        <div className={review.health.ok ? "night-review" : "night-review is-warn"}>
+          <strong>{t("night.review.heading", { date: review.date })}</strong>
+          {review.health.reasons.length === 0 ? (
+            <p className="panel-note">{t("night.review.ok")}</p>
+          ) : (
+            <ul className="night-review-list">
+              {review.health.reasons.map((r) => (
+                <li key={r}>{r}</li>
+              ))}
+            </ul>
+          )}
+          {review.items.pending.length > 0 && (
+            <ul className="night-review-list">
+              {review.items.pending.map((p) => (
+                <li key={p.heading}>
+                  <span className={(p.nights || 1) >= 3 ? "st-hold" : "st-todo"}>
+                    {(p.nights || 1) >= 2
+                      ? t("night.review.pendingNights", { heading: p.heading, n: p.nights || 1 })
+                      : t("night.review.pending", { heading: p.heading })}
+                  </span>
+                  {" — "}
+                  {p.state}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
       <p className="panel-note">
         {t("night.hint.prefix")} <code>{t("night.hint.path")}</code> {t("night.hint.suffix")}
       </p>

@@ -849,3 +849,12 @@ export interface ExtensionOption {
   /** 2段目に出す短い名（例: スタイル名）。無ければ `label` を使う。 */
   member_label?: string;
 }
+
+/** 朝の点検（`GET /api/v1/night/review`）。走ったか・何が片付かなかったか・何晩続いたか。
+ *  ⚠ 画面から読むときは `record=false` 相当で、連続日数はサーバが数え直さない。 */
+export interface NightReview {
+  date: string;
+  health: { ok: boolean; reasons: string[] };
+  items: { found: boolean; pending: { heading: string; state: string; nights?: number }[] };
+  stuck: string[];
+}

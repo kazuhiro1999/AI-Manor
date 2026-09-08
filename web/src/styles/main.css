@@ -477,3 +477,16 @@ table.grid td.col-wide, table.grid th.col-wide { min-width: 220px; }
    崩れ防止の保険。 */
 .agent-face-img { display: block; width: 100%; height: 100%; object-fit: cover; border-radius: inherit; }
 
+
+/* 朝の点検（夜勤の欄の先頭）。⚠ 正常な晩も帯は出すが、色は付けない——
+   毎朝赤い帯が出ると、本当に鳴った日に気づけなくなる（B99・B100 と同じ考え）。 */
+.night-review {
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--surface-2, rgba(127, 127, 127, 0.08));
+  border-left: 3px solid var(--border, rgba(127, 127, 127, 0.35));
+}
+.night-review.is-warn { border-left-color: var(--danger, #c0392b); }
+.night-review-list { margin: 6px 0 0; padding-left: 1.2em; }
+.night-review-list li { margin: 2px 0; }
