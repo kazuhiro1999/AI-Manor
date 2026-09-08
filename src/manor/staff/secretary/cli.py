@@ -232,7 +232,11 @@ def cmd_agenda(conn, home, args) -> object:
         ).fetchall()
     ]
     # core（milestone/task）は読むだけ。core の読み取り API を使い、直接 INSERT/UPDATE しない。
-    milestones = [m for m in graph.milestone_list(conn) if today_s <= str(m["date"]) <= end_s]
+    milestones = [
+        m
+        for m in graph.milestone_list(conn, include_done=False)
+        if today_s <= str(m["date"]) <= end_s
+    ]
     tasks = [
         t
         for t in task_mod.list_tasks(conn, include_settled=False)

@@ -201,6 +201,16 @@ def milestone_list(
     upcoming_days: int | None = None,
     include_done: bool = True,
 ) -> list[dict[str, object]]:
+    """節目の一覧。
+
+    ⚠ **`include_done` の既定は「含める」**で、これは危ない側の既定です
+    （2026-09-08・主人のご指摘）。**「これからの予定」として見せる場所は必ず
+    `include_done=False` を渡してください**——渡し忘れても何も起きず、済んだ節目が
+    静かに未来の予定として並びます。実際 2026-09-08 の時点で、この関数を呼ぶ5箇所と
+    素の SQL を書く3箇所の**合わせて8箇所すべてが渡し忘れていました**。
+    既定を変えないのは、履歴として全部見たい場所（`manor milestone list`・
+    プロジェクトの詳細）が現にあるためです。
+    """
     sql = (
         "SELECT m.id, n.title, m.date, m.approximate, m.project_id, m.done_at"
         " FROM milestone m JOIN node n ON n.id = m.id WHERE 1=1"

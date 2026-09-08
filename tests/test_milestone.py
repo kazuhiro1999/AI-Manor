@@ -89,3 +89,85 @@ def test_cli_milestone_done_and_list_shows_it(
 
     assert cli.main(["milestone", "list"]) == 0
     assert "済 " in capsys.readouterr().out
+
+
+# --- 済んだ節目を「これからの予定」として出さない（2026-09-08・主人のご指摘）-------------------
+
+
+def _milestone_today(conn, title: str, *, done: bool) -> str:
+    """今日が期日の節目を1つ作る（`done` なら済ませる）。"""
+    from manor import util
+
+    mid = graph.milestone_add(conn, title, date=util.today())
+    if done:
+        graph.milestone_done(conn, mid)
+    conn.commit()
+    return mid
+
+
+def test_active_data_hides_done_milestones(home_path: Path) -> None:
+    """射影の「直近7日のマイルストーン」に済んだ節目を出さないこと。
+
+    ⚠ `active_data` の docstring は最初から「**完了済みは出さない**」と書いていたが、
+    実装の SQL に `done_at IS NULL` が無く、**書いてあることと動くものが食い違っていた**
+    （2026-09-08・主人のご指摘「これは昨日 done にしたんじゃなかったでしたっけ」）。
+    Slack ブリーフィングの【期限】は `active_data` を材料にしているので、済んだ節目が
+    毎朝「本日」の筆頭に並んでいた。
+    """
+    from manor import render
+
+    assert cli.main(["init"]) == 0
+    conn = db.connect(home_path)
+    done_id = _milestone_today(conn, "済んだ節目", done=True)
+    open_id = _milestone_today(conn, "まだの節目", done=False)
+
+    ids = [str(m["id"]) for m in render.active_data(conn)["milestones"]]
+
+    assert open_id in ids
+    assert done_id not in ids, "済んだ節目が直近7日の予定として残っている"
+
+
+def test_brief_deadlines_hide_done_milestones(home_path: Path) -> None:
+    """Slack ブリーフィングの【期限】にも出ないこと（`active_data` 経由の裏取り）。"""
+    from manor import slack as slack_mod
+
+    assert cli.main(["init"]) == 0
+    conn = db.connect(home_path)
+    _milestone_today(conn, "済んだ節目", done=True)
+    _milestone_today(conn, "まだの節目", done=False)
+
+    text = slack_mod.format_mechanical_brief(slack_mod.brief_data(conn, home_path))
+
+    assert "まだの節目" in text
+    assert "済んだ節目" not in text
+
+
+def test_next_milestone_per_project_skips_done(home_path: Path) -> None:
+    """board の「プロジェクトの次の節目」が済んだものを飛ばすこと。
+
+    `MIN(date)` を `date >= today` だけで取っていたため、済んだ節目が
+    「次の節目」として居座り、後ろの本当の次が見えなくなっていた。
+    """
+    from datetime import date, timedelta
+
+    from manor.board import api_core
+
+    assert cli.main(["init"]) == 0
+    conn = db.connect(home_path)
+    pid = project_mod.add(conn, "research", "研究")
+    today = date.today()
+    graph.milestone_done(
+        conn, graph.milestone_add(conn, "済んだ節目", date=today.isoformat(), project_id=pid)
+    )
+    graph.milestone_add(
+        conn, "本当の次", date=(today + timedelta(days=3)).isoformat(), project_id=pid
+    )
+    conn.commit()
+
+    board = api_core.get_board(conn)
+    target = [p for p in board["projects"] if str(p["id"]) == pid]
+    assert target, "作ったプロジェクトが板に出ていない"
+    nearest = str((target[0].get("interest") or {}).get("nearest_date") or "")[:10]
+    assert nearest == (today + timedelta(days=3)).isoformat(), (
+        f"済んだ節目が「次の節目」に居座っている: {nearest!r}"
+    )

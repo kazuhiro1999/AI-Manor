@@ -82,7 +82,8 @@ def active_data(conn: sqlite3.Connection) -> dict[str, object]:
         conn,
         "SELECT m.id, n.title AS title, m.date, m.approximate, m.project_id FROM milestone m"
         " JOIN node n ON n.id = m.id"
-        " WHERE date(m.date) BETWEEN date('now','localtime') AND date('now','localtime','+7 days')"
+        " WHERE m.done_at IS NULL"
+        "   AND date(m.date) BETWEEN date('now','localtime') AND date('now','localtime','+7 days')"
         " ORDER BY m.date",
     )
     return {

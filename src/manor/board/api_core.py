@@ -105,7 +105,7 @@ def _project_interest(
         str(r["project_id"]): str(r["date"])
         for r in conn.execute(
             "SELECT project_id, MIN(date) AS date FROM milestone"
-            " WHERE project_id IS NOT NULL AND date >= ? GROUP BY project_id",
+            " WHERE project_id IS NOT NULL AND done_at IS NULL AND date >= ? GROUP BY project_id",
             (today.isoformat(),),
         ).fetchall()
         if r["project_id"] is not None and r["date"] is not None

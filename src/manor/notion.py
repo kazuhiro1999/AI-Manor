@@ -327,7 +327,7 @@ def _passed_milestones(conn: sqlite3.Connection, date: str) -> list[dict[str, ob
     """
     return _rows(
         conn,
-        "SELECT m.id, n.title AS title FROM milestone m JOIN node n ON n.id = m.id"
+        "SELECT m.id, n.title AS title, m.done_at AS done_at FROM milestone m JOIN node n ON n.id = m.id"
         " WHERE date(m.date) = ? ORDER BY CAST(substr(m.id, 2) AS INTEGER)",
         (date,),
     )
@@ -379,7 +379,9 @@ def format_mechanical_diary(data: dict[str, object]) -> str:
     if milestones:
         lines.append("マイルストーン:")
         for m in milestones:
-            lines.append(f"- {_clip(m['title'], 70)}")
+            # 済んだのか、過ぎてしまったのかで日誌の書き方が変わる（2026-09-08）
+            mark = "（済み）" if m.get("done_at") else "（未達）"
+            lines.append(f"- {_clip(m['title'], 70)}{mark}")
     if night.get("found"):
         lines.append("夜勤の結果:")
         lines.append(_clip(night.get("text"), 400))
