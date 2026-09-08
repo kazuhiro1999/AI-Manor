@@ -216,6 +216,33 @@ def test_format_mechanical_diary_includes_all_categories(
     assert "承認" in text
     assert "節目の件" in text
     assert "夜勤の報告" in text or "作業しました" in text
+def test_format_mechanical_diary_separates_master_tasks(
+    home: Path, conn, monkeypatch: pytest.MonkeyPatch
+):
+    """主人がご自分で終えられた仕事を、執事の手柄として並べないこと（2026-09-08）。
+
+    主人のご指摘「執事自身の日誌の想定が、私のタスクについて書かれています」。
+    `_completed_tasks` が `owner` を持たずに返しており、その日 `done` になったものを
+    誰の仕事かを問わず「完了したタスク」として渡していた。9/7 に画面の「最近の動き」で
+    直したのと**同じ穴が日誌にも空いていた**（同じことをする経路が複数あった）。
+    """
+    _fix_clock(monkeypatch)
+    mine = _complete_task(conn, title="執事が直した件")
+    master_task = task_mod.add(conn, "主人が終えられた件", owner="master")
+    task_mod.status(conn, master_task, "doing")
+    task_mod.status(conn, master_task, "done")
+    conn.commit()
+
+    data = notion_mod.diary_data(conn, home, "2026-09-04")
+    text = notion_mod.format_mechanical_diary(data)
+
+    assert "執事が終えたタスク:" in text
+    assert "主人が終えられたタスク（執事の仕事ではありません）:" in text
+    # 執事の節に主人の仕事が混ざらない
+    mine_block = text.split("主人が終えられたタスク")[0]
+    assert "執事が直した件" in mine_block
+    assert "主人が終えられた件" not in mine_block
+    assert mine in mine_block
 
 
 def test_format_mechanical_diary_empty_day_says_nothing_happened(
@@ -457,17 +484,65 @@ def test_extension_is_registered_in_real_registry(home: Path):
 
 
 def test_diary_generate_prompt_carries_the_structure():
-    """日誌の指示が構成を渡していること（長さの上限は置かない）。
+    """日誌の指示が構成を渡していること。
 
     2026-09-07 まではここが「8〜12行程度」の1文だけで、30件が片付いた 2026-09-06 の
-    日誌が地の文3段落に圧縮されて投函されていた。v1 `apps/notion-diary/diary-prompt.txt`
-    は見出しを指定し、長さの上限を置いていなかった。
+    日誌が地の文3段落に圧縮されて投函されていた。
+    ⚠ 2026-09-08 訂正: そのとき「v1 は長さの上限を置いていなかった」と読んだのは誤りで、
+    v1 `diary-prompt.txt` の**文体の節**に「全体で 900〜1300字程度。長くしない」とある。
+    構成（見出し）を潰さないことと、全体を短く収めることは両立する。
     """
     prompt = notion_mod._build_generate_prompt("（資料）", "2026-09-06")
 
     for heading in ("## やったこと", "## できるようになったこと", "## 気づいたこと", "## 明日の自分へ"):
         assert heading in prompt
-    assert "長さの上限は決めない" in prompt
+    assert "1000字前後" in prompt
     assert "8〜12行" not in prompt
     assert "2026-09-06" in prompt
     assert "（資料）" in prompt
+
+
+def test_diary_generate_prompt_carries_soul_style():
+    """文体を `butler/SOUL.md` から**毎回読んで**渡していること（2026-09-08）。
+
+    主人のご指摘「執事らしいですます調もなくなっています」。①層に「日誌の文体（詳細）」が
+    書いてあるのに、生成の経路がそれを読んでいなかった。v1 は `SOUL.md` を資料へ丸ごと
+    貼っていた（`post-diary.ps1`）。**プロンプトへ書き写す形にすると SOUL を直したときに
+    置き去りになる**ので、ここでは「SOUL の中身が実際に入っているか」を見る。
+    """
+    prompt = notion_mod._build_generate_prompt("（資料）", "2026-09-06")
+
+    assert "## 文体の使い分け" in prompt
+    assert "ですます調を崩さない" in prompt
+    assert "SOUL.md" in prompt
+
+
+def test_diary_generate_prompt_carries_changelog_and_growth(tmp_path, monkeypatch):
+    """①層の当日の散文（CHANGELOG・GROWTH）を資料へ足していること（2026-09-08）。
+
+    主人のご指摘「普通ここまで細かく書かないような所まで具体的に書いてしまっている」。
+    資料が「DB の当日 done 一覧」だけだったため、日誌はタスクの題名を書き写すしかなく、
+    試験関数名がそのまま日誌に出ていた。⚠ `home/LOG.md`（②）は足さない。
+    """
+    root = tmp_path
+    (root / "butler").mkdir()
+    (root / "CHANGELOG.md").write_text(
+        "## 2026-09-06 その1（機能の話）\n\n- 声が出るようになった\n\n## 2026-09-05\n\n- 別の日\n",
+        encoding="utf-8",
+    )
+    (root / "butler" / "GROWTH.md").write_text(
+        "## G9 — 昔の学び（2026-09-05）\n\n古い話。\n\n## 2026-09-06 — その日の学び\n\n数える前に直した。\n",
+        encoding="utf-8",
+    )
+    (root / "butler" / "SOUL.md").write_text("## 文体の使い分け\n\nですます調を崩さない。\n", encoding="utf-8")
+    monkeypatch.setattr(notion_mod.util, "repo_root", lambda: root)
+
+    prompt = notion_mod._build_generate_prompt("（資料）", "2026-09-06")
+
+    assert "声が出るようになった" in prompt
+    assert "その日の学び" in prompt
+    assert "数える前に直した" in prompt
+    # 別の日の節は入らない
+    assert "別の日" not in prompt
+    assert "古い話" not in prompt
+

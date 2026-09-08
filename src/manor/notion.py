@@ -297,10 +297,14 @@ def _rows(conn: sqlite3.Connection, sql: str, params: tuple[object, ...] = ()) -
 def _completed_tasks(conn: sqlite3.Connection, date: str) -> list[dict[str, object]]:
     """その日に `done` になった task。`task_event`（`to_status='done'` かつ
     `date(at) = <date>`）を直接見る——D18 の指示どおり、これ以上のクエリ層は作らない。
+
+    ⚠ **`owner` を必ず持って返す**（2026-09-08・主人のご指摘）。持たずに返していたため、
+    主人がご自分で終えられた仕事（`owner='master'`）が「執事がやったこと」として
+    日誌に書かれていた。9/7 に画面の「最近の動き」で直したのと同じ穴が、日誌にも空いていた。
     """
     return _rows(
         conn,
-        "SELECT DISTINCT t.id, n.title AS title FROM task_event ev"
+        "SELECT DISTINCT t.id, n.title AS title, t.owner AS owner FROM task_event ev"
         " JOIN task t ON t.id = ev.task_id JOIN node n ON n.id = t.id"
         " WHERE ev.to_status = 'done' AND date(ev.at) = ?"
         " ORDER BY CAST(substr(t.id, 2) AS INTEGER)",
@@ -353,10 +357,19 @@ def format_mechanical_diary(data: dict[str, object]) -> str:
     milestones = list(data["milestones"])  # type: ignore[arg-type]
     night = dict(data["night"])  # type: ignore[arg-type]
 
+    # ⚠ owner で分ける（2026-09-08・主人のご指摘）。混ぜて「完了したタスク」と書いていたため、
+    # 主人がご自分で終えられた仕事が執事の手柄として日誌に出ていた。
+    mine = [t for t in tasks if str(t.get("owner") or "butler") != "master"]
+    masters = [t for t in tasks if str(t.get("owner") or "butler") == "master"]
+
     lines: list[str] = [f"{date} の記録"]
-    if tasks:
-        lines.append("完了したタスク:")
-        for t in tasks:
+    if mine:
+        lines.append("執事が終えたタスク:")
+        for t in mine:
+            lines.append(f"- {t['id']} {_clip(t['title'], 70)}")
+    if masters:
+        lines.append("主人が終えられたタスク（執事の仕事ではありません）:")
+        for t in masters:
             lines.append(f"- {t['id']} {_clip(t['title'], 70)}")
     if decisions:
         lines.append("裁定:")
@@ -384,6 +397,18 @@ def format_mechanical_diary(data: dict[str, object]) -> str:
 #: フィールド）で通ることを確かめていないので、素の Markdown に置き換えてある。
 _DIARY_GENERATE_RULES = """\nあなたはAI執事です。その日の「執事日誌」を Notion に残します。
 
+**日誌は報告書ではありません。** 一人称の内省で、読者は「将来の自分」と
+「気が向いたときの主人」です。**資料の書き写しにしないでください**——
+資料は出来事の索引で、日誌はそれを自分の言葉で語り直したものです。
+
+## 誰の仕事かを取り違えない（最重要）
+
+資料は「執事が終えたタスク」と「主人が終えられたタスク」を**分けて**渡します。
+
+- **主人が終えられた仕事を、執事がやったこととして書かない。**
+  触れるなら「主人が◯◯を終えられました」と、主人の仕事として書く
+- 執事がしたのは、その周りで自分が動かした部分だけです
+
 ## 構成（この見出しの並びを守る）
 
 ## やったこと
@@ -392,10 +417,16 @@ _DIARY_GENERATE_RULES = """\nあなたはAI執事です。その日の「執事�
 資料の完了タスクが多い日は、**件数を減らさずに束ねる**——似た仕事はまとめて1段落にし、
 「ほかに N 件」で終わらせない。日付は資料の日付をそのまま使い、推測しない。
 
+⚠ **タスクの題名をそのまま書き写さない。** 題名は板の中の符牒で、日誌の言葉ではありません。
+試験関数名・変数名・エラーメッセージのような**実装の細部は、日誌に持ち込まない**——
+「その日に何が変わったか」の高さで書きます。細部が要るのは、それ自体がその日の主題のときだけです。
+
 ## できるようになったこと
 
 その日に増えた・変わった機能を1つ以上。資料に該当が無ければこの見出しごと省く。
 （2026-08-29 主人のご指摘「機能が増えたことに関する分が一切なかった」への手当て）
+⚠ **宣伝にしない。** できるようになったことと同じ密度で、
+**まだできないこと・引き換えに負った制約**（歯止め・上限・使えない場面）も書く。
 
 ## 気づいたこと
 
@@ -419,26 +450,98 @@ _DIARY_GENERATE_RULES = """\nあなたはAI執事です。その日の「執事�
 - ファイル名・コマンド名・ID は必ずバッククォートで囲む（`CLAUDE.md` のように）。
   囲まないと Notion が勝手にリンクにして壊れる
 - 絵文字は使わない
-- 長さの上限は決めない。**その日に起きたことの量に合わせる**——
-  30件片付いた日を10行に潰さない。静かな日を無理に伸ばさない
+- **文体は資料に貼った `butler/SOUL.md` の「日誌の文体」に従う。**
+  ですます調を崩さない。感嘆や誇張を使わない。静かに書く
+- **長さは全体で 1000字前後**（SOUL の表と同じ）。見出しを削って潰さず、
+  1つ1つを短くして収める。静かな日を無理に伸ばさない
 
 ## 書いてはいけないこと
 
 - 個人名・所属・大学名・PC名・絶対パス・トークン
+- **主人の案件の通称と中身。**「研究プロジェクトの1つ」「会社の案件」のように一般名詞へ抽象化する
+  - ⚠ **抽象化するのは主人の案件だけです。** 執事自身の道具の名前は書いてよい——
+    Slack / Notion / Claude Code / PowerShell / git / タスクスケジューラ など。
+    伏せると日誌が曖昧になり、将来の運用事例として役に立ちません
+  - 執事自身の機能名（夜勤・日誌・定時通知・小窓 など）も書いてよい
+- 締切を日数で書かない。「近い」「まだ余裕がある」と書く。件数や状態は書いてよい
+- **主人の発言を直接引用しない**（要約する）。**主人を評さない**。主人の判断への論評を書かない
 - 推測。資料に無いことは書かない。事実を足さない・数字を変えない
 - 道具は使わない（ファイルを読まない・検索しない）。読んで、考えて、本文を出力するだけ
 - 前置き・後書き・コードブロックの囲み。本文だけを出力する
 """
 
 
+def _soul_style_section() -> str:
+    """`butler/SOUL.md` の「## 文体の使い分け」以降を返す（①層・`util.repo_root()` から解決）。
+
+    ⚠ **本文をここへ書き写さない**（2026-09-08・主人のご指摘）。日誌がですます調を失って
+    いたのは、①層に「日誌の文体（詳細）」が**書いてあるのに、生成の経路が読んでいなかった**
+    ため。v1 は `SOUL.md` を資料へ丸ごと貼っていた（`post-diary.ps1`）。写すと SOUL を
+    直したときに置き去りになるので、**毎回読む**。読めなければ空を返す（生成は止めない）。
+    """
+    path = util.repo_root() / "butler" / "SOUL.md"
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return ""
+    head = text.find("## 文体の使い分け")
+    return "" if head < 0 else text[head:].strip()
+
+
+def _md_day_sections(path: Path, date: str) -> str:
+    """`## ` 見出しに `date` を含む節を集める（次の `## ` の手前まで）。
+
+    `CHANGELOG.md` は `## 2026-09-07 その3（…）` のように1日に複数の節を持ち、
+    `butler/GROWTH.md` は `## G15 — …（2026-09-06）` と `## 2026-09-07 — …` の
+    2形式が混在する。**見出し行に日付が含まれるか**だけを見れば、どちらにも効く。
+    """
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return ""
+    picked: list[str] = []
+    inside = False
+    for line in lines:
+        if line.startswith("## "):
+            inside = date in line
+            if inside:
+                picked.append(line)
+            continue
+        if inside:
+            picked.append(line)
+    return "\n".join(picked).strip()
+
+
 def _build_generate_prompt(mechanical: str, date: str) -> str:
-    return (
-        _DIARY_GENERATE_RULES
-        + f"\nこの日誌の日付は {date} です。\n"
-        + "\n===== ここから資料（読み取り専用。ここに無いことは書かない） =====\n"
-        + mechanical
-        + "\n===== ここまで資料 =====\n"
-    )
+    """生成用の指示。**規則は①層から毎回読む**（写さない）。
+
+    ⚠ 資料が「DB の当日 done 一覧」だけだったため、日誌はタスクの題名を書き写すしかなく、
+    `test_run_writes_...` のような試験関数名がそのまま日誌に出ていた（2026-09-08・主人の
+    ご指摘）。①層の散文（`CHANGELOG.md` = その日に執事の能力がどう変わったか ／
+    `butler/GROWTH.md` = その日の学び）を資料へ足す。⚠ **`home/LOG.md` は足さない**——
+    ②の主人のデータで、D18 が「丸ごと埋め込む生成方式は移さない」と決めた対象そのもの。
+    """
+    style = _soul_style_section()
+    root = util.repo_root()
+    changelog = _md_day_sections(root / "CHANGELOG.md", date)
+    growth = _md_day_sections(root / "butler" / "GROWTH.md", date)
+
+    parts = [_DIARY_GENERATE_RULES]
+    if style:
+        parts.append(
+            "\n===== 文体（`butler/SOUL.md`。**この文体を守る**） =====\n"
+            + style
+            + "\n===== ここまで文体 =====\n"
+        )
+    parts.append(f"\nこの日誌の日付は {date} です。\n")
+    parts.append("\n===== ここから資料（読み取り専用。ここに無いことは書かない） =====\n")
+    parts.append(mechanical)
+    if changelog:
+        parts.append("\n----- 本日 増えた・変わった機能（CHANGELOG.md より） -----\n" + changelog)
+    if growth:
+        parts.append("\n----- 本日の学び（butler/GROWTH.md より） -----\n" + growth)
+    parts.append("\n===== ここまで資料 =====\n")
+    return "".join(parts)
 
 
 def _claude_generate_argv(*, model: str, claude_bin: str | None) -> list[str]:
