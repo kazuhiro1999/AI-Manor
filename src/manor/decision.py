@@ -128,6 +128,77 @@ def rule(
     return {"id": decision_id, "status": verdict, "moved_to_b": moved, "actor": actor}
 
 
+
+def set_fields(
+    conn: sqlite3.Connection,
+    decision_id: str,
+    *,
+    title: str | None = None,
+    recommend: str | None = None,
+    background: str | None = None,
+    risk: str | None = None,
+    evidence: str | None = None,
+) -> dict[str, object]:
+    """裁定を**下す前**に、推奨・背景・根拠・題名を書き直す（`manor decision set`）。
+
+    ⚠ 2026-09-08 に新設。それまで書き直す道が無く、**起票のときに書いた長文が主人の画面に
+    そのまま残り続けていました**（主人のご指摘「この長い文章は読みたくありません」）。
+    `manor task set --status-note` を足したときと同じ形——**直せない欄は、間違ったまま
+    主人が読む欄になります。**
+
+    裁定済みのものは触りません（履歴を書き換えないため。直したいなら新しい decision を
+    起こす）。`recommend` を書き換えたときは、`ask` と同じく task 側の `recommendation`
+    にも写します——**同じ値が2箇所にあるので、片方だけ直すと板と画面で食い違います。**
+    """
+    row = conn.execute("SELECT * FROM decision WHERE id = ?", (decision_id,)).fetchone()
+    if row is None:
+        raise ManorError(
+            f"decision が見つかりません: {decision_id}",
+            code=2,
+            key="error.decision.not_found",
+            params={"decision_id": decision_id},
+        )
+    if str(row["status"]) != "open":
+        raise ManorError(
+            f"裁定済みの decision は書き直せません: {decision_id}（{row['status']}）",
+            code=2,
+            key="error.decision.already_ruled",
+            params={"decision_id": decision_id, "status": str(row["status"])},
+        )
+    if risk is not None and risk not in VALID_RISK:
+        raise ManorError(
+            f"語彙外の risk です: {risk!r}",
+            code=2,
+            key="error.decision.risk_unknown",
+            params={"risk": repr(risk)},
+        )
+
+    fields: dict[str, object] = {}
+    for name, value in (
+        ("recommendation", recommend),
+        ("background", background),
+        ("risk", risk),
+        ("evidence", evidence),
+    ):
+        if value is not None:
+            fields[name] = value
+    if fields:
+        sets = ", ".join(f"{k} = ?" for k in fields)
+        conn.execute(f"UPDATE decision SET {sets} WHERE id = ?", (*fields.values(), decision_id))
+    if title is not None:
+        conn.execute("UPDATE node SET title = ? WHERE id = ?", (title, decision_id))
+    if background is not None:
+        # `ask` は background を node.body にも書いている。片方だけ直すと食い違う
+        conn.execute("UPDATE node SET body = ? WHERE id = ?", (background, decision_id))
+    if recommend is not None:
+        for r in conn.execute(
+            "SELECT src FROM edge WHERE dst = ? AND rel = 'decided_by'", (decision_id,)
+        ).fetchall():
+            conn.execute("UPDATE task SET recommendation = ? WHERE id = ?", (recommend, str(r["src"])))
+    graph.touch_node(conn, decision_id)
+    return {"id": decision_id, "changed": sorted([*fields, *(["title"] if title is not None else [])])}
+
+
 def list_decisions(conn: sqlite3.Connection, *, open_only: bool = False) -> list[dict[str, object]]:
     sql = "SELECT d.*, n.title AS title FROM decision d JOIN node n ON n.id = d.id WHERE 1=1"
     if open_only:

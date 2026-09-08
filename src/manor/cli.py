@@ -87,7 +87,45 @@ def _handoff_id_type(value: str) -> int:
 # --- task ----------------------------------------------------------------------
 
 
+#: 「主人が読む欄」の目安の長さ（`CLAUDE.md`「書くときの作法」）。**上限ではなく目安**で、
+#: 超えても書けます——超えたことを**書いた本人にその場で伝える**ためだけの表です。
+#:
+#: 注意: 2026-09-08 に新設。作法そのものは v1 の `CLAUDE.md` にありましたが、v2 への移行で
+#: 節ごと落ち、**規則が無い間に執事の起票が伸びていきました**（主人のご指摘「退化しています。
+#: この長い文章は読みたくありません」）。規則を文章で戻すだけでは同じことが起きるので、
+#: **書いた瞬間に目に入る**形にしています。翌朝の `manor check` では遅い——長い欄は
+#: 既に主人の画面に出ています。
+_FIELD_LIMITS: dict[str, int] = {
+    "title": 60,
+    "goal": 120,
+    "now": 160,
+    "next": 120,
+    "recommend": 120,
+    "background": 320,
+}
+
+
+def _warn_long_fields(**fields: object) -> None:
+    """目安を超えた欄を stderr へ1行ずつ。**書けてはいる**ので終了コードは変えない。"""
+    for name, value in fields.items():
+        cap = _FIELD_LIMITS.get(name)
+        if cap is None or not isinstance(value, str):
+            continue
+        n = len(value.strip())
+        if n > cap:
+            print(
+                i18n.t(
+                    "cli.warn.field_too_long",
+                    label=i18n.t(f"cli.field.{name}"),
+                    n=n,
+                    cap=cap,
+                ),
+                file=sys.stderr,
+            )
+
+
 def cmd_task_add(conn, home, args) -> object:
+    _warn_long_fields(title=args.title, goal=args.goal, now=args.now, next=args.next)
     task_id = task_mod.add(
         conn,
         args.title,
@@ -113,6 +151,7 @@ def cmd_task_add(conn, home, args) -> object:
 
 
 def cmd_task_set(conn, home, args) -> object:
+    _warn_long_fields(title=args.title, goal=args.goal, now=args.now, next=args.next)
     task_id = task_mod.set(
         conn,
         args.id,
@@ -312,6 +351,9 @@ def cmd_project_show(conn, home, args) -> object:
 
 
 def cmd_decision_ask(conn, home, args) -> object:
+    _warn_long_fields(
+        title=args.title, recommend=args.recommend, background=args.background
+    )
     decision_id = decision_mod.ask(
         conn,
         args.title,
@@ -324,6 +366,29 @@ def cmd_decision_ask(conn, home, args) -> object:
     if args.json:
         return {"id": decision_id}
     return i18n.t("decision.ask.done", id=decision_id, task_id=args.task_id)
+
+
+def cmd_decision_set(conn, home, args) -> object:
+    """裁定を下す前に推奨・背景・根拠を書き直す（2026-09-08 新設）。
+
+    書き直す道が無かったので、起票時の長文が主人の画面に残り続けていた。
+    """
+    _warn_long_fields(
+        title=args.title, recommend=args.recommend, background=args.background
+    )
+    result = decision_mod.set_fields(
+        conn,
+        args.id,
+        title=args.title,
+        recommend=args.recommend,
+        background=args.background,
+        risk=args.risk,
+        evidence=args.evidence,
+    )
+    if args.json:
+        return result
+    changed = ", ".join(str(c) for c in result["changed"]) or "-"
+    return i18n.t("decision.set.done", id=args.id, changed=changed)
 
 
 def cmd_decision_rule(conn, home, args) -> object:
@@ -979,6 +1044,17 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("id")
     p.add_argument("--json", action="store_true")
     p.set_defaults(func=cmd_decision_show, is_write=False)
+
+    p = decision_sub.add_parser("set")
+    p.add_argument("id")
+    p.add_argument("--title", default=None)
+    p.add_argument("--recommend", default=None, help=i18n.t("cli.decision.set.recommend.help"))
+    p.add_argument("--background", default=None, help=i18n.t("cli.decision.set.background.help"))
+    p.add_argument("--risk", default=None)
+    p.add_argument("--evidence", default=None, help=i18n.t("cli.decision.set.evidence.help"))
+    p.add_argument("--json", action="store_true")
+    p.add_argument("--no-render", action="store_true")
+    p.set_defaults(func=cmd_decision_set, is_write=True)
 
     # --- milestone ---
     milestone_p = subparsers.add_parser("milestone", help=i18n.t("cli.milestone.help"))
