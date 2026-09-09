@@ -4,19 +4,22 @@ import { MemoryRouter } from "react-router-dom";
 import { ToastProvider } from "../../components/Toast";
 import { agentsModule } from "./index";
 import type { AgentCard } from "../../app/types";
-import { renderFaceThumbnail } from "./faceRenderer";
+import { getFaceThumbnail } from "./faceRenderer";
 import { ja } from "../../app/i18n/ja";
 
 // 姿（VRM）を実際に読む・描く経路は three.js/three-vrm 本体（動的 import で vendor を読む）
-// なので jsdom では動かさない。`renderFaceThumbnail`（vendor の読み込み・1フレーム描画・
+// なので jsdom では動かさない。`getFaceThumbnail`（保存済みの絵の取得・vendor の読み込み・1フレーム描画・
 // toDataURL・レンダラー破棄を1つにまとめた関数）をまるごとモックし、一覧側の
 // 「読み込み中は silhouette・成功したら <img> に差し替え・失敗したら silhouette のまま・
 // 同時には1体しか処理しない・キャッシュされる」という振る舞いだけを検める。
 vi.mock("./faceRenderer", () => ({
-  renderFaceThumbnail: vi.fn(),
+  getFaceThumbnail: vi.fn(),
 }));
 
-const mockRenderFaceThumbnail = vi.mocked(renderFaceThumbnail);
+// ⚠ 2026-09-09: 一覧は `getFaceThumbnail` を呼ぶようになった（保存済みの絵を先に試し、
+// 無ければ VRM から焼いて残す）。モックの相手を変え忘れると、実物の three.js が
+// jsdom で動き出して落ちる——**入口の名前を変えたら、モックも数える。**
+const mockRenderFaceThumbnail = vi.mocked(getFaceThumbnail);
 
 function mockFetch(agents: AgentCard[]) {
   globalThis.fetch = vi.fn().mockImplementation(async (input: RequestInfo | URL) => {
@@ -213,7 +216,7 @@ describe("担当の一覧画面（ADR-011 D3）", () => {
     expect(mockRenderFaceThumbnail).toHaveBeenCalledTimes(1);
 
     // 画面を作り直す（「開き直し」を模す）。モジュール内キャッシュは残ったままなので、
-    // renderFaceThumbnail は再び呼ばれず、即座に <img> が出る。
+    // getFaceThumbnail は再び呼ばれず、即座に <img> が出る。
     cleanup();
     mockFetch(rows);
     renderScreen();

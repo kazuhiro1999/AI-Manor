@@ -147,6 +147,7 @@ def create_app(home: Path, *, host: str = "127.0.0.1", read_only: bool = False) 
     from .api_v1 import dashboard as api_dashboard
     from .api_v1 import extensions as api_extensions
     from .api_v1 import face_models as api_face_models
+    from .api_v1 import face_thumbnail as api_face_thumbnail
     from .api_v1 import face_talk as api_face_talk
     from .api_v1 import face_window as api_face_window
     from .api_v1 import house, imports as api_imports, kitchen, meta, money
@@ -175,6 +176,8 @@ def create_app(home: Path, *, host: str = "127.0.0.1", read_only: bool = False) 
     api_setup.register(app, ctx)  # ADR-007 D4（初回セットアップ）
     api_extensions.register(app, ctx)  # ADR-009 D6（拡張機能）
     api_face_models.register(app, ctx)  # ADR-008 §7 D14（姿の出し入れ API。画面から差し替え・削除）
+    # 一覧に VRM を読ませないための正面画像（2026-09-09 主人のご提案）
+    api_face_thumbnail.register(app, ctx)
     api_face_talk.register(app, ctx)  # ADR-008 §8 D17〜D20（小窓の通話。claude -p を1回だけ呼ぶ経路）
     api_face_window.register(app, ctx)  # ADR-011 D5・D6・D7（開く・口の予定表・ピン留め）
 

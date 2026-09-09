@@ -227,3 +227,55 @@ export async function renderFaceThumbnail(agentId: string): Promise<FaceRenderRe
     }
   }
 }
+
+/** サーバに残してある正面画像を試す。**これが本筋の経路**（2026-09-09 主人のご提案）。
+ *
+ * ⚠ ここまで一覧は、担当ごとに VRM（18MB）を丸ごと読んで1フレーム焼いて**捨てて**いた。
+ * 焼いた絵はブラウザの変数にしか無いので、画面を開き直すたびに全部やり直し——
+ * 担当が2人なら毎回 35MB。絵をサーバに残せば、次からは数十KB で済む。
+ */
+async function loadStoredThumbnail(agentId: string): Promise<FaceRenderResult | null> {
+  try {
+    const res = await fetch(`/face/thumbnail.png?agent=${encodeURIComponent(agentId)}`, {
+      credentials: "same-origin",
+    });
+    if (!res.ok) return null; // 404 = まだ撮っていない。VRM から焼く側へ倒す
+    const blob = await res.blob();
+    return await new Promise<FaceRenderResult>((resolve) => {
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        const url = String(reader.result || "");
+        resolve(url.startsWith("data:image/png") ? { status: "loaded", dataUrl: url } : { status: "error" });
+      };
+      reader.onerror = () => resolve({ status: "error" });
+      reader.readAsDataURL(blob);
+    });
+  } catch {
+    return null;
+  }
+}
+
+/** 焼いた絵をサーバへ残す。**失敗しても表示は続ける**——絵は出ているので、
+ * 残せなかったことで画面を止める理由がない（次に開いた人がまた焼くだけ）。 */
+async function storeThumbnail(agentId: string, dataUrl: string): Promise<void> {
+  try {
+    await fetch("/api/v1/face/thumbnail", {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ agent: agentId, data_url: dataUrl }),
+    });
+  } catch {
+    /* 残せなくても表示は続ける */
+  }
+}
+
+/** 一覧が呼ぶ入口。**まず保存済みの絵、無ければ VRM から焼いて残す。** */
+export async function getFaceThumbnail(agentId: string): Promise<FaceRenderResult> {
+  const stored = await loadStoredThumbnail(agentId);
+  if (stored && stored.status === "loaded") return stored;
+
+  const rendered = await renderFaceThumbnail(agentId);
+  if (rendered.status === "loaded") void storeThumbnail(agentId, rendered.dataUrl);
+  return rendered;
+}

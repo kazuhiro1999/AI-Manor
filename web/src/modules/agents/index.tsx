@@ -31,7 +31,7 @@ import { ScreenHeader } from "../../components/ScreenHeader";
 import { useToast } from "../../components/Toast";
 // D4「小窓を開く」は設定画面と同じ経路を使う。ここでは import するだけで書き直さない。
 import { FACE_AGENT_ORDER, openFaceWindow } from "../settings";
-import { renderFaceThumbnail, type FaceRenderResult } from "./faceRenderer";
+import { getFaceThumbnail, type FaceRenderResult } from "./faceRenderer";
 import { useT } from "../../app/i18n";
 // バックエンド（agent_meta.py）の日本語 label/summary は唯一の出どころとして残しつつ、
 // 画面ではこの7つの固定の担当 id だけ i18n のキーへ引き直す（ADR-012 D12「担当の名前は
@@ -77,10 +77,10 @@ async function runFaceQueue(): Promise<void> {
       const agentId = faceQueue.shift()!;
       queuedFaceIds.delete(agentId);
       if (faceCache.has(agentId)) continue; // 既に決着していれば描き直さない
-      // renderFaceThumbnail は自分で例外を握りつぶして {status:"error"} を返す約束だが、
+      // getFaceThumbnail は自分で例外を握りつぶして {status:"error"} を返す約束だが、
       // 万一破られてもキュー全体を止めない（1体の失敗が残り全員を巻き込まないように）。
       // eslint-disable-next-line no-await-in-loop
-      const result = await renderFaceThumbnail(agentId).catch((): FaceRenderResult => ({ status: "error" }));
+      const result = await getFaceThumbnail(agentId).catch((): FaceRenderResult => ({ status: "error" }));
       faceCache.set(agentId, result);
       notifyFaceListeners(agentId);
     }

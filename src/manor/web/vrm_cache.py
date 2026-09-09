@@ -44,8 +44,13 @@ def _vrm_etag(stat: os.stat_result) -> str:
     return '"' + hashlib.md5(base.encode(), usedforsecurity=False).hexdigest() + '"'
 
 
-def vrm_response(request: Request, path: Path) -> Response:
-    """VRM を返す。再訪（`If-None-Match` / `If-Modified-Since`）なら 304。"""
+def vrm_response(
+    request: Request, path: Path, *, media_type: str = "model/gltf-binary"
+) -> Response:
+    """大きめのファイルを返す。再訪（`If-None-Match` / `If-Modified-Since`）なら 304。
+
+    姿（VRM）と正面画像（PNG）が同じ関数を通る——**配り方を2箇所に書かない**。
+    """
     stat = path.stat()
     etag = _vrm_etag(stat)
     last_modified = formatdate(stat.st_mtime, usegmt=True)
@@ -69,4 +74,4 @@ def vrm_response(request: Request, path: Path) -> Response:
         if since is not None and int(stat.st_mtime) <= int(since):
             return Response(status_code=304, headers=headers)
 
-    return FileResponse(path, media_type="model/gltf-binary", headers=headers)
+    return FileResponse(path, media_type=media_type, headers=headers)

@@ -114,6 +114,7 @@ ALLOWLIST: set[str] = {
     "web/face.py",
     "web/api_v1/auth.py",
     "web/api_v1/face_models.py",
+    "web/api_v1/face_thumbnail.py",
     "web/api_v1/face_talk.py",
     "web/api_v1/face_window.py",
     "web/api_v1/house.py",

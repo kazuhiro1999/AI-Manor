@@ -28,6 +28,7 @@ from ...agent_meta import agent_label, valid_agents
 from .._common import WebContext, require_writable
 from .. import face as face_mod
 from ..face import _require_agent, _resolved_under
+from .face_thumbnail import drop_thumbnail
 
 #: VRM の実体は glTF バイナリ。先頭4バイトの魔法数（D14）。
 _GLTF_MAGIC = b"glTF"
@@ -146,6 +147,9 @@ def register(app: FastAPI, ctx: WebContext) -> None:
             # ここまで来て初めて入れ替える。失敗（中身が違う・大きすぎる・書き込みエラー）は
             # すべて一時ファイルの後始末だけで済み、今ある姿は壊れない（archive.py と同じ順序）。
             os.replace(tmp_path, target)
+            # ⚠ **古い正面画像を捨てる**（2026-09-09 主人のご提案）。残すと、姿を
+            # 差し替えたのに一覧が前の顔を出し続ける——次に一覧を開いた人が撮り直します。
+            drop_thumbnail(ctx.home, agent)
             ok = True
         finally:
             await file.close()
@@ -163,6 +167,8 @@ def register(app: FastAPI, ctx: WebContext) -> None:
         own = _resolved_under(face_dir / f"{agent}.vrm", face_dir)
         if own is not None and own.is_file():
             own.unlink()
+            # 姿を消したら正面画像も消す（顔だけ残ると、姿の無い担当が顔を持つ）
+            drop_thumbnail(ctx.home, agent)
             return _model_info(ctx, agent)
 
         # `model.vrm`（後方互換の名前）はここでは消さない（D15）。旧い名前しか無いときは、
