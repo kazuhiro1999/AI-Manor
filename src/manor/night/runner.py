@@ -499,6 +499,83 @@ def _runlog_start(home: Path, *, ref: str, model: str) -> tuple[sqlite3.Connecti
         return None, None
 
 
+#: 失敗のときに残す証拠の置き場（`MANOR_HOME/night/failures/`。④・git 管理外）と、残す本数。
+#: **溜め続けない**（`manor-slack-inbox.log` で踏んだのと同じ形。検分 S6）。
+FAILURE_DIR_NAME = "failures"
+FAILURE_KEEP = 30
+#: 標準出力・標準エラーを何文字ずつ残すか。**丸ごとは残さない**（②が混ざりうるので短く切る）。
+FAILURE_TAIL_CHARS = 4000
+
+
+def diagnose(parsed: dict[str, Any] | None, *, code: int, killed: bool) -> dict[str, Any]:
+    """`claude` の結果 JSON から「なぜ終わったか」を抜く（**推測で埋めない**）。
+
+    2026-09-10 の夜勤が exit=1 で落ちたとき、記録に残っていたのは「（理由不明）」だけだった。
+    `_RESULT_FIELD_RE` が `"result"` フィールドしか見ておらず、**失敗の JSON には
+    `"result"` が無い**ためである（実測: `--max-turns 1` で落とすと
+    `{"is_error":true, ..., "terminal_reason":"max_turns"}` が返り、`"result"` は無い）。
+
+    `terminal_reason` は CLI が明示的に入れてくる——`max_turns` などが直に読める。
+    **手がかりを1つに頼らない**ので、`subtype`・`is_error`・`num_turns` も一緒に持つ。
+    """
+    out: dict[str, Any] = {"exit_code": code, "killed": killed}
+    if not isinstance(parsed, dict):
+        out["parsed"] = False
+        return out
+    out["parsed"] = True
+    for key in ("terminal_reason", "subtype", "is_error", "num_turns", "duration_api_ms", "total_cost_usd"):
+        if key in parsed:
+            out[key] = parsed[key]
+    usage = parsed.get("usage")
+    if isinstance(usage, dict):
+        out["usage"] = {
+            k: usage.get(k)
+            for k in ("input_tokens", "output_tokens", "cache_creation_input_tokens", "cache_read_input_tokens")
+        }
+    denials = parsed.get("permission_denials")
+    if isinstance(denials, list):
+        out["permission_denials"] = len(denials)
+    return out
+
+
+def write_failure_dump(
+    home: Path, *, attempt: int, argv: list[str], stdout: str, stderr: str, diag: dict[str, Any]
+) -> Path | None:
+    """落ちた理由の**現物**を1件のファイルに残す（`night/failures/<日時>.json`）。
+
+    **標準出力と標準エラーを混ぜない。** それまでは `raw = stdout + stderr` に畳んでから
+    正規表現をかけていたので、「どちらが言ったのか」が消えていた——`claude` の失敗には
+    stderr にしか出ないものがある（実測: `this workspace has not been trusted` で
+    `.claude/settings.json` の許可が 49 件無視される）。
+
+    失敗しても夜勤を止めない（**観測は実行を止めない**。`_runlog_start` と同じ姿勢）。
+    """
+    try:
+        d = Path(home) / "night" / FAILURE_DIR_NAME
+        d.mkdir(parents=True, exist_ok=True)
+        path = d / f"{datetime.now():%Y-%m-%d_%H%M%S}.json"
+        path.write_text(
+            json.dumps(
+                {
+                    "at": util.now(),
+                    "attempt": attempt,
+                    "argv": argv,
+                    "diagnosis": diag,
+                    "stdout_tail": (stdout or "")[-FAILURE_TAIL_CHARS:],
+                    "stderr_tail": (stderr or "")[-FAILURE_TAIL_CHARS:],
+                },
+                ensure_ascii=False,
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+        for old in sorted(d.glob("*.json"))[:-FAILURE_KEEP]:
+            old.unlink(missing_ok=True)
+        return path
+    except OSError:
+        return None
+
+
 def _runlog_finish(
     conn: sqlite3.Connection | None,
     run_id: int | None,
@@ -523,10 +600,22 @@ def _runlog_finish(
             )
         elif code == 0 and not killed:
             runlog.finish(conn, run_id, exit_reason="done", note="結果JSONを解釈できず")
-        elif is_session_limit(raw):
-            runlog.finish(conn, run_id, exit_reason="limit", note=why)
         else:
-            runlog.finish(conn, run_id, exit_reason="failed", note=why)
+            # **失敗でも数字を捨てない。** それまでは非0で終わると turns も cost も
+            # usage も `None` になり、「何ターンまで行って落ちたのか」が分からなかった
+            # ——`--max-turns` に当たったのかを、翌朝に判定する材料が消えていた
+            # （2026-09-10 の主人のご指摘）。
+            info = runlog.from_claude_result(parsed) if isinstance(parsed, dict) else None
+            runlog.finish(
+                conn, run_id,
+                exit_reason="limit" if is_session_limit(raw) else "failed",
+                note=why,
+                **(
+                    {"usage": info["usage"], "cost": info["cost"], "turns": info["turns"]}
+                    if info is not None
+                    else {}
+                ),
+            )
         conn.commit()
     except sqlite3.Error:
         pass
@@ -788,7 +877,21 @@ def _run_impl(
                 final_killed = killed
                 break
 
-            log.write("ERROR", f"claude が異常終了しました (exit={code}): {why}")
+            # **理由を捨てない**（2026-09-10 の夜勤が「（理由不明）」だけ残して落ちた）。
+            diag = diagnose(parsed, code=code, killed=killed)
+            result["diagnosis"] = diag
+            reason = diag.get("terminal_reason") or diag.get("subtype")
+            tail = f"（{reason}）" if reason else ""
+            log.write("ERROR", f"claude が異常終了しました (exit={code}){tail}: {why}")
+            dump = write_failure_dump(
+                home, attempt=attempt, argv=argv,
+                stdout=child["stdout"] or "", stderr=child["stderr"] or "", diag=diag,
+            )
+            if dump is not None:
+                result["failure_dump"] = str(dump)
+                log.write("ERROR", f"落ちたときの出力を残しました: {dump.name}")
+            else:
+                log.write("WARN", "落ちたときの出力を残せませんでした")
 
             reset_at = get_reset_at(why, datetime.now()) if is_session_limit(raw) else None
             if no_resume or attempt >= 2 or reset_at is None:
