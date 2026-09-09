@@ -34,7 +34,10 @@ CREATE TABLE IF NOT EXISTS task (
   -- ADR-010 D2「タスクの種類」: 人に意味がある分類（level とは無関係。並べ替え・絞り込み・
   -- 振り返りのための札）。語彙は task_kind 表。必須ではない（空文字を許す）。既存 DB へは
   -- db.py の _add_column_if_missing が init/migrate_core の両方から冪等に足す。
-  kind        TEXT NOT NULL DEFAULT ''
+  kind        TEXT NOT NULL DEFAULT '',
+  -- T37（2026-09-10）: 起票の出所を機械的に持たせる（`now` の文言「仕分け待ち」で
+  -- 判定していたのをやめる）。空文字＝出所の記録なし。`idea`＝意見箱（Web/Slack #idea）。
+  source      TEXT NOT NULL DEFAULT ''
 );
 CREATE INDEX IF NOT EXISTS task_status ON task(status, section);
 

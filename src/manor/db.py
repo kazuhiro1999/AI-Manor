@@ -147,6 +147,8 @@ def migrate_core(home: Path) -> None:
         _add_column_if_missing(conn, "decision", "actor", "TEXT NOT NULL DEFAULT ''")
         # ADR-010 D2: 既存 DB の task に kind 列を冪等に足す。
         _add_column_if_missing(conn, "task", "kind", "TEXT NOT NULL DEFAULT ''")
+        # T37（2026-09-10）: 起票の出所（意見箱等）を持たせる列。
+        _add_column_if_missing(conn, "task", "source", "TEXT NOT NULL DEFAULT ''")
         # 済んだ節目（2026-09-05）。既存 DB は全部 NULL＝「まだ」から始まる。
         _add_column_if_missing(conn, "milestone", "done_at", "TEXT")
         # 予定をプロジェクトへ結ぶ列（2026-09-07）。**秘書の表だが、ここで足してよい**
