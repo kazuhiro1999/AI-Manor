@@ -16,13 +16,14 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import FileResponse, HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from .. import util
 from ..agent_meta import agent_label, valid_agents
 from ._common import WebContext
+from .vrm_cache import vrm_response
 
 #: face.html・vendor 一式（`/face-static/...` として配る）。
 FACE_STATIC_DIR = Path(__file__).resolve().parent / "face_static"
@@ -83,27 +84,27 @@ def register(app: FastAPI, ctx: WebContext) -> None:
         return HTMLResponse(_face_html(agent), headers=_NO_CACHE_HEADERS)
 
     @app.get("/face/model.vrm", include_in_schema=False)
-    def face_model(agent: str = "butler") -> FileResponse:
+    def face_model(request: Request, agent: str = "butler") -> Response:
         _require_agent(agent)
         face_dir = ctx.home / "face"
         expected = f"home/face/{agent}.vrm"
 
         candidate = _resolved_under(face_dir / f"{agent}.vrm", face_dir)
         if candidate is not None and candidate.is_file():
-            return FileResponse(candidate, media_type="model/gltf-binary")
+            return vrm_response(request, candidate)
 
         # 後方互換: butler だけ home/face/model.vrm を読む（D3）。
         if agent == "butler":
             legacy = _resolved_under(face_dir / "model.vrm", face_dir)
             if legacy is not None and legacy.is_file():
-                return FileResponse(legacy, media_type="model/gltf-binary")
+                return vrm_response(request, legacy)
 
             # 同梱の既定アバター（2026-09-05 主人の指示）。**執事だけ**に落とす——
             # 全担当に落とすと、姿を1体も置いていない家で7人が同じ顔になる。
             # 「姿がまだ無い担当は輪郭のまま」の区別（ADR-011 D3）を保つ。
             bundled = bundled_default_model()
             if bundled is not None:
-                return FileResponse(bundled, media_type="model/gltf-binary")
+                return vrm_response(request, bundled)
 
         raise HTTPException(status_code=404, detail=f"姿が置かれていません（{expected}）")
 

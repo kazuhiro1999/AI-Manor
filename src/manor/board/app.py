@@ -15,10 +15,11 @@ import webbrowser
 from datetime import datetime
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 
+from ..web.vrm_cache import vrm_response
 from ._common import BoardContext
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
@@ -109,14 +110,17 @@ def create_app(home: Path, *, read_only: bool = False) -> FastAPI:
         )
 
     @app.get("/face/model.vrm")
-    def face_model() -> FileResponse:
+    def face_model(request: Request) -> Response:
         """姿（VRM）。`home/face/model.vrm` にあれば配る。主人の資産なのでリポジトリには
         入れない（board の static には置かない）。無ければ 404 —— 小窓側は3行だけで足りる。
+
+        配り方（キャッシュ・304）は `web/vrm_cache.py` に一本化してある——**同じ配り方を
+        2箇所に書かない**（2026-09-09）。
         """
         p = ctx.home / "face" / "model.vrm"
         if not p.is_file():
             raise HTTPException(status_code=404, detail="VRM が置かれていません（home/face/model.vrm）")
-        return FileResponse(p, media_type="model/gltf-binary")
+        return vrm_response(request, p)
 
     @app.get("/favicon.ico")
     def favicon() -> Response:
