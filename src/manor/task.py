@@ -102,6 +102,7 @@ def add(
     recommendation: str = "",
     risk: str = "",
     kind: str = "",
+    source: str = "",
 ) -> str:
     """タスクを1件作る。既定の状態は `todo`。
 
@@ -111,6 +112,10 @@ def add(
     `kind`（ADR-010 D2「タスクの種類」）は `level` とは無関係の、人向けの分類の札。
     **必須ではない**——空文字（既定）ならそのまま通す。非空なら `task_kind` の語彙に
     あることを確かめる（無ければ `ManorError(code=2)`）。
+
+    `source` は「どの経路から入ってきたか」の印（例: `idea`＝意見箱）。`kind` とは別軸
+    ——`kind` は人向けの分類、`source` は機械が起票の出どころを見分けるための語彙外の
+    自由文字列。空文字（既定）は「通常の起票」を意味する。
     """
     if section not in VALID_SECTIONS:
         raise ManorError(
@@ -184,9 +189,9 @@ def add(
     )
     conn.execute(
         "INSERT INTO task (id, project_id, status, status_note, owner, level, section,"
-        " goal, now, next, recommendation, risk, due, kind)"
-        " VALUES (?, ?, 'todo', '', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        (task_id, project_id, owner, level, section, goal, now, next_, recommendation, risk, due, kind),
+        " goal, now, next, recommendation, risk, due, kind, source)"
+        " VALUES (?, ?, 'todo', '', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (task_id, project_id, owner, level, section, goal, now, next_, recommendation, risk, due, kind, source),
     )
     conn.execute(
         "INSERT INTO task_event (task_id, at, from_status, to_status, note, actor)"
@@ -208,6 +213,36 @@ def add(
             background=body or goal,
             risk=risk,
         )
+    return task_id
+
+
+#: 意見箱（`source='idea'`）の起票がタイトルに使う先頭何文字か。Slack 経由の他の
+#: 取り込み種別（`slack.INTAKE_TITLE_MAX`）と同じ値だが、意見箱は Slack を経由しない
+#: 経路（画面のフォーム）からも起票されるため、ここに持つ。
+IDEA_TITLE_MAX = 80
+
+
+def add_idea(conn: sqlite3.Connection, body: str) -> str:
+    """意見箱への起票を1本にする。**Slack（`#idea`）も画面のフォームも、ここを通す**
+
+    ——2箇所に書くと片方だけ直す事故になる（この4日で5回踏んだ、と夜勤の指示に明記）。
+    `hold`（仕分け待ち）で入れ、`source='idea'` を立てる。**`hold` で入れる理由**:
+    `todo` で入れると板の未着手に紛れ、題名だけが並ぶ（主人ご自身が起こした T26 で
+    実際にそうなり「どこにいったか分からなくなった」と仰った）。
+    """
+    title = body.splitlines()[0][:IDEA_TITLE_MAX] or body[:IDEA_TITLE_MAX]
+    task_id = add(
+        conn,
+        title,
+        cls="self_config",
+        body=body,
+        goal=i18n.t("slack.intake.idea.goal"),
+        now=i18n.t("slack.intake.idea.now"),
+        next_=i18n.t("slack.intake.idea.next"),
+        owner="master",
+        source="idea",
+    )
+    status(conn, task_id, "hold")
     return task_id
 
 
@@ -513,6 +548,7 @@ def list_tasks(
     owner: str | None = None,
     include_settled: bool = False,
     exclude_project_kind: str | None = None,
+    source: str | None = None,
 ) -> list[dict[str, object]]:
     """課題の一覧。
 
@@ -538,6 +574,9 @@ def list_tasks(
     if owner:
         sql += " AND t.owner = ?"
         params.append(owner)
+    if source is not None:
+        sql += " AND t.source = ?"
+        params.append(source)
     if exclude_project_kind:
         sql += (
             " AND (t.project_id IS NULL OR t.project_id NOT IN"

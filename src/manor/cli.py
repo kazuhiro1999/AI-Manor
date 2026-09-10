@@ -245,6 +245,7 @@ def cmd_task_list(conn, home, args) -> object:
         project=args.project,
         owner=args.owner,
         include_settled=args.all,
+        source=args.source,
     )
     if args.json:
         return rows
@@ -935,6 +936,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--section")
     p.add_argument("--project")
     p.add_argument("--owner")
+    # 起票の出どころで絞る（`idea`＝意見箱）。⚠ 2026-09-11 の夜勤が `cmd_task_list` から
+    # `args.source` を読む側だけ書いてターン上限で落ち、**この行が無いまま朝を迎えた**
+    # ——`manor task list` が丸ごと AttributeError で死んでいた。
+    p.add_argument("--source")
     p.add_argument("--all", action="store_true")
     p.add_argument("--json", action="store_true")
     p.set_defaults(func=cmd_task_list, is_write=False)

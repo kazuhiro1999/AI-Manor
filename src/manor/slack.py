@@ -1726,21 +1726,9 @@ def _create_from_intake(
     if kind == "idea":
         from . import task as task_mod
 
-        # 改善要望は **`hold`（仕分け待ち）** で入れる。`todo` で入れると板の未着手に
-        # 紛れ、題名だけが並ぶ——⚠ 主人がご自分で起こされた T26 が実際にそうなり、
-        # 「どこにいったか分からなくなった」と仰った（2026-09-08）。
-        task_id = task_mod.add(
-            conn,
-            title,
-            cls="self_config",
-            body=body,
-            goal=i18n.t("slack.intake.idea.goal"),
-            now=i18n.t("slack.intake.idea.now"),
-            next_=i18n.t("slack.intake.idea.next"),
-            owner="master",
-        )
-        task_mod.status(conn, task_id, "hold")
-        return task_id
+        # **意見箱の起票は task_mod.add_idea を通す**。画面のフォーム（`/api/v1/ideas`）も
+        # 同じ関数を通る——2箇所に書くと片方だけ直す事故になる（この4日で5回踏んだ）。
+        return task_mod.add_idea(conn, body)
     if kind == "cal" and when:
         from .staff.secretary import ops as sec_ops
 
