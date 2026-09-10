@@ -65,7 +65,19 @@ DEFAULT_MIN_MINUTES = 20
 DEFAULT_GRACE_MINUTES = 15
 DEFAULT_LOCK_MAX_MIN = 180
 DEFAULT_MODEL = "sonnet"
-DEFAULT_MAX_TURNS = 80
+#: 1回の `claude -p` に許すターン数（主人の裁定 D15・2026-09-11 に 80 → 200）。
+#:
+#: **80 では一覧の最後まで届かなかった。** 2026-09-10・09-11 と2晩続けて打ち切られ、
+#: 最後に置いた指示（意見箱）へ2晩とも着手できずに終わっている（実測:
+#: `terminal_reason=max_turns` / `errors=["Reached maximum number of turns (80)"]`）。
+#: 締切は 269 分あるのに、実際に使えていたのは **14分45秒**——止めていたのは時計ではなく
+#: この数字だった。
+#:
+#: **費用の心配は要らない**（主人のご指摘 2026-09-11）。`claude -p` は API の従量課金では
+#: なく主人のプランの枠を使う。結果 JSON の `total_cost_usd` は `"costBasis": "list"`
+#: ——**定価に換算した目安**であって、請求ではない。効いてくるのは5時間枠のほうなので、
+#: 際限なく上げるのではなく、一晩ぶんが枠を食い潰さない範囲に置く。
+DEFAULT_MAX_TURNS = 200
 DEFAULT_TASK_NAME = "manor-night"
 
 #: 夜勤に持たせる道具。**主人の裁定（D11・D12・2026-09-09）で広げました**:
