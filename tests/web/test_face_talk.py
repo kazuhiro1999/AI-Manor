@@ -254,6 +254,10 @@ def test_ask_with_play_here_does_not_play_on_the_server(
         calls.append(play)
         return {"ok": True, "reason": "", "cached": True, "wav": "x.wav", "audio_id": "a" * 64}
 
+    # T50: talk_session.ask() は既定で実時刻（_now()）を見る。夜間（静穏時間）に
+    # 回すと `available=False` で早期return し、speak_detail が一度も呼ばれない
+    # （calls == [] のまま）。T7 と同じ族——時刻に依る試験は時計を固定する。
+    monkeypatch.setenv("MANOR_NOW", NOON)
     _mock_success(monkeypatch)
     monkeypatch.setattr(talk_session.voice, "speak_detail", fake_speak_detail)
 
