@@ -37,6 +37,13 @@ tasks.md` の N2 も `task list --source idea` を見るよう更新した。
 `voice.speak_detail` が一度も呼ばれないため（T7と同じ族）。試験に `MANOR_NOW` で
 時計を固定して直した。
 
+### 修正: `manor board` の2つの起動口が食い違っていた（T10・G15の残り）
+
+`register()`（`manor board`）と `__main__.main()`（`python -m manor.board`）を
+`tests/test_night_entrypoints_agree.py` と同じ検算にかけたところ、`--json` が
+`register()` 側にだけあり `__main__.py` 側に無いことが分かった（どちらも未使用の
+フラグ）。互換性を壊さない側（`__main__.py` に追加）で揃えた。
+
 ## 2026-09-11 その2（夜勤を「席の列」に組み直した）
 
 主人のご指示「後付けのパッチではなく、設計部分から直してもらって構わない」。
