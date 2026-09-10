@@ -182,6 +182,6 @@ export const importsModule: ModuleDefinition = {
   title: "nav.imports",
   description: "imports.description",
   icon: "📥",
-  order: 9,
+  order: 10,
   routes: [{ index: true, element: <ImportsScreen /> }],
 };

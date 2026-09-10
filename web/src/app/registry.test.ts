@@ -4,7 +4,7 @@ import { buildRegistry, MODULE_IDS } from "./registry";
 describe("registry", () => {
   const registry = buildRegistry(false);
 
-  it("契約どおり10モジュール（login含む）が揃っている", () => {
+  it("契約どおり11モジュール（login含む）が揃っている", () => {
     expect(registry.map((m) => m.id).sort()).toEqual([...MODULE_IDS].sort());
   });
 

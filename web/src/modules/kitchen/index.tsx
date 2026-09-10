@@ -302,6 +302,6 @@ export const kitchenModule: ModuleDefinition = {
   title: "nav.kitchen",
   description: "kitchen.description",
   icon: "🍳",
-  order: 4,
+  order: 5,
   routes: [{ index: true, element: <KitchenScreen /> }],
 };

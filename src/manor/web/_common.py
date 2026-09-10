@@ -101,13 +101,15 @@ MODULE_DEFS: tuple[dict[str, object], ...] = (
     {"id": "dashboard", "title": "ダッシュボード", "icon": "🏠", "order": 1, "table": None},
     {"id": "agents", "title": "担当", "icon": "🧑‍🤝‍🧑", "order": 2, "table": None},
     {"id": "tasks", "title": "タスク", "icon": "📋", "order": 3, "table": None},
-    {"id": "kitchen", "title": "台所", "icon": "🍳", "order": 4, "table": "chef_pantry"},
-    {"id": "house", "title": "家事", "icon": "🧹", "order": 5, "table": "housekeeper_chore"},
-    {"id": "money", "title": "家計", "icon": "💰", "order": 6, "table": "steward_expense"},
-    {"id": "secretary", "title": "秘書", "icon": "🗓", "order": 7, "table": "secretary_reminder"},
-    {"id": "rules", "title": "ルール", "icon": "📜", "order": 8, "table": None},
-    {"id": "imports", "title": "取り込み", "icon": "📥", "order": 9, "table": None},
-    {"id": "night", "title": "夜勤", "icon": "🌙", "order": 10, "table": None},
+    # ADR-010 系「意見箱」（夜勤 N6・主人のご要望 2026-09-08）。tasks の次に置く。
+    {"id": "ideas", "title": "意見箱", "icon": "💡", "order": 4, "table": None},
+    {"id": "kitchen", "title": "台所", "icon": "🍳", "order": 5, "table": "chef_pantry"},
+    {"id": "house", "title": "家事", "icon": "🧹", "order": 6, "table": "housekeeper_chore"},
+    {"id": "money", "title": "家計", "icon": "💰", "order": 7, "table": "steward_expense"},
+    {"id": "secretary", "title": "秘書", "icon": "🗓", "order": 8, "table": "secretary_reminder"},
+    {"id": "rules", "title": "ルール", "icon": "📜", "order": 9, "table": None},
+    {"id": "imports", "title": "取り込み", "icon": "📥", "order": 10, "table": None},
+    {"id": "night", "title": "夜勤", "icon": "🌙", "order": 11, "table": None},
     {"id": "settings", "title": "設定", "icon": "⚙", "order": 90, "table": None},
     # ADR-009 D7: サイドバー最下部。order を大きく取り、将来コアのモジュールが増えても
     # 常に最後に来るようにする（拡張は core ではないので並びの終端が定位置）。

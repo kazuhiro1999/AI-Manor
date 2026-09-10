@@ -204,6 +204,6 @@ export const houseModule: ModuleDefinition = {
   title: "nav.house",
   description: "house.description",
   icon: "🧹",
-  order: 5,
+  order: 6,
   routes: [{ index: true, element: <HouseScreen /> }],
 };

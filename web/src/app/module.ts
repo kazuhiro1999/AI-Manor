@@ -7,6 +7,7 @@ export type ModuleId =
   | "dashboard"
   | "agents"
   | "tasks"
+  | "ideas"
   | "kitchen"
   | "house"
   | "money"
@@ -49,6 +50,7 @@ export const MODULE_TITLE_KEY: Record<ModuleId, TranslationKey> = {
   dashboard: "nav.dashboard",
   agents: "nav.agents",
   tasks: "nav.tasks",
+  ideas: "nav.ideas",
   kitchen: "nav.kitchen",
   house: "nav.house",
   money: "nav.money",

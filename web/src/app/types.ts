@@ -37,6 +37,8 @@ export interface Task {
   title: string;
   body?: string | null;
   handoff?: Handoff | null;
+  //: 起票の出どころ（例: "idea" = 意見箱）。空文字は通常の起票（src/manor/task.py add() 参照）。
+  source?: string | null;
 }
 
 export interface WithdrawnTask extends Task {

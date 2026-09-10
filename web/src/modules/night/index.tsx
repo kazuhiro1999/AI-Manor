@@ -22,6 +22,6 @@ export const nightModule: ModuleDefinition = {
   title: "nav.night",
   description: "night.description",
   icon: "🌙",
-  order: 10,
+  order: 11,
   routes: [{ index: true, element: <NightScreen /> }],
 };

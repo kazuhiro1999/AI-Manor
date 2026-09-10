@@ -207,6 +207,6 @@ export const rulesModule: ModuleDefinition = {
   title: "nav.rules",
   description: "rules.description",
   icon: "📜",
-  order: 8,
+  order: 9,
   routes: [{ index: true, element: <RulesScreen /> }],
 };

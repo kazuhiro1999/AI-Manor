@@ -224,6 +224,6 @@ export const moneyModule: ModuleDefinition = {
   title: "nav.money",
   description: "money.description",
   icon: "¥",
-  order: 6,
+  order: 7,
   routes: [{ index: true, element: <MoneyScreen /> }],
 };

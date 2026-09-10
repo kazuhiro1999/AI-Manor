@@ -8,6 +8,7 @@ import type { ModuleDefinition } from "./module";
 import { dashboardModule } from "../modules/dashboard";
 import { agentsModule } from "../modules/agents";
 import { tasksModule } from "../modules/tasks";
+import { ideasModule } from "../modules/ideas";
 import { kitchenModule } from "../modules/kitchen";
 import { houseModule } from "../modules/house";
 import { moneyModule } from "../modules/money";
@@ -25,6 +26,7 @@ export function buildRegistry(readOnly: boolean): ModuleDefinition[] {
     dashboardModule,
     agentsModule,
     tasksModule(readOnly),
+    ideasModule,
     kitchenModule,
     houseModule,
     moneyModule,
@@ -43,6 +45,7 @@ export const MODULE_IDS = [
   "dashboard",
   "agents",
   "tasks",
+  "ideas",
   "kitchen",
   "house",
   "money",

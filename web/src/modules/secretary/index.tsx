@@ -191,6 +191,6 @@ export const secretaryModule: ModuleDefinition = {
   title: "nav.secretary",
   description: "secretary.description",
   icon: "🗂",
-  order: 7,
+  order: 8,
   routes: [{ index: true, element: <SecretaryScreen /> }],
 };
