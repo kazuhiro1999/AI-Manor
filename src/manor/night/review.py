@@ -79,6 +79,7 @@ def run(
         background=i18n.t("night.review.stuck.background", items=stuck_lines),
         risk="low",
         evidence=evidence,
+        asked_by="butler",
     )
     result["asked"] = [decision_id]
     return result

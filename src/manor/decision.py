@@ -27,10 +27,14 @@ def ask(
     background: str,
     risk: str = "",
     evidence: str = "",
+    asked_by: str = "",
 ) -> str:
     """decision を open で作る。`evidence`（ADR-006 D5）: 何を見て推奨したか
     （ファイル・数字・出典を `- ` 箇条書きで）。**空でも通す**——`manor check` の C11 が
     「evidence の無い open decision」を数える（警告。終了コードは変えない）。
+
+    `asked_by`（T16）: 誰が起票したか。`rule()` の `actor`（誰が裁定したか）と同じ語・
+    同じ流儀——既定は空文字＝「出所の記録なし」（古い行と、これから書く行を区別する）。
     """
     if risk not in VALID_RISK:
         raise ManorError(
@@ -51,9 +55,9 @@ def ask(
     decision_id = graph.create_node(conn, kind="decision", title=title, body=background, id_prefix="D")
     now_ts = util.now()
     conn.execute(
-        "INSERT INTO decision (id, status, recommendation, background, risk, evidence, asked_at)"
-        " VALUES (?, 'open', ?, ?, ?, ?, ?)",
-        (decision_id, recommend, background, risk, evidence, now_ts),
+        "INSERT INTO decision (id, status, recommendation, background, risk, evidence, asked_at, asked_by)"
+        " VALUES (?, 'open', ?, ?, ?, ?, ?, ?)",
+        (decision_id, recommend, background, risk, evidence, now_ts, asked_by),
     )
     graph.link(conn, task_id, "decided_by", decision_id)
     conn.execute(

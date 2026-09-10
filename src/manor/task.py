@@ -212,6 +212,7 @@ def add(
             recommend=recommendation,
             background=body or goal,
             risk=risk,
+            asked_by=owner or "butler",
         )
     return task_id
 

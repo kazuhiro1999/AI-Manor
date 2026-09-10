@@ -363,6 +363,7 @@ def cmd_decision_ask(conn, home, args) -> object:
         background=args.background,
         risk=args.risk,
         evidence=args.evidence,
+        asked_by=args.actor or "cli",
     )
     if args.json:
         return {"id": decision_id}
@@ -419,15 +420,16 @@ def cmd_decision_list(conn, home, args) -> object:
     return "\n".join(out)
 
 
-def format_actor(actor: object) -> str:
-    """裁定の出所を人向けの1語に。**空なら「記録なし」と明示する**（S12）。
+def format_actor(actor: object, *, unrecorded_key: str = "decision.actor.unrecorded") -> str:
+    """出所を人向けの1語に。**空なら「記録なし」と明示する**（S12）。
 
     黙って空欄にすると「執事が書いた」と読まれてしまう——分かっていないことを、
-    分かっているように見せない。
+    分かっているように見せない。`unrecorded_key`（T16）: 裁定（`actor`）と起票
+    （`asked_by`）は「記録なし」の意味が違う（何より前の行か）ので、呼び分ける。
     """
     value = str(actor or "").strip()
     if not value:
-        return i18n.t("decision.actor.unrecorded")
+        return i18n.t(unrecorded_key)
     if value in _KNOWN_ACTORS:
         return i18n.t(f"decision.actor.{value}")
     return value  # 知らない出所は生のまま出す（勝手に訳さない）
@@ -454,6 +456,12 @@ def cmd_decision_show(conn, home, args) -> object:
     if data["risk"]:
         lines.append(f"risk: {data['risk']}")
     lines.append(f"asked_at: {data['asked_at']}")
+    lines.append(
+        i18n.t(
+            "decision.show.asked_by",
+            asked_by=format_actor(data.get("asked_by"), unrecorded_key="decision.asked_by.unrecorded"),
+        )
+    )
     if data["decided_at"]:
         lines.append(f"decided_at: {data['decided_at']} ruling: {data['ruling']}")
         # **出所を必ず1行出す。** 記録の無い古い行は黙って空欄にせず、そう言う（S12）。
@@ -1027,6 +1035,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--evidence", default="",
         help=i18n.t("cli.decision.ask.evidence.help"),
     )
+    p.add_argument("--actor", default="", help=i18n.t("cli.decision.ask.actor.help"))
     p.add_argument("--json", action="store_true")
     p.add_argument("--no-render", action="store_true")
     p.set_defaults(func=cmd_decision_ask, is_write=True)

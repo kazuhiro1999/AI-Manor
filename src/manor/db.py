@@ -145,6 +145,8 @@ def migrate_core(home: Path) -> None:
         _add_column_if_missing(conn, "task_event", "authorized_by", "TEXT")
         # S12（2026-09-06）: 裁定の出所。既存の行は空文字＝「出所の記録なし」。
         _add_column_if_missing(conn, "decision", "actor", "TEXT NOT NULL DEFAULT ''")
+        # T16（2026-09-11）: 起票の出所。既存の行は空文字＝「出所の記録なし」。
+        _add_column_if_missing(conn, "decision", "asked_by", "TEXT NOT NULL DEFAULT ''")
         # ADR-010 D2: 既存 DB の task に kind 列を冪等に足す。
         _add_column_if_missing(conn, "task", "kind", "TEXT NOT NULL DEFAULT ''")
         # T37（2026-09-10）: 起票の出所（意見箱等）を持たせる列。
@@ -207,6 +209,8 @@ def init(home: Path) -> list[str]:
         _add_column_if_missing(conn, "task_event", "authorized_by", "TEXT")
         # S12（2026-09-06）: 裁定の出所。既存の行は空文字＝「出所の記録なし」。
         _add_column_if_missing(conn, "decision", "actor", "TEXT NOT NULL DEFAULT ''")
+        # T16（2026-09-11）: 起票の出所。既存の行は空文字＝「出所の記録なし」。
+        _add_column_if_missing(conn, "decision", "asked_by", "TEXT NOT NULL DEFAULT ''")
 
         # ADR-010 D2: 既存 DB の task に kind 列を冪等に足す（新規 DB は core.sql の
         # CREATE TABLE が最初から持つ）。

@@ -256,7 +256,8 @@ LINE_ALLOWLIST: set[str] = {
     # 台帳に永続する記録(主人が入れたデータと同じ扱い)。CLI の言語設定に関わらず
     # 日本語のまま。
     # 2026-09-06（S12）: `rule()` に actor の説明を足して行がずれた（87 → 101）。
-    "decision.py:101",
+    # 2026-09-11（T16）: `ask()` に asked_by の docstring を足して行がずれた（101 → 105）。
+    "decision.py:105",
     # [データ] chef/ops.py: validate_date の既定 field="日付"。tests/staff/test_chef.py が
     # field 省略で呼ぶため既定値は残すが、エラーの ManorError 側では呼び出し元が
     # field_key を渡して訳している(cli.py 側からの呼び出しはすべて明示的)。
@@ -281,7 +282,9 @@ LINE_ALLOWLIST: set[str] = {
     # docstring を足して 542 → 556 へずれ、既存の一言が「新しい日本語」に見えた）。
     # ⚠ **2026-09-11 に2度目**（夜勤が `add_idea` と `source` を足して 238→273・556→595）。
     # 3日で2度ずれている——行番号ではなく文字列そのもので許可する形へ変えたい（T12 に起票）。
-    "task.py:273", "task.py:595",
+    # ⚠ **2026-09-11 に3度目**（T16・夜勤が HG 昇格の decision.ask に asked_by を足して
+    # 273→274・595→596）。T12 の必要性がさらに裏付けられた。
+    "task.py:274", "task.py:596",
     # [データ] project.py: `project.kind` の値そのもの。DB に入っている文字列なので
     # 訳さない——訳すと、既存の行と一致しなくなる（2026-09-09・T26 の実装で追加）。
     "project.py:18",

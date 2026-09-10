@@ -73,7 +73,11 @@ CREATE TABLE IF NOT EXISTS decision (
   -- アプリで押したものと、執事が CLI から書いたものが台帳上で見分けられなかった**。
   -- 既定は空文字＝**出所の記録なし**（古い行と、これから書く行を区別するため。
   -- `task_event.actor` の既定 'butler' とは意図的に違う——あちらは全行に値がある）。
-  actor      TEXT NOT NULL DEFAULT ''
+  actor      TEXT NOT NULL DEFAULT '',
+  -- 誰が起票したか（T16・G15の残り）。`actor`（誰が裁定したか）とは別軸——
+  -- 起票は執事の CLI（夜勤含む）・`task.add` 内部の HG 昇格・Web の起票フォームの
+  -- どこからでも起きうるので、同じ理由で出所を残す。既定は空文字（記録なし）。
+  asked_by   TEXT NOT NULL DEFAULT ''
 );
 
 CREATE TABLE IF NOT EXISTS milestone (
