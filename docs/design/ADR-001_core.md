@@ -185,6 +185,7 @@ done / withdrawn → 他へは戻せない（戻したいなら新しいタス�
 ```
 
 - `waiting` へ入るとき `--note`（何を待つか）必須
+- **システムの外（実機・打ち合わせ・査読結果など）を待つときは、`depends_on` / `decided_by` の辺を作らない。** `v_blocked_ready`（C1）はこの2つの辺だけを見るので、待つ相手がタスクでも裁定でもないものに辺を張ると、無関係な依存が片付いた瞬間に「もう待つ理由が無い」と誤って鳴る。理由は `status_note` にだけ書く（T21・2026-09-06 に3回・B83/B181/B26 で実例。辺を残して検査を黙らせる操作を繰り返すと、検査そのものが信用されなくなる）
 - `doing` へ入るとき `owner` が必須（既定 butler。`--owner chef` で担当を指す。`delegated_to` 辺も張る）
 - **`level='HG'` のタスクは、`decided_by` で結ばれた decision が `approved|modified` でなければ `done` にできない**（人間の門を機械が守る）
 - `section='A'` のタスクは `recommendation` 必須

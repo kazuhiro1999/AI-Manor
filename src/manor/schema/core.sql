@@ -126,6 +126,16 @@ DROP VIEW IF EXISTS v_blocked_ready;
 -- もう無い。v1 の不整合①の実例（「Q22/Q23 が裁定済みなのに B82 が待っていた」）は
 -- 決定を見ないと再現できないため、depends_on だけでなく decided_by も見る
 -- （執事の裁定。ADR-003 §8-12）。
+--
+-- **システムの外を待つタスクは、辺を作らない。** 辺の先（task/decision）が無い
+-- waiting/hold はこの VIEW の対象外になる——「実機の確認待ち」「先方との打ち合わせ」
+-- 「査読結果待ち」のように待つ相手がタスクでも裁定でもないものは、理由を
+-- `status_note`（`manor task status <id> waiting --note "..."`）に書き、depends_on /
+-- decided_by の辺は作らない（作っていたら、片付いたタイミングで外す）。辺を残すと
+-- 依存が片付いた瞬間に「もう待つ理由が無い」と誤って鳴る（T21・2026-09-06 に3回・
+-- B83/B181/B26 で実例）。書き忘れて辺が無いまま本当のブロッカーを見落とすリスクは
+-- 残るが、辺を残して検査を黙らせる操作を繰り返すほうが害が大きい（検査そのものを
+-- 信用しなくなる道。外部視点 E12: 警報の46%が誤報）。
 CREATE VIEW v_blocked_ready AS
   SELECT t.id FROM task t
   WHERE t.status IN ('waiting','hold')
