@@ -16,6 +16,27 @@
 
 ---
 
+## 2026-09-11 その3（意見箱の画面。夜勤 N6）
+
+### 追加: 意見箱の画面と API
+
+主人のご要望（2026-09-08）「意見箱を Web アプリにもフォームを用意してください」に
+応えた。新規モジュール `web/src/modules/ideas/`（icon 💡・タスクの次の並び）に本文
+1つだけのフォームと、新しい順の一覧（状態の札：仕分け待ち／対応中／完了✓／見送り）を
+置く。API は `GET/POST /api/v1/ideas`（`src/manor/web/api_v1/ideas.py`）で、Slack
+（`#idea`）と同じ `task_mod.add_idea` を1本だけ通す（起票経路を2つに割らない）。
+
+一覧の見分けは `task.source='idea'` 列を使う。従来は `now` の文言（「仕分け待ち」で
+始まる）でしか判定できず、夜勤の定例（N2）の指示もその語に依っていた——`home/night/
+tasks.md` の N2 も `task list --source idea` を見るよう更新した。
+
+### 修正: 夜間に必ず落ちる時刻依存の試験（T50）
+
+`test_ask_with_play_here_does_not_play_on_the_server` が夜に回すと赤くなっていた。
+`talk_session.ask()` は既定で実時刻を見ており、静穏時間中は早期returnして
+`voice.speak_detail` が一度も呼ばれないため（T7と同じ族）。試験に `MANOR_NOW` で
+時計を固定して直した。
+
 ## 2026-09-11 その2（夜勤を「席の列」に組み直した）
 
 主人のご指示「後付けのパッチではなく、設計部分から直してもらって構わない」。
