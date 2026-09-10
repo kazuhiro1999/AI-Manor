@@ -37,6 +37,7 @@ def register(subparsers: "argparse._SubParsersAction") -> None:
     _add_uninstall(sub)
     _add_report(sub)
     _add_review(sub)
+    _add_progress(sub)
 
 
 def _add_run(sub: "argparse._SubParsersAction") -> None:
@@ -112,6 +113,73 @@ def _cmd_status(args: "argparse.Namespace") -> int:
         print(json.dumps(data, ensure_ascii=False, indent=2))
     else:
         print(runner.format_status(data))
+    return 0
+
+
+def _add_progress(sub: "argparse._SubParsersAction") -> None:
+    """一晩の台帳を読み書きする3つ（2026-09-11 の作り直し）。
+
+    **夜勤の席がここを叩く。** 席は尽きる（ターン上限）ので、「どこまで済んだか」は
+    席の外に置かなければ次の席へ渡らない。作業報告の散文を機械が読むのは駄目——
+    書式が揺れた瞬間に壊れ、しかも壊れたことに気づけない（`night/progress.py` 参照）。
+    """
+    p = sub.add_parser("done", help=i18n.t("cli.night.done.help"))
+    p.add_argument("item")
+    p.add_argument("--note", default="", help=i18n.t("cli.night.done.note.help"))
+    p.add_argument("--date", default=None, help=i18n.t("cli.night.progress.date.help"))
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=_cmd_done, is_write=False, needs_db=False)
+
+    p = sub.add_parser("stuck", help=i18n.t("cli.night.stuck.help"))
+    p.add_argument("item")
+    p.add_argument("--why", required=True, help=i18n.t("cli.night.stuck.why.help"))
+    p.add_argument("--date", default=None, help=i18n.t("cli.night.progress.date.help"))
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=_cmd_stuck, is_write=False, needs_db=False)
+
+    p = sub.add_parser("progress", help=i18n.t("cli.night.progress.help"))
+    p.add_argument("--date", default=None, help=i18n.t("cli.night.progress.date.help"))
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=_cmd_progress, is_write=False, needs_db=False)
+
+
+def _mark(args: "argparse.Namespace", state: str, note: str) -> int:
+    from . import progress as progress_mod
+
+    home = util.manor_home()
+    date = args.date or progress_mod.today()
+    entry = progress_mod.mark(home, date, args.item, state, note=note)
+    if args.json:
+        print(json.dumps({"item": args.item, "date": date, **entry}, ensure_ascii=False, indent=2))
+    else:
+        print(i18n.t(f"night.progress.{state}", item=args.item))
+    return 0
+
+
+def _cmd_done(args: "argparse.Namespace") -> int:
+    return _mark(args, "done", args.note)
+
+
+def _cmd_stuck(args: "argparse.Namespace") -> int:
+    return _mark(args, "stuck", args.why)
+
+
+def _cmd_progress(args: "argparse.Namespace") -> int:
+    from . import progress as progress_mod
+
+    home = util.manor_home()
+    date = args.date or progress_mod.today()
+    summary = progress_mod.summary(home, date)
+    if args.json:
+        print(json.dumps(summary, ensure_ascii=False, indent=2))
+        return 0
+    print(i18n.t("night.progress.header", date=date, sittings=summary["sittings"]))
+    for label, key in (("done", "done"), ("doing", "doing"), ("stuck", "stuck")):
+        ids = summary[key]
+        if ids:
+            print(i18n.t(f"night.progress.line_{label}", items=", ".join(ids)))
+    if not (summary["done"] or summary["doing"] or summary["stuck"]):
+        print(i18n.t("night.progress.empty"))
     return 0
 
 

@@ -131,9 +131,8 @@ def test_a_failed_night_leaves_the_reason_behind(home_path: Path, tmp_path: Path
 
     result = runner.run(home_path, now="02:00", exec_cmd=cmd, echo=False)
 
-    assert result["status"] == "failed"
-
-    # 1. 何で終わったかが last-run に残る
+    # ⚠ **`max_turns` はもう「晩の失敗」ではない**（2026-09-11 の作り直し。席の区切り）。
+    # ここで見たいのは status ではなく「理由が残ったか」なので、そちらを見る。
     assert result["diagnosis"]["terminal_reason"] == "max_turns"
     assert result["diagnosis"]["num_turns"] == 160
 

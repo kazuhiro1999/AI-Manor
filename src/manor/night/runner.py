@@ -48,6 +48,7 @@ from pathlib import Path
 from typing import Any
 
 from .. import db, runlog, util, winps
+from . import plan, progress
 
 # --- 置き場 ------------------------------------------------------------------
 
@@ -750,6 +751,302 @@ def _write_diary_safely(home: Path, *, echo: bool = True) -> dict[str, Any]:
         return {"ok": False, "reason": str(exc)}
 
 
+#: 一晩に設ける席の上限。**止めるのは時計と台帳**で、これは暴走の最後の歯止め。
+MAX_SITTINGS: int = 12
+#: 同じ指示に充てる席の数。これを超えても宣言が無ければ `stuck` にして次へ回す
+#: （空回りの歯止め。同じ1本に一晩ぶんを溶かさない）。
+MAX_SITTINGS_PER_ITEM: int = 2
+
+_PLAN_TEMPLATE = """## 今夜の残り — **機械が数えています。推測しないでください**
+
+これは **{n} 席目**です。下が**まだ済んでいない指示**——上から順に取ってください。
+
+{rows}
+{settled}
+**1本終えるたびに、必ず宣言してください:**
+
+    uv run manor night done <記号> --note "何をしたか一言"
+
+進められないと分かったら（材料が無い・主人の裁定待ち など）:
+
+    uv run manor night stuck <記号> --why "何が足りないか"
+
+**宣言しない限り、その指示は「まだ」のままです**——次の席が同じものをもう一度やります。
+逆に、宣言してあれば、この席が途中で尽きても**次の席が続きから**始めます。
+
+⚠ **席は尽きます。それは事故ではありません。** ターン上限で切れたら、機械が次の席を
+設けて残りを渡します。だからこそ**1本終えるたびにコミットと宣言**をしてください——
+尽きた瞬間に失われるのは、**宣言していない分だけ**です。
+
+---
+
+"""
+
+
+def build_plan_block(remaining: list["plan.Item"], settled: set[str], sitting_no: int) -> str:
+    """プロンプトに差す「今夜の残り」。**執事に台帳を数えさせない。**
+
+    `tasks.md` は主人が書く指示書で、そこには「済んだかどうか」が書かれていない
+    （主人は消し忘れるし、消させるのも筋が違う）。**どこまで進んだかは機械が持ち、
+    席のたびに渡す。**
+    """
+    rows = "\n".join(f"- **{i.id}** {i.title}" for i in remaining) or "- （残りはありません）"
+    done_line = (
+        f"\n**もう片付いているので手を付けないもの**: {', '.join(sorted(settled))}\n"
+        if settled
+        else ""
+    )
+    return _PLAN_TEMPLATE.format(n=sitting_no, rows=rows, settled=done_line)
+
+
+def _run_sitting(
+    home: Path,
+    *,
+    log: "NightLog",
+    argv: list[str],
+    prompt: str,
+    repo_root: Path,
+    deadline_at: datetime,
+    grace_minutes: int,
+    model: str,
+    ref: str,
+) -> dict[str, Any]:
+    """**一席** — `claude -p` を1回だけ動かし、終わり方を種別に畳んで返す。
+
+    ここは「一晩をどう運ぶか」を知らない。知っているのは「1回動かして、どう終わったか」
+    だけ——待つ／諦める／次を設けるの判断は `_conduct` の仕事である（2026-09-11 の
+    作り直しで分けた。それまでは利用上限の待機が内側のループに埋まっていて、
+    「席が尽きた」と「枠が尽きた」を同じ場所で扱っていた）。
+
+    種別: `completed`（自分で終えた）／`max_turns`（ターン上限で切れた＝**区切り**）／
+    `usage_limit`（利用上限）／`killed`（締切＋猶予で打ち切り）／`failed`（それ以外）。
+    """
+    env = dict(os.environ)
+    env["MANOR_HOME"] = str(home)
+    env["MANOR_HOOKS"] = "off"
+
+    run_conn, run_id = _runlog_start(home, ref=ref, model=model)
+    timeout_seconds = max(
+        (deadline_at - datetime.now()).total_seconds() + grace_minutes * 60, 1.0
+    )
+    child = _run_child(argv, cwd=repo_root, env=env, prompt=prompt, timeout_seconds=timeout_seconds)
+
+    code = child["code"]
+    killed = child["killed"]
+    raw = (child["stdout"] or "") + "\n" + (child["stderr"] or "")
+
+    parsed: dict[str, Any] | None = None
+    if child["stdout"].strip():
+        try:
+            candidate = json.loads(child["stdout"])
+            parsed = candidate if isinstance(candidate, dict) else None
+        except Exception:  # noqa: BLE001 - 解釈できないことも「結果」の1つ
+            parsed = None
+
+    why_m = _RESULT_FIELD_RE.search(raw)
+    why = why_m.group(1) if why_m else "（理由不明）"
+    _runlog_finish(run_conn, run_id, code=code, killed=killed, raw=raw, parsed=parsed, why=why)
+
+    diag = diagnose(parsed, code=code, killed=killed)
+
+    # ⚠ 拒まれた道具を捨てない（2026-09-08・主人のご要望）。
+    denials: list[Any] = []
+    if isinstance(parsed, dict) and isinstance(parsed.get("permission_denials"), list):
+        denials = parsed["permission_denials"]
+        if denials:
+            names = sorted({str(d.get("tool_name") or "?") for d in denials if isinstance(d, dict)})
+            log.write("WARN", f"道具を {len(denials)} 回拒まれました: {', '.join(names)}")
+
+    if killed:
+        kind = "killed"
+    elif code == 0:
+        kind = "completed"
+    elif is_session_limit(raw):
+        kind = "usage_limit"
+    elif diag.get("terminal_reason") == "max_turns":
+        kind = "max_turns"
+    else:
+        kind = "failed"
+
+    out: dict[str, Any] = {
+        "kind": kind, "code": code, "killed": killed, "why": why,
+        "diagnosis": diag, "raw": raw, "permission_denials": denials,
+        "turns": diag.get("num_turns") if isinstance(diag.get("num_turns"), int) else None,
+    }
+
+    if kind == "completed":
+        if isinstance(parsed, dict) and parsed.get("is_error"):
+            log.write("WARN", f"claude がエラーを返しました: {parsed.get('result')}")
+        elif isinstance(parsed, dict):
+            log.write("INFO", f"この席は自分で終えました（{parsed.get('num_turns', '?')} ターン）")
+        else:
+            log.write("WARN", "結果JSONを解釈できませんでした（作業自体は行われた可能性があります）")
+        return out
+
+    if killed:
+        log.write("WARN", f"締切＋猶予 {grace_minutes} 分を過ぎても終わらないため打ち切ります")
+
+    # **理由を捨てない**（2026-09-10 の夜勤が「（理由不明）」だけ残して落ちた）。
+    reason = diag.get("terminal_reason") or diag.get("subtype")
+    tail = f"（{reason}）" if reason else ""
+    level = "INFO" if kind == "max_turns" else "ERROR"
+    log.write(level, f"この席は終わりました (exit={code}){tail}: {why}")
+    dump = write_failure_dump(
+        home, attempt=1, argv=argv,
+        stdout=child["stdout"] or "", stderr=child["stderr"] or "", diag=diag,
+    )
+    if dump is not None:
+        out["failure_dump"] = str(dump)
+        log.write(level, f"この席の出力を残しました: {dump.name}")
+    return out
+
+
+def _conduct(
+    home: Path,
+    *,
+    log: "NightLog",
+    items: list["plan.Item"],
+    date: str,
+    body: str,
+    repo_root: Path,
+    first_at: datetime,
+    deadline_at: datetime,
+    min_minutes: int,
+    grace_minutes: int,
+    exec_cmd: str | None,
+    model: str,
+    max_turns: int,
+    no_resume: bool,
+) -> dict[str, Any]:
+    """**一晩** — 締切まで、残っている指示がある限り、席を1つずつ設ける。
+
+    2026-09-11 の作り直し。それまでは「一晩＝`claude -p` 一回」で、セッションが尽きれば
+    その晩が終わっていた。締切は 269 分あるのに使えたのは 14分45秒で、一覧の最後に置いた
+    指示へ2晩とも届かなかった（`terminal_reason=max_turns`）。
+
+    決めたこと:
+
+    - **直列にする。並列にしない。** 足りないのはターンであって時計ではない（269 分中
+      15 分しか使えていなかった）。並列化は**余っている時計を買って、足りている
+      「衝突しない git の索引」を壊す**取引になる
+    - **区切りは「席が尽きたとき」であって「指示1本ごと」ではない。** 席は入るだけ
+      働く——小さい指示は自然に1席へまとまり、大きい指示には次の席が丸ごと充たる
+    - **畳むかどうかを決めるのは時計。** 席が自分から終えても、締切まで余っていれば
+      次の席を設ける（席自身の見立てではなく、機械の時計で決める）
+    - **利用上限の待機は一晩の関心。** 一席は「上限に当たった」と言うだけで、待つかどうかは
+      ここが決める
+    """
+    out: dict[str, Any] = {
+        "sittings": 0, "resumed": False, "resumed_from": None,
+        "exit_code": None, "killed": False, "attempts": 0,
+    }
+    attempts: dict[str, int] = {}
+    resumed_from: datetime | None = None
+    sitting_no = 0
+    status = "done"
+
+    while True:
+        settled = progress.settled(home, date)
+        remaining = [i for i in items if i.id not in settled]
+        if not remaining:
+            log.write("INFO", "今夜の指示は全部片付きました")
+            break
+
+        at = datetime.now() if sitting_no else first_at
+        left = int((deadline_at - at).total_seconds() // 60)
+        if left < min_minutes:
+            log.write("INFO", f"締切まで残り {left} 分（下限 {min_minutes} 分）。今夜はここまでにします")
+            break
+        if sitting_no >= MAX_SITTINGS:
+            log.write("WARN", f"席を {MAX_SITTINGS} 回設けました。歯止めとしてここで止めます")
+            break
+
+        head = remaining[0]
+        attempts[head.id] = attempts.get(head.id, 0) + 1
+        sitting_no = progress.count_sitting(home, date)
+        out["sittings"] = sitting_no
+        out["attempts"] = sitting_no
+        log.write(
+            "INFO",
+            f"{sitting_no} 席目（残り {len(remaining)} 本・{left} 分。先頭は {head.id}）",
+        )
+
+        prompt = (
+            build_clock_block(at, deadline_at, grace_minutes, resumed_from)
+            + build_plan_block(remaining, settled, sitting_no)
+            + body
+        )
+        sitting = _run_sitting(
+            home,
+            log=log,
+            argv=build_exec_argv(exec_cmd, model=model, max_turns=max_turns),
+            prompt=prompt,
+            repo_root=repo_root,
+            deadline_at=deadline_at,
+            grace_minutes=grace_minutes,
+            model=model,
+            # `run` 表の `ref` は**締切の日付**のまま（作り直しの前からそう）。台帳の日付
+            # （＝報告と同じ「今日」）とは、深夜をまたぐ晩だけ食い違う——ここで揃えると
+            # 既存の記録の読み方が変わるので、変えない。
+            ref=deadline_at.strftime("%Y-%m-%d"),
+        )
+        out["exit_code"] = sitting["code"]
+        out["killed"] = sitting["killed"]
+        if sitting.get("diagnosis"):
+            out["diagnosis"] = sitting["diagnosis"]
+        if sitting.get("failure_dump"):
+            out["failure_dump"] = sitting["failure_dump"]
+        if sitting.get("permission_denials"):
+            out["permission_denials"] = sitting["permission_denials"]
+        resumed_from = None
+
+        gained = progress.settled(home, date) - settled
+        if gained:
+            log.write("INFO", f"片付きました: {', '.join(sorted(gained))}")
+        elif sitting["kind"] != "usage_limit" and attempts[head.id] >= MAX_SITTINGS_PER_ITEM:
+            # **空回りの歯止め。** 宣言が無いまま2席を使った指示は、次の席へ回さない
+            # ——1本に一晩ぶんを溶かすより、残りへ進むほうが主人の得になる。
+            progress.mark(
+                home, date, head.id, progress.STUCK,
+                note=f"{attempts[head.id]} 席かけても済んだ宣言が無かったため、運転側で詰まりとしました",
+            )
+            log.write("WARN", f"{head.id} は {attempts[head.id]} 席かけても進みません。詰まりとして次へ回します")
+
+        kind = sitting["kind"]
+        if kind in ("completed", "max_turns"):
+            continue
+
+        if kind == "usage_limit":
+            reset_at = get_reset_at(sitting["why"], datetime.now())
+            if no_resume or reset_at is None:
+                status = "failed"
+                break
+            if (deadline_at - reset_at).total_seconds() / 60 < min_minutes:
+                log.write(
+                    "WARN",
+                    f"利用上限。復帰は {reset_at:%H:%M} で締切 {deadline_at:%H:%M} に間に合わないため、今夜はここまで",
+                )
+                status = "failed_no_time"
+                break
+            wait_sec = int((reset_at - datetime.now()).total_seconds()) + 120
+            log.write(
+                "WARN",
+                f"利用上限に当たりました。{reset_at:%H:%M} の復帰まで {max(wait_sec, 0) // 60} 分待って続けます",
+            )
+            time.sleep(max(wait_sec, 0))
+            resumed_from = reset_at
+            out["resumed"] = True
+            out["resumed_from"] = reset_at.isoformat()
+            continue
+
+        # killed / failed —— 続けない。**同じ壊れ方をもう一度させない**
+        status = "failed"
+        break
+
+    out["status"] = status
+    return out
+
+
 def _run_impl(
     home: Path,
     *,
@@ -822,123 +1119,28 @@ def _run_impl(
 
         log.write("INFO", f"夜勤を開始します（締切 {deadline_at:%H:%M} / 残り {remain} 分）")
 
-        attempt = 0
-        resumed_from: datetime | None = None
-        resumed = False
-        final_code: int | None = None
-        final_killed = False
-
-        while True:
-            attempt += 1
-            at = now_at if attempt == 1 else datetime.now()
-            left_seconds = (deadline_at - at).total_seconds()
-            prompt = build_clock_block(at, deadline_at, grace_minutes, resumed_from) + body
-
-            argv = build_exec_argv(exec_cmd, model=model, max_turns=max_turns)
-            env = dict(os.environ)
-            env["MANOR_HOME"] = str(home)
-            env["MANOR_HOOKS"] = "off"
-
-            run_conn, run_id = _runlog_start(home, ref=deadline_at.strftime("%Y-%m-%d"), model=model)
-
-            timeout_seconds = max(left_seconds + grace_minutes * 60, 1.0)
-            child = _run_child(
-                argv, cwd=repo_root, env=env, prompt=prompt, timeout_seconds=timeout_seconds
+        items = plan.live(plan.parse(tasks_body))
+        date = progress.today()
+        result["items"] = [i.id for i in items]
+        result.update(
+            _conduct(
+                home,
+                log=log,
+                items=items,
+                date=date,
+                body=body,
+                repo_root=repo_root,
+                first_at=now_at,
+                deadline_at=deadline_at,
+                min_minutes=min_minutes,
+                grace_minutes=grace_minutes,
+                exec_cmd=exec_cmd,
+                model=model,
+                max_turns=max_turns,
+                no_resume=no_resume,
             )
-            code = child["code"]
-            killed = child["killed"]
-            raw = (child["stdout"] or "") + "\n" + (child["stderr"] or "")
-
-            parsed: dict[str, Any] | None = None
-            if child["stdout"].strip():
-                try:
-                    candidate = json.loads(child["stdout"])
-                    parsed = candidate if isinstance(candidate, dict) else None
-                except Exception:
-                    parsed = None
-
-            why_m = _RESULT_FIELD_RE.search(raw)
-            why = why_m.group(1) if why_m else "（理由不明）"
-
-            _runlog_finish(run_conn, run_id, code=code, killed=killed, raw=raw, parsed=parsed, why=why)
-
-            # ⚠ 拒まれた道具を捨てない（2026-09-08・主人のご要望）。`claude` の結果 JSON は
-            # `permission_denials` を持っており、夜勤はそれを `parsed` として手にしていながら
-            # usage と cost だけを取って捨てていた。**「何ができなかったか」は報告の散文にしか
-            # 残らず、朝に機械が読めなかった。**
-            if isinstance(parsed, dict):
-                denials = parsed.get("permission_denials")
-                if isinstance(denials, list) and denials:
-                    result["permission_denials"] = denials
-                    names = sorted({str(d.get("tool_name") or "?") for d in denials if isinstance(d, dict)})
-                    log.write("WARN", f"道具を {len(denials)} 回拒まれました: {', '.join(names)}")
-
-            if killed:
-                log.write(
-                    "WARN", f"締切＋猶予 {grace_minutes} 分を過ぎても終わらないため打ち切ります"
-                )
-
-            if code == 0 and not killed:
-                if isinstance(parsed, dict) and parsed.get("is_error"):
-                    log.write("WARN", f"claude がエラーを返しました: {parsed.get('result')}")
-                elif isinstance(parsed, dict):
-                    log.write("INFO", f"夜勤が完了しました（{parsed.get('num_turns', '?')} ターン）")
-                else:
-                    log.write("WARN", "結果JSONを解釈できませんでした（作業自体は行われた可能性があります）")
-                final_code = code
-                final_killed = killed
-                break
-
-            # **理由を捨てない**（2026-09-10 の夜勤が「（理由不明）」だけ残して落ちた）。
-            diag = diagnose(parsed, code=code, killed=killed)
-            result["diagnosis"] = diag
-            reason = diag.get("terminal_reason") or diag.get("subtype")
-            tail = f"（{reason}）" if reason else ""
-            log.write("ERROR", f"claude が異常終了しました (exit={code}){tail}: {why}")
-            dump = write_failure_dump(
-                home, attempt=attempt, argv=argv,
-                stdout=child["stdout"] or "", stderr=child["stderr"] or "", diag=diag,
-            )
-            if dump is not None:
-                result["failure_dump"] = str(dump)
-                log.write("ERROR", f"落ちたときの出力を残しました: {dump.name}")
-            else:
-                log.write("WARN", "落ちたときの出力を残せませんでした")
-
-            reset_at = get_reset_at(why, datetime.now()) if is_session_limit(raw) else None
-            if no_resume or attempt >= 2 or reset_at is None:
-                final_code = code
-                final_killed = killed
-                result["status"] = "failed"
-                break
-            if (deadline_at - reset_at).total_seconds() / 60 < min_minutes:
-                log.write(
-                    "WARN",
-                    f"利用上限。復帰は {reset_at:%H:%M} で締切 {deadline_at:%H:%M} に間に合わない"
-                    "ため、今夜はここまで",
-                )
-                final_code = code
-                final_killed = killed
-                result["status"] = "failed_no_time"
-                break
-
-            wait_sec = int((reset_at - datetime.now()).total_seconds()) + 120
-            log.write(
-                "WARN",
-                f"利用上限に当たりました。{reset_at:%H:%M} の復帰まで "
-                f"{max(wait_sec, 0) // 60} 分待って再開します",
-            )
-            time.sleep(max(wait_sec, 0))
-            resumed_from = reset_at
-            resumed = True
-
-        if result.get("status") not in ("failed", "failed_no_time"):
-            result["status"] = "done"
-        result["exit_code"] = final_code
-        result["killed"] = final_killed
-        result["attempts"] = attempt
-        result["resumed"] = resumed
-        result["resumed_from"] = resumed_from.isoformat() if resumed_from else None
+        )
+        result["progress"] = progress.summary(home, date)
         return result
     finally:
         result["ended_at"] = datetime.now().isoformat()
@@ -1418,12 +1620,35 @@ def health(home: Path, *, within_hours: float = 24.0) -> dict[str, Any]:
         reasons.append(f"夜勤は `{state}` で終わっています")
     if info.get("killed"):
         reasons.append("締切で打ち切られました")
+    # ⚠ **終了コードは「最後の席」のもの**（2026-09-11 の作り直し以降）。ターン上限で
+    # 切れた席は 1 を返すが、それは事故ではなく区切り——晩そのものは続いている。
+    # ここで見るのは「最後の席まで壊れていたか」だけなので、`status` が `done` のときは
+    # 数えない（数えると、正常に片付いた晩が毎朝赤くなる）。
     exit_code = info.get("exit_code")
-    if isinstance(exit_code, int) and exit_code != 0:
+    if state != "done" and isinstance(exit_code, int) and exit_code != 0:
         reasons.append(f"終了コードが {exit_code} です")
-    attempts = info.get("attempts")
-    if isinstance(attempts, int) and attempts > 1:
-        reasons.append(f"{attempts} 回目の起動で終わっています（一度落ちて再開しました）")
+
+    # ⚠ **席の数は異常ではない**（作り直し以降、席が複数あるのが普通の晩）。
+    # 「一度落ちて再開した」の合図は `resumed` のほうへ移した——それまでは `attempts > 1`
+    # を再開の印にしていたが、いまは席の数そのものなので、鳴らすと毎晩鳴る。
+    if info.get("resumed"):
+        back = str(info.get("resumed_from") or "")[11:16]
+        reasons.append(f"利用上限で一度止まり、{back or '復帰'} を待って続けました")
+
+    # **台帳と突き合わせる。** `status` は「晩がどう終わったか」しか言わない——
+    # 全部が詰まっていても、運転そのものは最後まで走れば `done` になる。
+    # **何が片付いたか**は台帳が持っている（`night/progress.py`）。
+    prog = info.get("progress")
+    if isinstance(prog, dict):
+        stuck = prog.get("stuck") or []
+        doing = prog.get("doing") or []
+        items = info.get("items") or []
+        if stuck:
+            reasons.append(f"進められなかった指示があります: {', '.join(map(str, stuck))}")
+        if doing:
+            reasons.append(f"取りかかったまま終わった指示があります: {', '.join(map(str, doing))}")
+        if items and not prog.get("done"):
+            reasons.append("今夜は1本も片付いていません")
 
     denials = info.get("permission_denials")
     if isinstance(denials, list) and denials:

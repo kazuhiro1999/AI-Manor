@@ -70,15 +70,50 @@ def test_health_notices_a_stale_run(home_path: Path) -> None:
 
 
 def test_health_notices_killed_and_bad_status(home_path: Path) -> None:
-    """打ち切り・異常終了・再起動を数える。"""
+    """打ち切り・異常終了・再開を数える。
+
+    ⚠ 「再開した」の印は `attempts`（＝席の数）から `resumed` へ移した（2026-09-11 の
+    作り直し）。席が複数あるのは**普通の晩**なので、席の数で鳴らすと毎晩鳴る。
+    """
     assert cli.main(["init"]) == 0
-    _write_last_run(home_path, status="killed", killed=True, exit_code=3, attempts=2)
+    _write_last_run(
+        home_path, status="killed", killed=True, exit_code=3,
+        resumed=True, resumed_from="2026-09-11T03:40:00",
+    )
 
     reasons = " / ".join(runner.health(home_path)["reasons"])
     assert "killed" in reasons
     assert "打ち切" in reasons
     assert "3" in reasons
-    assert "2 回目" in reasons
+    assert "03:40" in reasons
+
+
+def test_health_stays_quiet_about_the_number_of_sittings(home_path: Path) -> None:
+    """**席が2回あったこと自体は異常ではない。** 作り直し以降、これが普通の晩。"""
+    assert cli.main(["init"]) == 0
+    today = datetime.now().date().isoformat()
+    _write_last_run(
+        home_path, started_at=f"{today}T02:00:00", attempts=3, sittings=3,
+        items=["N1"], progress={"done": ["N1"], "stuck": [], "doing": [], "sittings": 3},
+    )
+    _write_report(home_path, today)
+
+    assert runner.health(home_path)["ok"] is True
+
+
+def test_health_notices_that_nothing_got_done(home_path: Path) -> None:
+    """`status` は `done` でも、**台帳が空なら片付いていない**。"""
+    assert cli.main(["init"]) == 0
+    today = datetime.now().date().isoformat()
+    _write_last_run(
+        home_path, started_at=f"{today}T02:00:00",
+        items=["N1", "N2"], progress={"done": [], "stuck": ["N1"], "doing": [], "sittings": 2},
+    )
+    _write_report(home_path, today)
+
+    reasons = " / ".join(runner.health(home_path)["reasons"])
+    assert "進められなかった" in reasons
+    assert "1本も片付いていません" in reasons
 
 
 def test_health_notices_done_without_a_report(home_path: Path) -> None:

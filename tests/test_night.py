@@ -454,8 +454,11 @@ def test_run_writes_run_table_row_on_success(home: Path, tmp_path: Path):
 
     assert result["status"] == "done"
     rows = _run_rows(home)
-    assert len(rows) == 1
-    row = rows[0]
+    # **席ごとに1行**（2026-09-11 の作り直し。それまでは一晩＝1回だったので1行だった）。
+    # この偽の `claude` は何も宣言しないので、運転側が2席目を設けて空回りを見切る——
+    # 数を固定せず、**1席目の中身**を見る（ADR-006 §3 検証3 が見たいのはそちら）。
+    assert rows, "run 表に1行も入っていない"
+    row = rows[-1]
     assert row["exit_reason"] == "done"
     assert row["turns"] == 3
     assert row["cost_usd"] == 0.02
