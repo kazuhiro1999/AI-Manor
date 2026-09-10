@@ -383,6 +383,11 @@ def status(
 
     戻り値には `warnings`（拒否はしないが伝えるべきこと）が入る。
 
+    **誤って起票したタスクを畳むのも、これで済む**（T35・2026-09-11）: `new_status=
+    "withdrawn"`（`--note` に理由）。SQL で直接消さない——`withdrawn` は既存の終端状態で、
+    `manor task list` の既定から外れ（`done` と同じ扱い）、履歴（`task_event`）は残る。
+    「削除」ではなく「取り消し」なので、level に関わらず既存の権限のまま実行できる。
+
     `authorized_by`（ADR-006 D6）: この遷移を通した decision の id（`D3` 等）か
     handoff の id（`H7` 等）。**明示しなくても**、`level=HG` の task を HG の門を通して
     `done` にするときは、通した decision の id を機械が自動で入れる（呼び出し側が
