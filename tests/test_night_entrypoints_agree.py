@@ -11,6 +11,9 @@
 
 `manor slack` / `manor notion` も同じ形（`register()` と `main()` の2つの口）を
 持っているので、ついでに同じ検算をかける。
+
+`manor board`（サブコマンドを持たない単一パーサ）も同じ2つの口の形なので、
+検算を当てる（T10・G15 の残り）。
 """
 
 from __future__ import annotations
@@ -19,10 +22,20 @@ import argparse
 
 import pytest
 
+from manor import board as board_mod
 from manor import night as night_mod
 from manor import notion as notion_mod
 from manor import slack as slack_mod
+from manor.board import __main__ as board_main
 from manor.night import __main__ as night_main
+
+
+def _flat_options(parser: argparse.ArgumentParser) -> set[str]:
+    """サブコマンドを持たない単一パーサが定義するオプション文字列の集合。"""
+    opts: set[str] = set()
+    for action in parser._actions:  # noqa: SLF001 — argparse の構造を読むのが目的
+        opts.update(action.option_strings)
+    return opts
 
 
 def _options(parser: argparse.ArgumentParser) -> dict[str, set[str]]:
@@ -90,3 +103,14 @@ def test_other_two_entrypoints_share_one_builder(mod, adder: str, name: str) -> 
 
     from_cli = _options(_registered_parser(mod.register))
     assert from_cli == _options(shared), f"{name} の register() が共通の組み立てを使っていません"
+
+
+def test_board_entrypoints_accept_the_same_options() -> None:
+    """`manor board`（register()）と `python -m manor.board`（main()）が同じ引数を受けること。
+
+    board は night/slack/notion と違いサブコマンドを持たない単一パーサ。
+    """
+    from_cli = _flat_options(_registered_parser(board_mod.register))
+    from_module = _flat_options(board_main._build_arg_parser())
+
+    assert from_cli == from_module, "board の register() と __main__.main() の引数が食い違っています"

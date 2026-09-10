@@ -15,12 +15,7 @@ from ..db import require_db
 from ..errors import ManorError
 
 
-def main(argv: list[str] | None = None) -> int:
-    try:
-        sys.stdout.reconfigure(encoding="utf-8")  # type: ignore[union-attr]
-    except Exception:
-        pass
-
+def _build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="python -m manor.board", description="manor board -- ダッシュボード（Web UI）"
     )
@@ -28,7 +23,17 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--port", type=int, default=8788)
     parser.add_argument("--read-only", action="store_true", dest="read_only")
     parser.add_argument("--open", action="store_true", dest="open_browser", help="起動後にブラウザを開く")
-    args = parser.parse_args(argv)
+    parser.add_argument("--json", action="store_true")
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    try:
+        sys.stdout.reconfigure(encoding="utf-8")  # type: ignore[union-attr]
+    except Exception:
+        pass
+
+    args = _build_arg_parser().parse_args(argv)
 
     home = util.manor_home()
     try:
