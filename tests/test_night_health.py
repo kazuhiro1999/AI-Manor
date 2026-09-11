@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import json
+import pytest
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -17,6 +18,32 @@ from manor import cli
 from manor import db
 from manor import slack as slack_mod
 from manor.night import runner
+
+
+@pytest.fixture(autouse=True)
+def _scheduler_is_enabled(monkeypatch):
+    """⚠ `health()` は本物のスケジューラを見る（登録が無効なら鳴る。2026-09-12）。
+    試験は**その機械の登録状態に依らず**通らなければならない（G13「試験は私の機械に
+    たまたま在るものを読んでいる」）——主人が今夜の夜勤を止めた日に、無関係な試験が
+    赤くなった。既定は「有効」にし、無効の振る舞いは別の試験で明示的に作る。"""
+    monkeypatch.setattr(
+        runner, "_query_scheduled_task",
+        lambda task_name: {"platform": "test", "registered": True, "enabled": True, "detail": ""},
+    )
+
+
+def test_health_notices_a_disabled_registration(home_path: Path, monkeypatch) -> None:
+    """止めたまま戻し忘れたら、朝に鳴ること（2026-09-12 主人「今夜は一旦なし」）。"""
+    monkeypatch.setattr(
+        runner, "_query_scheduled_task",
+        lambda task_name: {"platform": "test", "registered": True, "enabled": False, "detail": ""},
+    )
+    today = datetime.now().date().isoformat()
+    _write_last_run(home_path, started_at=f"{today}T02:00:00")
+    _write_report(home_path, today)
+
+    reasons = " / ".join(runner.health(home_path)["reasons"])
+    assert "無効" in reasons
 
 
 def _write_last_run(home: Path, **fields: object) -> None:

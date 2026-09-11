@@ -1377,8 +1377,21 @@ def _query_scheduled_task(task_name: str) -> dict[str, Any]:
             return {"platform": "windows", "registered": None, "detail": "schtasks を呼べませんでした"}
         registered = proc.returncode == 0
         detail = (proc.stdout or proc.stderr or "").strip()[:400]
-        return {"platform": "windows", "registered": registered, "detail": detail}
-    return {"platform": sys.platform, "registered": None, "detail": "このOSでは自動確認していません"}
+        # ⚠ **無効化されていても `registered` は True**（登録は残っている）。
+        # 2026-09-12 に主人が「今夜は夜勤なし」と仰って無効化したとき、`status` は
+        # 「登録: あり」と言い続けた——**戻し忘れても誰も気づかない**形だった。
+        # `schtasks /Query` の出力からロケール依存の「状態」行を読むのではなく、
+        # PowerShell の `State`（`Ready`/`Running`/`Disabled`。言語に依らない）を見る。
+        enabled: bool | None = None
+        if registered:
+            code, out, _ = winps.run(
+                f"(Get-ScheduledTask -TaskName '{task_name}').State", timeout=10
+            )
+            state = (out or "").strip()
+            if code == 0 and state:
+                enabled = state != "Disabled"
+        return {"platform": "windows", "registered": registered, "enabled": enabled, "detail": detail}
+    return {"platform": sys.platform, "registered": None, "enabled": None, "detail": "このOSでは自動確認していません"}
 
 
 def _read_last_run(home: Path, *, dry_run: bool = False) -> dict[str, Any] | None:
@@ -1443,7 +1456,9 @@ def format_status(data: dict[str, Any]) -> str:
         )
 
     sched = data.get("scheduled", {})
-    if sched.get("registered") is True:
+    if sched.get("registered") is True and sched.get("enabled") is False:
+        lines.append("登録: あり——⚠ 無効化されています（今夜は動きません）")
+    elif sched.get("registered") is True:
         lines.append("登録: あり（schtasks）")
     elif sched.get("registered") is False:
         lines.append("登録: なし")
@@ -1601,6 +1616,11 @@ def health(home: Path, *, within_hours: float = 24.0) -> dict[str, Any]:
     home = Path(home)
     info = _read_last_run(home)
     reasons: list[str] = []
+
+    # **登録が無効になっていたら、記録の新旧より先に言う**（戻し忘れの守り。2026-09-12）
+    sched = _query_scheduled_task(DEFAULT_TASK_NAME)
+    if sched.get("registered") and sched.get("enabled") is False:
+        reasons.append("夜勤の登録が無効になっています（意図して止めたなら、戻すのを忘れないでください）")
 
     if info is None:
         return {"ok": False, "reasons": ["夜勤の記録がありません（起動していない可能性）"], "last_run": None}
