@@ -5,6 +5,7 @@ from __future__ import annotations
 import sqlite3
 
 from . import graph, util
+from . import user as user_mod
 from .errors import ManorError
 
 VALID_STATUS = {"active", "paused", "done"}
@@ -47,7 +48,12 @@ def add(
     due: str | None = None,
     body: str = "",
     next_action: str = "",
+    user: str | None = None,
 ) -> str:
+    """`user`（ADR-014 D2「誰の件か」）: 省略時は `user.resolve_default(conn, explicit=user,
+    owner="master")`——何も言わなければ主人の件。ただし `kind == BUTLER_PROJECT_KIND`
+    （執事自身のプロジェクト）なら執事の件（`owner="butler"` として解決する）。
+    """
     if preset not in VALID_PRESET:
         raise ManorError(
             f"語彙外の preset です: {preset!r}",
@@ -69,11 +75,14 @@ def add(
             params={"code": code},
         )
 
+    owner_for_default = "butler" if kind == BUTLER_PROJECT_KIND else "master"
+    user_id = user_mod.resolve_default(conn, explicit=user, owner=owner_for_default)
+
     project_id = graph.create_node(conn, kind="project", title=name, body=body, id_prefix="P")
     conn.execute(
-        "INSERT INTO project (id, code, kind, priority, preset, status, next_action, due)"
-        " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-        (project_id, code, kind, priority, preset, status, next_action, due),
+        "INSERT INTO project (id, code, kind, priority, preset, status, next_action, due, user_id)"
+        " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (project_id, code, kind, priority, preset, status, next_action, due, user_id),
     )
     return project_id
 
@@ -90,7 +99,12 @@ def set(
     due: str | None = None,
     body: str | None = None,
     next_action: str | None = None,
+    user: str | None = None,
 ) -> str:
+    """`user`（ADR-014 D2）を渡せば、知っていて畳んでいない利用者であることを
+    確かめてから書き換える（`user.exists_active`。知らない・畳んだ利用者は
+    `ManorError(code=2)`）。
+    """
     row = resolve(conn, ref)
     project_id = str(row["id"])
     if preset is not None and preset not in VALID_PRESET:
@@ -107,6 +121,13 @@ def set(
             key="error.project.status_unknown",
             params={"status": repr(status)},
         )
+    if user is not None and not user_mod.exists_active(conn, user):
+        raise ManorError(
+            f"user が見つからない、または畳まれています: {user}",
+            code=2,
+            key="error.user.unknown_or_archived",
+            params={"user_id": user},
+        )
 
     fields: dict[str, object] = {}
     if kind is not None:
@@ -121,6 +142,8 @@ def set(
         fields["due"] = due
     if next_action is not None:
         fields["next_action"] = next_action
+    if user is not None:
+        fields["user_id"] = user
     if fields:
         sets = ", ".join(f"{k} = ?" for k in fields)
         conn.execute(f"UPDATE project SET {sets} WHERE id = ?", (*fields.values(), project_id))
@@ -162,8 +185,13 @@ def show(conn: sqlite3.Connection, ref: str) -> dict[str, object]:
 
 
 def list_projects(
-    conn: sqlite3.Connection, *, status: str | None = None, kind: str | None = None
+    conn: sqlite3.Connection,
+    *,
+    status: str | None = None,
+    kind: str | None = None,
+    user_id: str | None = None,
 ) -> list[dict[str, object]]:
+    """`user_id`（ADR-014 D4）: 渡すと「誰の件か」で絞る。`None`（既定）は絞らない。"""
     sql = (
         "SELECT p.*, n.title AS title FROM project p JOIN node n ON n.id = p.id WHERE 1=1"
     )
@@ -174,5 +202,8 @@ def list_projects(
     if kind:
         sql += " AND p.kind = ?"
         params.append(kind)
+    if user_id is not None:
+        sql += " AND p.user_id = ?"
+        params.append(user_id)
     sql += " ORDER BY p.priority, p.code"
     return [dict(r) for r in conn.execute(sql, params).fetchall()]

@@ -50,12 +50,25 @@ SOURCE = "ics"
 # --- 秘密（URL）。secrets.py が読めなくても落ちないよう遅延 import（slack.py と同じ流儀） -------
 
 
-def calendar_url() -> str | None:
-    """`secrets.get("calendar", "url")` の薄いラッパー。読み出しの失敗で全体を落とさない。"""
-    try:
-        from . import secrets as secrets_mod  # noqa: PLC0415
+def calendar_url(user_id: str | None = None, *, home: Path | str | None = None) -> str | None:
+    """ICS の URL（ADR-014 D5: `url` は `per_user`）。
 
-        value = secrets_mod.get("calendar", "url")
+    `user_id` を渡せば `extensions.per_user_value` から読む（principal は空なら
+    従来の `secrets.get("calendar", "url")` へ読み替える。`home` を省略すれば
+    `util.manor_home()`）。`user_id` を省略すれば従来どおり最上位の秘密をそのまま読む
+    （後方互換）。読み出しの失敗で全体を落とさない。
+    """
+    try:
+        if user_id is not None:
+            from . import extensions as extensions_mod  # noqa: PLC0415 - 循環 import を避ける
+            from . import util as util_mod  # noqa: PLC0415
+
+            resolved_home = Path(home) if home is not None else util_mod.manor_home()
+            value = extensions_mod.per_user_value(resolved_home, "calendar", "url", user_id)
+        else:
+            from . import secrets as secrets_mod  # noqa: PLC0415
+
+            value = secrets_mod.get("calendar", "url")
     except Exception:  # noqa: BLE001 - 秘密の読み出しの失敗で同期全体を落とさない
         return None
     return value if isinstance(value, str) and value.strip() else None
@@ -92,8 +105,8 @@ def fetch_ics(url: str, *, timeout: float = FETCH_TIMEOUT) -> dict[str, object]:
 
 def check_connection(home: Path | str | None = None) -> dict[str, object]:
     """拡張の `check()` の実体（ADR-009 D3）。URL の疎通と ICS として読めるかだけ確かめる。
-    **例外は投げない**。`home` は今のところ使わない（URL はホーム非依存。voicevox/notion の
-    `check()` と引数の形を揃えるため受け取るだけ）。
+    **例外は投げない**。「試す」は principal の URL で確かめる（`per_user` 欄の疎通確認は
+    今回やらない。ボタンは今のまま）。
     """
     try:
         url = calendar_url()
@@ -125,20 +138,41 @@ def _require_secretary(conn) -> None:
         )
 
 
-def apply_events(conn, events: list[dict[str, object]]) -> dict[str, object]:
+def apply_events(
+    conn, events: list[dict[str, object]], *, user_id: str | None = None
+) -> dict[str, object]:
     """解析済みの予定（`ics.parse_ics` の戻り値）を `secretary_event` へ冪等に反映する。
 
     **`source = 'ics'` の行だけを対象にする**——SELECT/UPDATE/DELETE のすべてに
     `WHERE source = 'ics'` を通し、`source = 'manual'`（主人が手で入れた予定）には
     構造的に触れないようにする（ADR-012 D6「絶対に触らない」）。
+
+    `user_id`（ADR-014 D5）: 渡すと突き合わせの鍵は実質 `(user_id, external_id)` になる
+    ——同じ `external_id`（同じ UID・開始時刻）を2人が持っていても互いに壊さない。
+    **principal の同期だけは、まだ `user_id` が付いていない（`NULL`）古い ics 行も
+    自分のものとして扱う**——一回の同期でその行の `user_id` が埋まる。`None`（省略）は
+    従来どおり絞らない（後方互換。既存の呼び出し元・試験はこちらのまま）。
     """
     _require_secretary(conn)
     now = util.now()
+
+    if user_id is None:
+        scope_sql = "WHERE source = 'ics' AND external_id IS NOT NULL"
+        scope_params: tuple[object, ...] = ()
+    else:
+        from . import user as user_mod  # noqa: PLC0415 - 循環 import を避けるため遅延
+
+        if user_id == user_mod.principal_id(conn):
+            scope_sql = (
+                "WHERE source = 'ics' AND external_id IS NOT NULL AND (user_id = ? OR user_id IS NULL)"
+            )
+        else:
+            scope_sql = "WHERE source = 'ics' AND external_id IS NOT NULL AND user_id = ?"
+        scope_params = (user_id,)
+
     existing = {
         str(r["external_id"]): dict(r)
-        for r in conn.execute(
-            "SELECT * FROM secretary_event WHERE source = 'ics' AND external_id IS NOT NULL"
-        ).fetchall()
+        for r in conn.execute(f"SELECT * FROM secretary_event {scope_sql}", scope_params).fetchall()
     }
 
     # `external_id` は `UID::開始時刻` なので、**予定を動かすと鍵が変わる**——削除＋追加に
@@ -159,10 +193,11 @@ def apply_events(conn, events: list[dict[str, object]]) -> dict[str, object]:
         row = existing.get(ext_id)
         if row is None:
             conn.execute(
-                'INSERT INTO secretary_event (start, "end", title, place, note, source, external_id, created_at, project_id)'
-                " VALUES (?, ?, ?, ?, ?, 'ics', ?, ?, ?)",
+                'INSERT INTO secretary_event (start, "end", title, place, note, source, external_id,'
+                " created_at, project_id, user_id)"
+                " VALUES (?, ?, ?, ?, ?, 'ics', ?, ?, ?, ?)",
                 (ev["start"], ev.get("end"), ev["title"], ev.get("place") or "", ev.get("note") or "",
-                 ext_id, now, project_by_uid.get(ext_id.split("::", 1)[0])),
+                 ext_id, now, project_by_uid.get(ext_id.split("::", 1)[0]), user_id),
             )
             added += 1
             continue
@@ -172,12 +207,18 @@ def apply_events(conn, events: list[dict[str, object]]) -> dict[str, object]:
             or str(row.get("title")) != str(ev["title"])
             or str(row.get("place") or "") != str(ev.get("place") or "")
             or str(row.get("note") or "") != str(ev.get("note") or "")
+            or (user_id is not None and row.get("user_id") != user_id)
         )
         if changed:
             conn.execute(
                 'UPDATE secretary_event SET start = ?, "end" = ?, title = ?, place = ?, note = ?'
-                " WHERE id = ? AND source = 'ics'",
-                (ev["start"], ev.get("end"), ev["title"], ev.get("place") or "", ev.get("note") or "", row["id"]),
+                + (", user_id = ?" if user_id is not None else "")
+                + " WHERE id = ? AND source = 'ics'",
+                (
+                    ev["start"], ev.get("end"), ev["title"], ev.get("place") or "", ev.get("note") or "",
+                    *((user_id,) if user_id is not None else ()),
+                    row["id"],
+                ),
             )
             updated += 1
 
@@ -190,12 +231,9 @@ def apply_events(conn, events: list[dict[str, object]]) -> dict[str, object]:
     return {"added": added, "updated": updated, "removed": removed, "total": len(events)}
 
 
-def sync(home: Path | str) -> dict[str, object]:
-    """`manor calendar sync` の実体。URL 取得 → 解析 → 冪等な反映まで一気に行う。
-    取得や解析が失敗しても例外は投げない（`{"ok": False, "reason": ...}` を返す）。
-    """
-    home = Path(home)
-    url = calendar_url()
+def _sync_one(home: Path, user_id: str | None) -> dict[str, object]:
+    """`sync()` の実体（1人分。`user_id=None` は今までどおり最上位の URL 1本）。"""
+    url = calendar_url(user_id, home=home) if user_id is not None else calendar_url()
     if not url:
         return {"ok": False, "reason": "URL が未設定です（manor ext set calendar --secret url）"}
 
@@ -209,7 +247,7 @@ def sync(home: Path | str) -> dict[str, object]:
     conn = db.connect(home)
     try:
         try:
-            result = apply_events(conn, events)
+            result = apply_events(conn, events, user_id=user_id)
         except ManorError as exc:
             conn.rollback()
             return {"ok": False, "reason": exc.message_ja}
@@ -217,6 +255,52 @@ def sync(home: Path | str) -> dict[str, object]:
     finally:
         conn.close()
     return {"ok": True, **result}
+
+
+def sync(home: Path | str, user_id: str | None = None) -> dict[str, object]:
+    """`manor calendar sync` の実体。URL 取得 → 解析 → 冪等な反映まで一気に行う。
+    取得や解析が失敗しても例外は投げない（`{"ok": False, "reason": ...}` を返す）。
+
+    `user_id`（ADR-014 D5）: 渡せばその1人だけ。省略すれば**URL を持つ人の利用者
+    ごとに順に取り込む**（`user.list_users` の順・執事は対象外）。誰も per_user の
+    URL を設定していない家では、principal が最上位の URL を読み替えて拾うので
+    結果は今までどおり（1人・1本のまま）。
+    """
+    home = Path(home)
+    if user_id is not None:
+        return _sync_one(home, user_id)
+
+    from . import user as user_mod
+
+    conn = db.connect(home)
+    try:
+        try:
+            candidates = [
+                str(u["id"])
+                for u in user_mod.list_users(conn)
+                if u["role"] != "butler" and calendar_url(str(u["id"]), home=home)
+            ]
+        except Exception:  # noqa: BLE001 - `user` 表がまだ無い home（`manor init` 前）
+            candidates = []
+    finally:
+        conn.close()
+
+    if len(candidates) <= 1:
+        single = candidates[0] if candidates else None
+        return _sync_one(home, single)
+
+    results: list[dict[str, object]] = []
+    totals = {"added": 0, "updated": 0, "removed": 0, "total": 0}
+    ok = True
+    for uid in candidates:
+        r = _sync_one(home, uid)
+        results.append({"user_id": uid, **r})
+        if not r.get("ok"):
+            ok = False
+            continue
+        for key in totals:
+            totals[key] += int(r.get(key, 0))  # type: ignore[arg-type]
+    return {"ok": ok, "results": results, **totals}
 
 
 def list_events(home: Path | str, *, days: int = 7) -> list[dict[str, object]]:
@@ -400,14 +484,24 @@ def calendar_config(home: Path | str) -> dict[str, str]:
     return {k: str(v) for k, v in section.items() if isinstance(v, (str, int))}
 
 
-def write_calendar_id(home: Path | str) -> str:
-    """書き込み先のカレンダー。**読んでいる ICS と同じものでなければ意味が無い。**
+def write_calendar_id(home: Path | str, user_id: str | None = None) -> str:
+    """書き込み先のカレンダー（ADR-014 D5: `write_calendar_id` は manifest の `per_user`
+    欄に昇格済み）。**読んでいる ICS と同じものでなければ意味が無い。**
 
     v1 の失敗（主人のご記憶 2026-09-06）:「このURLから予定を追加すると AI執事ではなく
     私のカレンダーとして登録され、AI執事側から予定が見えなくなった」——`render?action=
     TEMPLATE` のリンクは既定で**主カレンダー**へ入るが、執事が読んでいるのは
     「AI執事」という別のカレンダーだった。だから書き込み先を明示的に持つ。
+
+    `user_id` を渡せば `extensions.per_user_value` から読む（principal は空なら
+    従来の `[calendar] write_calendar_id` へ読み替える）。省略すれば従来どおり
+    最上位をそのまま読む（後方互換）。
     """
+    if user_id is not None:
+        from . import extensions as extensions_mod  # noqa: PLC0415 - 循環 import を避ける
+
+        value = extensions_mod.per_user_value(Path(home), "calendar", "write_calendar_id", user_id)
+        return value.strip() if isinstance(value, str) else ""
     return calendar_config(home).get("write_calendar_id", "").strip()
 
 
@@ -446,18 +540,22 @@ def push_event(
     location: str = "",
     event_id: str = "",
     claude_bin: str | None = None,
+    user_id: str | None = None,
 ) -> dict[str, object]:
     """予定を Google カレンダーへ登録し、確認・修正用のリンクを返す。
 
     戻り値: `{"ok": bool, "html_link": str, "reason": str}`。**例外は投げない**
     ——ここが失敗しても、予定は既に手元（`secretary_event`）に入っている。
+
+    `user_id`（ADR-014 D5）: 渡せばその利用者の `write_calendar_id` を使う
+    （principal は空なら最上位へ読み替え）。省略すれば従来どおり最上位のみ。
     """
     import json as _json  # noqa: PLC0415
     import shutil as _shutil  # noqa: PLC0415
     import subprocess  # noqa: PLC0415
 
     home = Path(home)
-    calendar_id = write_calendar_id(home)
+    calendar_id = write_calendar_id(home, user_id)
     if not calendar_id:
         return {"ok": False, "html_link": "", "mode": "", "reason": "[calendar] write_calendar_id が未設定です"}
 

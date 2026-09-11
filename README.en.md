@@ -94,6 +94,7 @@ asked; `manor talk <name>` talks to one directly, without the butler.
 | **Calendar sync** `manor calendar` | Reads an ICS feed into your agenda (read-only; nothing is written back) | [ADR-012](docs/design/ADR-012_calendar_and_i18n.md) |
 | **Night shift** `manor night` | Runs only what you wrote in the night-shift brief while you sleep (OS scheduling off by default) | [`docs/night.md`](docs/night.md) |
 | **Desktop shortcut** `manor shortcut create` | Stops any running server, rebuilds, starts, opens the browser | [`docs/shortcut.md`](docs/shortcut.md) |
+| **Switching users** | Add a housemate under Settings → Users and switch from the 👤 chip at the top right. Tasks, events, Slack and calendar are per person; kitchen and the like are shared. The butler's own work lives on the "butler" desk | [ADR-014](docs/design/ADR-014_users.md) |
 | **House rules** `manor rule` | Curfews, how to handle visitors, and so on, with scope and tags | [`docs/rules.md`](docs/rules.md) |
 | **English / Japanese** | Both the app and the CLI (Settings → Language) | [ADR-012](docs/design/ADR-012_calendar_and_i18n.md) |
 

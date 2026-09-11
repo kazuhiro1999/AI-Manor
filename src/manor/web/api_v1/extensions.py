@@ -22,6 +22,9 @@ from .._common import WebContext, manor_error_to_http, require_writable
 class ExtensionSettingsUpdate(BaseModel):
     #: 部分更新。manifest の fields にないキーは無視される（extensions_mod.save_settings）。
     values: dict[str, str | int | float | bool | None] = {}
+    #: `per_user` 欄をどの利用者の置き場へ保存するか（ADR-014 D5）。省略すれば principal。
+    #: `per_user` でない欄には影響しない。
+    user_id: str | None = None
 
 
 def register(app: FastAPI, ctx: WebContext) -> None:
@@ -40,7 +43,7 @@ def register(app: FastAPI, ctx: WebContext) -> None:
     def put_extension(ext_id: str, body: ExtensionSettingsUpdate) -> dict[str, object]:
         require_writable(ctx)
         try:
-            extensions_mod.save_settings(ctx.home, ext_id, dict(body.values))
+            extensions_mod.save_settings(ctx.home, ext_id, dict(body.values), user_id=body.user_id)
             return extensions_mod.detail(ctx.home, ext_id)
         except ManorError as exc:
             raise manor_error_to_http(exc)

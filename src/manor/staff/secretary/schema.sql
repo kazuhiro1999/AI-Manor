@@ -17,7 +17,10 @@ CREATE TABLE IF NOT EXISTS secretary_event (
   -- どのプロジェクトの予定か（2026-09-07）。NULL は「どれでもない」。
   -- カレンダーは誰の予定かを知らないので、ここは**人が結ぶ**——件名から推測しない。
   -- タイムラインはこの列でレーンを決める（未設定なら「その他」へ落ちる）。
-  project_id TEXT REFERENCES node(id)
+  project_id TEXT REFERENCES node(id),
+  -- ADR-014 D4/D5: 誰の予定か。NULL＝共通（全員に出る）。取り込みはその利用者、
+  -- 手入力は入れたときの利用者。既存 DB へは `db.py` の `_add_column_if_missing` が足す。
+  user_id TEXT
 );
 
 CREATE TABLE IF NOT EXISTS secretary_inbox (

@@ -7,6 +7,19 @@ CREATE TABLE IF NOT EXISTS meta (
   value TEXT NOT NULL
 );
 
+-- ADR-014 D1「利用者（user）」。認証ではない——「誰の机か」を持たせるだけ。
+-- `principal`（主人。1人）・`member`（同居の相手。増やせる）・`butler`（共有用の AI 執事
+-- ユーザー。1つ）。種は `src/manor/user.py` の `seed_defaults` が「表が空のときだけ」
+-- `master`（principal）と `butler`（butler）を入れる（`task_kind.seed_defaults` と同じ
+-- 約束——一度畳んだものを復活させない）。
+CREATE TABLE IF NOT EXISTS user (
+  id          TEXT PRIMARY KEY,
+  name        TEXT NOT NULL,
+  role        TEXT NOT NULL CHECK (role IN ('principal','member','butler')),
+  created_at  TEXT NOT NULL,
+  archived_at TEXT
+);
+
 CREATE TABLE IF NOT EXISTS node (
   id         TEXT PRIMARY KEY,        -- T12 / P3 / D5 / A:chef / N7 / M2
   kind       TEXT NOT NULL CHECK (kind IN ('task','project','decision','agent','note','milestone')),
@@ -37,7 +50,10 @@ CREATE TABLE IF NOT EXISTS task (
   kind        TEXT NOT NULL DEFAULT '',
   -- T37（2026-09-10）: 起票の出所を機械的に持たせる（`now` の文言「仕分け待ち」で
   -- 判定していたのをやめる）。空文字＝出所の記録なし。`idea`＝意見箱（Web/Slack #idea）。
-  source      TEXT NOT NULL DEFAULT ''
+  source      TEXT NOT NULL DEFAULT '',
+  -- ADR-014 D2: 「誰の件か」（`owner`＝誰が動かすか、とは別軸）。既定 `master`。
+  -- 決め方・一回きりの埋め方は `src/manor/user.py` の `resolve_default`/`backfill_user_ids`。
+  user_id     TEXT NOT NULL DEFAULT 'master'
 );
 CREATE INDEX IF NOT EXISTS task_status ON task(status, section);
 
@@ -57,7 +73,10 @@ CREATE TABLE IF NOT EXISTS project (
   preset   TEXT NOT NULL DEFAULT 'standard' CHECK (preset IN ('careful','standard','fast')),
   status   TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','paused','done')),
   next_action TEXT NOT NULL DEFAULT '',
-  due      TEXT
+  due      TEXT,
+  -- ADR-014 D2: 「誰の件か」。既定 `master`。決め方・一回きりの埋め方は
+  -- `src/manor/user.py` の `resolve_default`/`backfill_user_ids`。
+  user_id  TEXT NOT NULL DEFAULT 'master'
 );
 
 CREATE TABLE IF NOT EXISTS decision (

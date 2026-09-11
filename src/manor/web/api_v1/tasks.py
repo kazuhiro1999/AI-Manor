@@ -8,7 +8,7 @@ import inspect
 import sqlite3
 from typing import Literal
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from ... import check as check_mod
@@ -20,7 +20,7 @@ from ... import project as project_mod
 from ... import task as task_mod
 from ...board import api_core as board_core
 from ...errors import ManorError
-from .._common import WebContext, commit_and_render, manor_error_to_http, open_conn, require_writable
+from .._common import WebContext, commit_and_render, manor_error_to_http, open_conn, require_writable, viewing_user_id
 
 
 def _has_evidence_column(conn: sqlite3.Connection) -> bool:
@@ -65,6 +65,9 @@ class TaskAddRequest(BaseModel):
     evidence: str = ""
     #: ADR-010 D2「タスクの種類」。任意——空文字なら種類無しで起票する。
     kind: str = ""
+    #: ADR-014 D2・D3: 「誰の件か」。省略すれば見ている利用者（cookie `manor_user`）が勝つ。
+    #: 明示すればこちらが勝つ。
+    user: str | None = None
 
 
 class HandoffNoteRequest(BaseModel):
@@ -82,6 +85,9 @@ class ProjectAddRequest(BaseModel):
     status: str = "active"
     due: str | None = None
     next_action: str = ""
+    #: ADR-014 D2・D3: 「誰の件か」。省略すれば見ている利用者（cookie `manor_user`）が勝つ。
+    #: 明示すればこちらが勝つ。
+    user: str | None = None
 
 
 class ProjectSetRequest(BaseModel):
@@ -108,9 +114,10 @@ class NoteAddRequest(BaseModel):
 
 def register(app: FastAPI, ctx: WebContext) -> None:
     @app.get("/api/v1/tasks/board")
-    def board() -> dict[str, object]:
+    def board(request: Request) -> dict[str, object]:
         with open_conn(ctx) as conn:
-            data = board_core.get_board(conn)
+            uid = viewing_user_id(request, conn)
+            data = board_core.get_board(conn, user_id=uid)
             # ADR-006 §2 D7・§6 担当C: 要対応カードに「根拠」を出す。列が無い DB では
             # 空文字（board 側の `_open_decisions_with_context` は `decision.*` を
             # そのまま展開するので、列が有れば既に入っている——無いときだけ補う）。
@@ -120,14 +127,16 @@ def register(app: FastAPI, ctx: WebContext) -> None:
             return data
 
     @app.get("/api/v1/tasks/timeline")
-    def timeline(days: int = 70) -> dict[str, object]:
+    def timeline(request: Request, days: int = 70) -> dict[str, object]:
         with open_conn(ctx) as conn:
-            return board_core.get_timeline(conn, days)
+            uid = viewing_user_id(request, conn)
+            return board_core.get_timeline(conn, days, user_id=uid)
 
     @app.get("/api/v1/tasks/log")
-    def log() -> dict[str, object]:
+    def log(request: Request) -> dict[str, object]:
         with open_conn(ctx) as conn:
-            return board_core.get_log(conn, ctx.home)
+            uid = viewing_user_id(request, conn)
+            return board_core.get_log(conn, ctx.home, user_id=uid)
 
     @app.get("/api/v1/tasks/ctx/{node_id}")
     def ctx_get(node_id: str, depth: int = 2, budget: int = 2000) -> dict[str, object]:
@@ -201,11 +210,16 @@ def register(app: FastAPI, ctx: WebContext) -> None:
             return {"id": milestone_id, "done": False, "changed": changed}
 
     @app.post("/api/v1/tasks/project")
-    def project_add(body: ProjectAddRequest) -> dict[str, object]:
+    def project_add(body: ProjectAddRequest, request: Request) -> dict[str, object]:
         """ADR-013 D1: プロジェクトの作成を画面から。`project.add`（core）をそのまま
-        呼ぶだけ——ここに新しい業務論理は書かない。"""
+        呼ぶだけ——ここに新しい業務論理は書かない。
+
+        ADR-014 D2・D3: 「誰の件か」は明示（`body.user`）が勝ち、無ければ見ている
+        利用者（cookie `manor_user`）の件にする。
+        """
         require_writable(ctx)
         with open_conn(ctx) as conn:
+            uid = body.user or viewing_user_id(request, conn)
             try:
                 project_id = project_mod.add(
                     conn,
@@ -217,6 +231,7 @@ def register(app: FastAPI, ctx: WebContext) -> None:
                     status=body.status,
                     due=body.due,
                     next_action=body.next_action,
+                    user=uid,
                 )
             except ManorError as exc:
                 conn.rollback()
@@ -274,13 +289,14 @@ def register(app: FastAPI, ctx: WebContext) -> None:
             return {"id": note_id}
 
     @app.post("/api/v1/tasks/task")
-    def task_add(body: TaskAddRequest) -> dict[str, object]:
+    def task_add(body: TaskAddRequest, request: Request) -> dict[str, object]:
         require_writable(ctx)
         with open_conn(ctx) as conn:
+            uid = body.user or viewing_user_id(request, conn)
             add_kwargs: dict[str, object] = dict(
                 project=body.project, cls=body.cls, goal=body.goal,
                 now=body.now, next_=body.next, due=body.due, body=body.body,
-                recommendation=body.recommendation, kind=body.kind,
+                recommendation=body.recommendation, kind=body.kind, user=uid,
             )
             # core（担当A）の `task.add` が `evidence` を受けるようになっていれば渡す。
             # まだ無い core では黙って落とす（起票そのものは失敗させない。ADR-006 §6）。

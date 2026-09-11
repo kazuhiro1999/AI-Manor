@@ -201,8 +201,13 @@ def milestone_list(
     upcoming_days: int | None = None,
     include_done: bool = True,
     exclude_project_kind: str | None = None,
+    user_id: str | None = None,
 ) -> list[dict[str, object]]:
     """節目の一覧。
+
+    `user_id`（ADR-014 D4）: 渡すとプロジェクト経由で「誰の件か」を絞る。**`project_id`
+    が無い節目（結び先の無いもの）は全員に出す**——共通の記録として扱う。`None`（既定）
+    は絞らない。
 
     ⚠ **`include_done` の既定は「含める」**で、これは危ない側の既定です
     （2026-09-08・主人のご指摘）。**「これからの予定」として見せる場所は必ず
@@ -236,6 +241,12 @@ def milestone_list(
             " (SELECT id FROM project WHERE kind = ?))"
         )
         params.append(exclude_project_kind)
+    if user_id is not None:
+        sql += (
+            " AND (m.project_id IS NULL OR m.project_id IN"
+            " (SELECT id FROM project WHERE user_id = ?))"
+        )
+        params.append(user_id)
     sql += " ORDER BY m.date"
     return [dict(r) for r in conn.execute(sql, params).fetchall()]
 

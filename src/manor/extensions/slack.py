@@ -56,6 +56,9 @@ MANIFEST: dict[str, object] = {
             "kind": "text",
             "required": True,
             "help": "送り先のチャンネル ID",
+            # ADR-014 D5: 送り先は利用者ごと（人の利用者ごとに1行）。Bot Token は
+            # 同じワークスペースの同じ Bot を使うので共通のまま。
+            "per_user": True,
         },
         {
             "key": "bot_token",

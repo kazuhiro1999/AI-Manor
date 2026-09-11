@@ -215,15 +215,21 @@ def cmd_agenda(conn, home, args) -> object:
     today_s = util.today()
     today = date.fromisoformat(today_s)
     end_s = (today + timedelta(days=args.days)).isoformat()
+    # ADR-014 D4/D6: 「見ている利用者」で絞る。CLI の既定は None（今までどおり全部）
+    # ——段B（Web）が cookie の利用者をここへ通す。
+    user_id = getattr(args, "user", None)
 
-    events = [
-        dict(r)
-        for r in conn.execute(
-            'SELECT id, start, "end", title, place, note FROM secretary_event'
-            " WHERE substr(start, 1, 10) BETWEEN ? AND ? ORDER BY start",
-            (today_s, end_s),
-        ).fetchall()
-    ]
+    event_sql = (
+        'SELECT id, start, "end", title, place, note FROM secretary_event'
+        " WHERE substr(start, 1, 10) BETWEEN ? AND ?"
+    )
+    event_params: list[object] = [today_s, end_s]
+    if user_id is not None:
+        event_sql += " AND (user_id IS NULL OR user_id = ?)"
+        event_params.append(user_id)
+    event_sql += " ORDER BY start"
+    events = [dict(r) for r in conn.execute(event_sql, event_params).fetchall()]
+    # 控え（reminder）は共通のまま絞らない（ADR-014 D4）。
     reminders = [
         dict(r)
         for r in conn.execute(
@@ -238,14 +244,20 @@ def cmd_agenda(conn, home, args) -> object:
     milestones = [
         m
         for m in graph.milestone_list(
-            conn, include_done=False, exclude_project_kind=project_mod.BUTLER_PROJECT_KIND
+            conn,
+            include_done=False,
+            exclude_project_kind=project_mod.BUTLER_PROJECT_KIND,
+            user_id=user_id,
         )
         if today_s <= str(m["date"]) <= end_s
     ]
     tasks = [
         t
         for t in task_mod.list_tasks(
-            conn, include_settled=False, exclude_project_kind=project_mod.BUTLER_PROJECT_KIND
+            conn,
+            include_settled=False,
+            exclude_project_kind=project_mod.BUTLER_PROJECT_KIND,
+            user_id=user_id,
         )
         if t.get("due") and today_s <= str(t["due"])[:10] <= end_s
     ]
@@ -447,6 +459,7 @@ def register(subparsers) -> None:
     # --- agenda ---
     p = sec_sub.add_parser("agenda", help=i18n.t("cli.sec.agenda.help"))
     p.add_argument("--days", type=int, default=7)
+    p.add_argument("--user", help=i18n.t("cli.sec.agenda.user.help"))
     p.add_argument("--json", action="store_true")
     p.set_defaults(func=cmd_agenda, is_write=False)
 

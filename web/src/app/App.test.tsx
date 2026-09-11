@@ -1,11 +1,11 @@
 import { describe, expect, it, vi, afterEach } from "vitest";
 import { APP_NAME } from "./brand";
 import { formatDay, t } from "./i18n";
-import { render, cleanup, screen, waitFor } from "@testing-library/react";
+import { render, cleanup, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { App } from "./App";
-import type { Board, Meta, SetupInfo } from "./types";
+import type { Board, Meta, SetupInfo, UserInfo } from "./types";
 
 const SETUP_HEADING = `${APP_NAME} の初回セットアップ`;
 
@@ -264,5 +264,113 @@ describe("App — 設定はサイドバーに出ず、右上の歯車から開�
     expect(document.querySelector('.sidenav [data-module="settings"]')).toBeNull();
     expect(document.querySelector('.sidenav [data-module="dashboard"]')).toBeTruthy();
     expect(screen.getByRole("button", { name: "設定を開く" })).toBeTruthy();
+  });
+});
+
+describe("App — 利用者チップ（ADR-014 D3。誰として見ているかの常時表示と切り替え）", () => {
+  afterEach(() => cleanup());
+
+  function usersFixture(): UserInfo[] {
+    return [
+      { id: "master", name: "旦那様", role: "principal" },
+      { id: "butler", name: "執事", role: "butler" },
+    ];
+  }
+
+  it("topbar の chip に見ている利用者の名前が出る（歯車の左）", async () => {
+    const meta = { ...baseMeta(true), user: usersFixture()[0], users: usersFixture() };
+    const board = baseBoard();
+    globalThis.fetch = vi.fn().mockImplementation(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      const json = async () => {
+        if (url.includes("/meta")) return meta;
+        if (url.includes("/tasks/board")) return board;
+        return {};
+      };
+      return { ok: true, status: 200, json };
+    }) as unknown as typeof fetch;
+
+    render(
+      <MemoryRouter initialEntries={["/tasks"]}>
+        <App />
+      </MemoryRouter>
+    );
+
+    await waitFor(() => expect(screen.getByText(todayChip())).toBeTruthy());
+    const chip = screen.getByRole("button", { name: /旦那様/ });
+    expect(chip.className).toContain("chip-user");
+    expect(chip.getAttribute("aria-haspopup")).toBe("menu");
+  });
+
+  it("メニューから利用者を選ぶと POST /users/switch を呼び、chip の名前が切り替わる", async () => {
+    let currentUser = usersFixture()[0];
+    const board = baseBoard();
+    const calls: { url: string; init?: RequestInit }[] = [];
+    globalThis.fetch = vi.fn().mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = (init?.method || "GET").toUpperCase();
+      calls.push({ url, init });
+      if (url.includes("/users/switch") && method === "POST") {
+        const body = init?.body ? JSON.parse(String(init.body)) : {};
+        currentUser = usersFixture().find((u) => u.id === body.id) || currentUser;
+        return { ok: true, status: 200, json: async () => ({ user: currentUser }) };
+      }
+      const json = async () => {
+        if (url.includes("/meta")) return { ...baseMeta(true), user: currentUser, users: usersFixture() };
+        if (url.includes("/tasks/board")) return board;
+        return {};
+      };
+      return { ok: true, status: 200, json };
+    }) as unknown as typeof fetch;
+
+    const user = userEvent.setup();
+    render(
+      <MemoryRouter initialEntries={["/tasks"]}>
+        <App />
+      </MemoryRouter>
+    );
+
+    await waitFor(() => expect(screen.getByText(todayChip())).toBeTruthy());
+    await user.click(screen.getByRole("button", { name: /旦那様/ }));
+    const menu = await waitFor(() => screen.getByRole("menu"));
+    await user.click(within(menu).getByText("執事"));
+
+    await waitFor(() =>
+      expect(
+        calls.some((c) => c.url.includes("/api/v1/users/switch") && (c.init?.method || "").toUpperCase() === "POST")
+      ).toBe(true)
+    );
+    const switchCall = calls.find((c) => c.url.includes("/api/v1/users/switch"));
+    expect(JSON.parse(String(switchCall?.init?.body))).toEqual({ id: "butler" });
+
+    await waitFor(() => expect(screen.getByRole("button", { name: /執事/ })).toBeTruthy());
+  });
+
+  it("外側をクリックするとメニューが閉じる", async () => {
+    const meta = { ...baseMeta(true), user: usersFixture()[0], users: usersFixture() };
+    const board = baseBoard();
+    globalThis.fetch = vi.fn().mockImplementation(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      const json = async () => {
+        if (url.includes("/meta")) return meta;
+        if (url.includes("/tasks/board")) return board;
+        return {};
+      };
+      return { ok: true, status: 200, json };
+    }) as unknown as typeof fetch;
+
+    const user = userEvent.setup();
+    render(
+      <MemoryRouter initialEntries={["/tasks"]}>
+        <App />
+      </MemoryRouter>
+    );
+
+    await waitFor(() => expect(screen.getByText(todayChip())).toBeTruthy());
+    await user.click(screen.getByRole("button", { name: /旦那様/ }));
+    await waitFor(() => expect(screen.getByRole("menu")).toBeTruthy());
+
+    await user.click(document.body);
+    await waitFor(() => expect(screen.queryByRole("menu")).toBeNull());
   });
 });

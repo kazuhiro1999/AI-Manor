@@ -40,10 +40,18 @@ def _rows(conn: sqlite3.Connection, sql: str, params: tuple[object, ...] = ()) -
 # --- active（起動時の射影） ----------------------------------------------------
 
 
-def active_data(conn: sqlite3.Connection) -> dict[str, object]:
+def active_data(conn: sqlite3.Connection, *, user_id: str | None = None) -> dict[str, object]:
     """出すのは: A（open decision と section A のタスク）／ B の未完了／ resident／
     委譲中／ v_blocked_ready／ v_stale_doing／ 直近7日の milestone。完了済みは出さない。
+
+    `user_id`（ADR-014 D4）: 渡すと「誰の机か」で絞る。`None`（既定）は今までどおり
+    全部（CLI・射影・既存の呼び出し元はこちらを使い続ける）。規則は
+    `board/api_core.get_board` と同じ: task/project は `user_id` で、open decision は
+    principal なら全部・他は結ばれた task の利用者のものだけ。
     """
+    user_filter = " AND t.user_id = ?" if user_id is not None else ""
+    user_params: tuple[object, ...] = (user_id,) if user_id is not None else ()
+
     open_decisions = _rows(
         conn,
         "SELECT d.id, n.title AS title, d.asked_at,"
@@ -51,41 +59,72 @@ def active_data(conn: sqlite3.Connection) -> dict[str, object]:
         " FROM decision d JOIN node n ON n.id = d.id WHERE d.status = 'open'"
         " ORDER BY CAST(substr(d.id, 2) AS INTEGER)",
     )
+    if user_id is not None:
+        from . import user as user_mod  # noqa: PLC0415 - 循環 import を避けるため遅延
+
+        principal = user_mod.principal_id(conn)
+        if user_id != principal:
+            # 相手・執事の机では、自分のタスクに結ばれた裁定だけ（結ばれていない裁定は
+            # 主人のもの——ADR-014 D4。`board/api_core.get_board` と同じ規則）。
+            open_decisions = [
+                d
+                for d in open_decisions
+                if conn.execute(
+                    "SELECT 1 FROM edge e JOIN task t ON t.id = e.src"
+                    " WHERE e.dst = ? AND e.rel = 'decided_by' AND t.user_id = ? LIMIT 1",
+                    (d["id"], user_id),
+                ).fetchone()
+                is not None
+            ]
     section_a = _rows(
         conn,
         "SELECT t.*, n.title AS title FROM task t JOIN node n ON n.id = t.id"
         " WHERE t.section = 'A' AND t.status NOT IN ('done','withdrawn')"
+        f"{user_filter}"
         " ORDER BY CAST(substr(t.id, 2) AS INTEGER)",
+        user_params,
     )
     section_b = _rows(
         conn,
         "SELECT t.*, n.title AS title FROM task t JOIN node n ON n.id = t.id"
         " WHERE t.section = 'B' AND t.status IN ('todo','doing','waiting','hold')"
+        f"{user_filter}"
         " ORDER BY CAST(substr(t.id, 2) AS INTEGER)",
+        user_params,
     )
     resident = _rows(
         conn,
         "SELECT t.*, n.title AS title FROM task t JOIN node n ON n.id = t.id"
-        " WHERE t.status = 'resident' ORDER BY CAST(substr(t.id, 2) AS INTEGER)",
+        f" WHERE t.status = 'resident'{user_filter} ORDER BY CAST(substr(t.id, 2) AS INTEGER)",
+        user_params,
     )
     delegated = _rows(
         conn,
         "SELECT t.*, n.title AS title FROM task t JOIN node n ON n.id = t.id"
         " WHERE t.status = 'doing' AND t.owner NOT IN ('butler','master')"
+        f"{user_filter}"
         " ORDER BY CAST(substr(t.id, 2) AS INTEGER)",
+        user_params,
     )
-    blocked_ready = _rows(conn, "SELECT id FROM v_blocked_ready ORDER BY CAST(substr(id, 2) AS INTEGER)")
-    stale_doing = _rows(
-        conn, "SELECT id, last_at FROM v_stale_doing ORDER BY CAST(substr(id, 2) AS INTEGER)"
-    )
-    milestones = _rows(
-        conn,
-        "SELECT m.id, n.title AS title, m.date, m.approximate, m.project_id FROM milestone m"
-        " JOIN node n ON n.id = m.id"
-        " WHERE m.done_at IS NULL"
-        "   AND date(m.date) BETWEEN date('now','localtime') AND date('now','localtime','+7 days')"
-        " ORDER BY m.date",
-    )
+    if user_id is not None:
+        blocked_ready = _rows(
+            conn,
+            "SELECT v.id FROM v_blocked_ready v JOIN task t ON t.id = v.id"
+            " WHERE t.user_id = ? ORDER BY CAST(substr(v.id, 2) AS INTEGER)",
+            (user_id,),
+        )
+        stale_doing = _rows(
+            conn,
+            "SELECT v.id, v.last_at FROM v_stale_doing v JOIN task t ON t.id = v.id"
+            " WHERE t.user_id = ? ORDER BY CAST(substr(v.id, 2) AS INTEGER)",
+            (user_id,),
+        )
+    else:
+        blocked_ready = _rows(conn, "SELECT id FROM v_blocked_ready ORDER BY CAST(substr(id, 2) AS INTEGER)")
+        stale_doing = _rows(
+            conn, "SELECT id, last_at FROM v_stale_doing ORDER BY CAST(substr(id, 2) AS INTEGER)"
+        )
+    milestones = graph.milestone_list(conn, upcoming_days=7, include_done=False, user_id=user_id)
     return {
         "open_decisions": open_decisions,
         "section_a": section_a,

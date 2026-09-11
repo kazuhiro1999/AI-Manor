@@ -9,7 +9,9 @@ from __future__ import annotations
 import re
 import sqlite3
 
-from . import graph, i18n, policy, project as project_mod, task_kind as task_kind_mod, util
+from . import graph, i18n, policy, project as project_mod, task_kind as task_kind_mod
+from . import user as user_mod
+from . import util
 from .errors import ManorError
 from .ids import next_id
 
@@ -103,6 +105,7 @@ def add(
     risk: str = "",
     kind: str = "",
     source: str = "",
+    user: str | None = None,
 ) -> str:
     """タスクを1件作る。既定の状態は `todo`。
 
@@ -116,6 +119,10 @@ def add(
     `source` は「どの経路から入ってきたか」の印（例: `idea`＝意見箱）。`kind` とは別軸
     ——`kind` は人向けの分類、`source` は機械が起票の出どころを見分けるための語彙外の
     自由文字列。空文字（既定）は「通常の起票」を意味する。
+
+    `user`（ADR-014 D2「誰の件か」。`owner`＝誰が動かすか、とは別軸）は明示の利用者 id。
+    省略すれば `user.resolve_default`（明示 → プロジェクトの利用者 → `MANOR_USER` →
+    `owner` から推測）で決める。
     """
     if section not in VALID_SECTIONS:
         raise ManorError(
@@ -137,10 +144,16 @@ def add(
 
     project_id: str | None = None
     preset = "standard"
+    project_user_id: str | None = None
     if project:
         prow = project_mod.resolve(conn, project)
         project_id = str(prow["id"])
         preset = str(prow["preset"])
+        project_user_id = str(prow["user_id"])
+
+    user_id = user_mod.resolve_default(
+        conn, explicit=user, project_user_id=project_user_id, owner=owner
+    )
 
     # 振る舞い試験 S6（2026-09-02）: 執事が `--level L1 --class human_gate`（存在しないクラス）や
     # `--level L3` で外部送信のタスクを起票した。**クラスが level の出どころ**であり、執事が level を
@@ -189,9 +202,12 @@ def add(
     )
     conn.execute(
         "INSERT INTO task (id, project_id, status, status_note, owner, level, section,"
-        " goal, now, next, recommendation, risk, due, kind, source)"
-        " VALUES (?, ?, 'todo', '', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        (task_id, project_id, owner, level, section, goal, now, next_, recommendation, risk, due, kind, source),
+        " goal, now, next, recommendation, risk, due, kind, source, user_id)"
+        " VALUES (?, ?, 'todo', '', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            task_id, project_id, owner, level, section, goal, now, next_, recommendation, risk,
+            due, kind, source, user_id,
+        ),
     )
     conn.execute(
         "INSERT INTO task_event (task_id, at, from_status, to_status, note, actor)"
@@ -242,6 +258,7 @@ def add_idea(conn: sqlite3.Connection, body: str) -> str:
         next_=i18n.t("slack.intake.idea.next"),
         owner="master",
         source="idea",
+        user=user_mod.BUTLER_ID,
     )
     status(conn, task_id, "hold")
     return task_id
@@ -292,6 +309,7 @@ def set(
     risk: str | None = None,
     kind: str | None = None,
     status_note: str | None = None,
+    user: str | None = None,
 ) -> str:
     """`status_note` は**状態を変えずに、待っている理由だけを書き直す**ための口。
 
@@ -303,6 +321,10 @@ def set(
 
     履歴（`task_event`）には積まない。状態は動いていないので、積むと「動いた」という
     嘘の行が増える。**動かさずに直せる**ことがここの要点。
+
+    `user`（ADR-014 D2「誰の件か」）を渡せば、知っていて畳んでいない利用者であることを
+    確かめてから書き換える（`user.exists_active`。知らない・畳んだ利用者は
+    `ManorError(code=2)`）。
     """
     row = _row(conn, task_id)
     if level is not None and level not in VALID_LEVELS:
@@ -311,6 +333,13 @@ def set(
             code=2,
             key="error.task.level_unknown",
             params={"level": repr(level)},
+        )
+    if user is not None and not user_mod.exists_active(conn, user):
+        raise ManorError(
+            f"user が見つからない、または畳まれています: {user}",
+            code=2,
+            key="error.user.unknown_or_archived",
+            params={"user_id": user},
         )
     if risk is not None and risk not in VALID_RISK:
         raise ManorError(
@@ -345,6 +374,8 @@ def set(
         fields["kind"] = kind
     if status_note is not None:
         fields["status_note"] = status_note
+    if user is not None:
+        fields["user_id"] = user
     if fields:
         sets = ", ".join(f"{k} = ?" for k in fields)
         conn.execute(f"UPDATE task SET {sets} WHERE id = ?", (*fields.values(), task_id))
@@ -555,6 +586,7 @@ def list_tasks(
     include_settled: bool = False,
     exclude_project_kind: str | None = None,
     source: str | None = None,
+    user_id: str | None = None,
 ) -> list[dict[str, object]]:
     """課題の一覧。
 
@@ -562,6 +594,9 @@ def list_tasks(
     除く。**主人の関心事の一覧（秘書の agenda 等）から執事自身の件を隠すため**
     （2026-09-08 主人のご指摘・T26）。`owner` では判定しない——主人の仕事にも
     `owner=butler` が付く行があるため、`project.kind` だけを見る。
+
+    `user_id`（ADR-014 D4）: 渡すと「誰の件か」で絞る。`None`（既定）は絞らない
+    （CLI・射影・起動時の注入・既存の呼び出しは今までどおり全部を見る）。
     """
     sql = "SELECT t.*, n.title AS title FROM task t JOIN node n ON n.id = t.id WHERE 1=1"
     params: list[object] = []
@@ -583,6 +618,9 @@ def list_tasks(
     if source is not None:
         sql += " AND t.source = ?"
         params.append(source)
+    if user_id is not None:
+        sql += " AND t.user_id = ?"
+        params.append(user_id)
     if exclude_project_kind:
         sql += (
             " AND (t.project_id IS NULL OR t.project_id NOT IN"

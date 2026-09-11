@@ -101,6 +101,25 @@ a { color: var(--info); }
 .chip-sync.error { color: var(--danger); }
 .chip-sync.updated { color: var(--info); }
 
+/* ---------- 利用者チップ（ADR-014 D3。「👤 名前 ▾」と切り替えメニュー） ---------- */
+.user-menu-wrap { position: relative; }
+.chip-user { cursor: pointer; white-space: nowrap; }
+.user-menu {
+  position: absolute; right: 0; top: calc(100% + 6px); z-index: 30;
+  background: var(--bg-panel); border: 1px solid var(--border); border-radius: var(--radius);
+  box-shadow: var(--shadow); padding: 6px; min-width: 190px;
+  display: flex; flex-direction: column; gap: 2px;
+}
+.user-menu-item {
+  display: flex; align-items: center; gap: 6px; width: 100%; text-align: left;
+  border: 0; background: transparent; color: var(--text); font-size: 12.5px;
+  border-radius: 6px; padding: 6px 8px; cursor: pointer;
+}
+.user-menu-item:hover { background: var(--bg-panel-2); }
+.user-menu-item[aria-current="true"] { font-weight: 700; color: var(--accent); }
+.user-menu-check { width: 14px; display: inline-block; }
+.user-menu-sep { border: 0; border-top: 1px solid var(--border); margin: 4px 2px; }
+
 /* ---------- settings ---------- */
 .settings-panel {
   position: absolute; right: 12px; top: calc(var(--topbar-h) + 4px); z-index: 30;
@@ -380,6 +399,10 @@ table.grid td.col-wide, table.grid th.col-wide { min-width: 220px; }
 .form-actions { display: flex; gap: 8px; margin-top: 4px; }
 .form-error { color: var(--danger); font-size: 11.5px; }
 .form-ok { color: var(--ok); font-size: 11.5px; }
+
+/* ---------- extensions: per_user 欄（ADR-014 D5。利用者ごとに1組ずつ） ---------- */
+.ext-per-user { margin-top: 10px; display: flex; flex-direction: column; gap: 8px; }
+.ext-per-user-row { display: flex; flex-direction: column; gap: 6px; padding-top: 8px; border-top: 1px dashed var(--border); }
 
 /* ---------- imports ---------- */
 .import-row.duplicate { opacity: .55; background: var(--bg-panel-2); }

@@ -157,6 +157,7 @@ def create_app(home: Path, *, host: str = "127.0.0.1", read_only: bool = False) 
     from .api_v1 import setup as api_setup
     from .api_v1 import task_kinds as api_task_kinds
     from .api_v1 import tasks
+    from .api_v1 import users as api_users
 
     meta.register(app, ctx)
     api_auth.register(app, ctx)
@@ -176,6 +177,7 @@ def create_app(home: Path, *, host: str = "127.0.0.1", read_only: bool = False) 
     api_settings.register(app, ctx)
     api_setup.register(app, ctx)  # ADR-007 D4（初回セットアップ）
     api_extensions.register(app, ctx)  # ADR-009 D6（拡張機能）
+    api_users.register(app, ctx)  # ADR-014 D1・D3（利用者の一覧・追加・改名・畳む・切り替え）
     api_face_models.register(app, ctx)  # ADR-008 §7 D14（姿の出し入れ API。画面から差し替え・削除）
     # 一覧に VRM を読ませないための正面画像（2026-09-09 主人のご提案）
     api_face_thumbnail.register(app, ctx)

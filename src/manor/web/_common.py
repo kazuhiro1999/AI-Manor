@@ -13,14 +13,20 @@ from types import SimpleNamespace
 from pathlib import Path
 from typing import Iterator
 
-from fastapi import HTTPException
+from fastapi import HTTPException, Request
 
 from .. import db as db_mod
 from .. import render as render_mod
+from .. import user as user_mod
 from ..errors import ManorError
 from .auth import RateLimiter, auth_mode_for_host
 
 COOKIE_NAME = "manor_session"
+
+#: ADR-014 D3:「見ている利用者」の cookie。**認証の cookie（`COOKIE_NAME`）とは別物**
+#: ——署名しない。値は `user.id`。1年・httponly・samesite=lax。
+USER_COOKIE_NAME = "manor_user"
+USER_COOKIE_MAX_AGE_SECONDS = 60 * 60 * 24 * 365
 
 
 @dataclass
@@ -73,6 +79,16 @@ def manor_error_to_http(exc: ManorError, *, conflict_code: int = 400) -> HTTPExc
     if exc.code == 2:
         return HTTPException(status_code=404, detail=exc.message_ja)
     return HTTPException(status_code=conflict_code, detail=exc.message_ja)
+
+
+def viewing_user_id(request: Request, conn: sqlite3.Connection) -> str:
+    """「見ている利用者」（ADR-014 D3）。cookie `manor_user` の値が有効（存在し、畳んで
+    いない）ならそれ、無い・知らない・畳んでいれば主人（`user.principal_id`）に落ちる。
+    """
+    cookie = request.cookies.get(USER_COOKIE_NAME)
+    if cookie and user_mod.exists_active(conn, cookie):
+        return cookie
+    return user_mod.principal_id(conn)
 
 
 def table_exists(conn: sqlite3.Connection, name: str) -> bool:

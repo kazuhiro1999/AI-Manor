@@ -25,6 +25,7 @@ from .. import graph
 from .. import handoff as handoff_mod
 from .. import project as project_mod
 from .. import task as task_mod
+from .. import user as user_mod
 from .. import util
 from ..errors import ManorError
 from ._common import BoardContext, commit_and_render, manor_error_to_http, open_conn, require_writable
@@ -35,7 +36,7 @@ from ._common import BoardContext, commit_and_render, manor_error_to_http, open_
 _TASK_COLUMNS = (
     "t.id, t.project_id, t.status, t.status_note, t.owner, t.level, t.section,"
     " t.goal, t.now, t.next, t.recommendation, t.risk, t.due, t.start, t.\"end\","
-    " t.done_at, n.title AS title, n.body AS body"
+    " t.done_at, t.user_id AS user_id, n.title AS title, n.body AS body"
 )
 
 
@@ -200,19 +201,35 @@ def _open_decisions_with_context(conn: sqlite3.Connection, today: date) -> list[
     return out
 
 
-def get_board(conn: sqlite3.Connection) -> dict[str, object]:
+def get_board(conn: sqlite3.Connection, user_id: str | None = None) -> dict[str, object]:
+    """`user_id`（ADR-014 D4）: 渡すと「誰の机か」で絞る。`None`（既定）は今までどおり
+    全部（CLI・射影・起動時の注入・既存の試験はこちらを使い続ける）。
+    """
     today = date.fromisoformat(util.today())
+    user_filter = " AND t.user_id = ?" if user_id is not None else ""
+    user_params: tuple[object, ...] = (user_id,) if user_id is not None else ()
 
     pending = _open_decisions_with_context(conn, today)
+    if user_id is not None:
+        principal = user_mod.principal_id(conn)
+        if user_id != principal:
+            # 相手・執事の机では、自分のタスクに結ばれた裁定だけ（結ばれていない裁定は
+            # 主人のもの——ADR-014 D4）。
+            pending = [
+                d for d in pending
+                if any(str(t.get("user_id")) == user_id for t in d["tasks"])
+            ]
 
     tasks = [
         dict(r)
         for r in conn.execute(
             f"SELECT {_TASK_COLUMNS} FROM task t JOIN node n ON n.id = t.id"
-            " WHERE t.status NOT IN ('done', 'withdrawn')"
+            " WHERE (t.status NOT IN ('done', 'withdrawn')"
             "    OR (t.status = 'done' AND t.done_at IS NOT NULL"
-            "        AND julianday('now', 'localtime') - julianday(t.done_at) <= 7)"
-            " ORDER BY CAST(substr(t.id, 2) AS INTEGER)"
+            "        AND julianday('now', 'localtime') - julianday(t.done_at) <= 7))"
+            f"{user_filter}"
+            " ORDER BY CAST(substr(t.id, 2) AS INTEGER)",
+            user_params,
         ).fetchall()
     ]
 
@@ -221,7 +238,9 @@ def get_board(conn: sqlite3.Connection) -> dict[str, object]:
         for r in conn.execute(
             f"SELECT {_TASK_COLUMNS} FROM task t JOIN node n ON n.id = t.id"
             " WHERE t.status = 'doing' AND t.owner NOT IN ('butler', 'master')"
-            " ORDER BY CAST(substr(t.id, 2) AS INTEGER)"
+            f"{user_filter}"
+            " ORDER BY CAST(substr(t.id, 2) AS INTEGER)",
+            user_params,
         ).fetchall()
     ]
     delegated: list[dict[str, object]] = []
@@ -234,14 +253,14 @@ def get_board(conn: sqlite3.Connection) -> dict[str, object]:
         delegated.append(t2)
 
     projects = []
-    for p in project_mod.list_projects(conn):
+    for p in project_mod.list_projects(conn, user_id=user_id):
         p2 = dict(p)
         p2["days_left"] = _days_left(p.get("due"), today)
         projects.append(p2)
     projects = _project_interest(conn, projects, today)
 
     milestones = []
-    for m in graph.milestone_list(conn):
+    for m in graph.milestone_list(conn, user_id=user_id):
         m2 = dict(m)
         m2["days_left"] = _days_left(m.get("date"), today)
         milestones.append(m2)
@@ -250,7 +269,8 @@ def get_board(conn: sqlite3.Connection) -> dict[str, object]:
         dict(r)
         for r in conn.execute(
             f"SELECT {_TASK_COLUMNS} FROM task t JOIN node n ON n.id = t.id"
-            " WHERE t.status = 'done' ORDER BY t.done_at DESC LIMIT 20"
+            f" WHERE t.status = 'done'{user_filter} ORDER BY t.done_at DESC LIMIT 20",
+            user_params,
         ).fetchall()
     ]
 
@@ -266,24 +286,40 @@ def get_board(conn: sqlite3.Connection) -> dict[str, object]:
             "       WHERE to_status = 'withdrawn' GROUP BY task_id) ev ON ev.task_id = t.id"
             " WHERE t.status = 'withdrawn'"
             "   AND julianday('now', 'localtime') - julianday(ev.last_at) <= 7"
-            " ORDER BY ev.last_at DESC"
+            f"{user_filter}"
+            " ORDER BY ev.last_at DESC",
+            user_params,
         ).fetchall()
     ]
 
-    doing_n = conn.execute("SELECT COUNT(*) AS n FROM task WHERE status = 'doing'").fetchone()["n"]
+    doing_sql = "SELECT COUNT(*) AS n FROM task t WHERE t.status = 'doing'" + user_filter
+    doing_n = conn.execute(doing_sql, user_params).fetchone()["n"]
     # **執事のぶんだけ数える。** 主人の作業（owner='master'）は別に添える（v1 README §2-1
     # 「主人の作業は別のブロック」）。② のタイルに主人の作業まで混ぜると、「AI が今なにを
     # しているか」の質問に「私（AI）は 3 件動いている」という嘘の答えを返すことになる。
-    doing_butler_n = conn.execute(
-        "SELECT COUNT(*) AS n FROM task WHERE status = 'doing' AND owner != 'master'"
-    ).fetchone()["n"]
+    doing_butler_sql = "SELECT COUNT(*) AS n FROM task t WHERE t.status = 'doing' AND t.owner != 'master'" + user_filter
+    doing_butler_n = conn.execute(doing_butler_sql, user_params).fetchone()["n"]
     doing_master_n = doing_n - doing_butler_n
-    resident_n = conn.execute("SELECT COUNT(*) AS n FROM task WHERE status = 'resident'").fetchone()["n"]
-    blocked_ready_n = conn.execute("SELECT COUNT(*) AS n FROM v_blocked_ready").fetchone()["n"]
-    stale_n = conn.execute("SELECT COUNT(*) AS n FROM v_stale_doing").fetchone()["n"]
+    resident_sql = "SELECT COUNT(*) AS n FROM task t WHERE t.status = 'resident'" + user_filter
+    resident_n = conn.execute(resident_sql, user_params).fetchone()["n"]
+    if user_id is not None:
+        blocked_ready_n = conn.execute(
+            "SELECT COUNT(*) AS n FROM v_blocked_ready v JOIN task t ON t.id = v.id"
+            " WHERE t.user_id = ?",
+            (user_id,),
+        ).fetchone()["n"]
+        stale_n = conn.execute(
+            "SELECT COUNT(*) AS n FROM v_stale_doing v JOIN task t ON t.id = v.id"
+            " WHERE t.user_id = ?",
+            (user_id,),
+        ).fetchone()["n"]
+    else:
+        blocked_ready_n = conn.execute("SELECT COUNT(*) AS n FROM v_blocked_ready").fetchone()["n"]
+        stale_n = conn.execute("SELECT COUNT(*) AS n FROM v_stale_doing").fetchone()["n"]
     # ① 直近で完了タイル（README §2-1）は「累計」も添え書きする。`recent_done` は
     # 直近20件に絞ってあるので、累計はここで別に数える（絞った先で数えると嘘になる）。
-    done_total_n = conn.execute("SELECT COUNT(*) AS n FROM task WHERE status = 'done'").fetchone()["n"]
+    done_total_sql = "SELECT COUNT(*) AS n FROM task t WHERE t.status = 'done'" + user_filter
+    done_total_n = conn.execute(done_total_sql, user_params).fetchone()["n"]
 
     counts = {
         "pending": len(pending),
@@ -298,14 +334,20 @@ def get_board(conn: sqlite3.Connection) -> dict[str, object]:
 
     # 伝達キュー（v1 PROJECTS.md「伝達キュー」＝ manor では kind='note'。`about` 辺で
     # プロジェクトに紐づく。import_v1 が v1 の relay 行をここへ写している）。
-    notes = [
-        dict(r)
-        for r in conn.execute(
-            "SELECT n.id, n.title, n.body, e.dst AS project_id"
-            " FROM node n LEFT JOIN edge e ON e.src = n.id AND e.rel = 'about'"
-            " WHERE n.kind = 'note' ORDER BY n.id"
-        ).fetchall()
-    ]
+    # ADR-014 D4: 結び先（`about`）のプロジェクトの利用者で絞る。結び先が無い、または
+    # プロジェクトでない何かに結ばれているメモは全員に出す（判定できないものは絞らない側）。
+    notes_sql = (
+        "SELECT n.id, n.title, n.body, e.dst AS project_id"
+        " FROM node n LEFT JOIN edge e ON e.src = n.id AND e.rel = 'about'"
+        " LEFT JOIN project p ON p.id = e.dst"
+        " WHERE n.kind = 'note'"
+    )
+    notes_params: tuple[object, ...] = ()
+    if user_id is not None:
+        notes_sql += " AND (p.id IS NULL OR p.user_id = ?)"
+        notes_params = (user_id,)
+    notes_sql += " ORDER BY n.id"
+    notes = [dict(r) for r in conn.execute(notes_sql, notes_params).fetchall()]
 
     board = {
         "today": today.isoformat(),
@@ -343,13 +385,17 @@ def get_board(conn: sqlite3.Connection) -> dict[str, object]:
 _CLOSED_STATUSES = {"done", "withdrawn"}
 
 
-def get_timeline(conn: sqlite3.Connection, days: int) -> dict[str, object]:
+def get_timeline(conn: sqlite3.Connection, days: int, user_id: str | None = None) -> dict[str, object]:
     """task の start/end/due・milestone・secretary_reminder（未済）・project.due から
     帯と点を組む（v1 `timeline.py` の型を踏襲。ADR §7「画面はv1と同等」）。
 
     **新しい真実は作らない。** 日付を持っている列をそのまま並べ替えるだけで、
     書いていないタスクは出さない（推測で期間を作ると、動いていないものが
     「今週やる予定」の顔をして並ぶ——v1 timeline.py の教訓をそのまま引き継ぐ）。
+
+    `user_id`（ADR-014 D4）: 渡すと「誰の机か」でレーン・帯を絞る。秘書の予定は
+    `NULL`（共通）も出す。控え（reminder）は共通のまま絞らない。`None`（既定）は
+    今までどおり全部。
     """
     today = date.fromisoformat(util.today())
     horizon = today + timedelta(days=days)
@@ -366,12 +412,12 @@ def get_timeline(conn: sqlite3.Connection, days: int) -> dict[str, object]:
         return lane
 
     # レーンは有効な project ぶんすべて作る（予定が無くても「随時」として残す）。
-    for p in project_mod.list_projects(conn, status="active"):
+    for p in project_mod.list_projects(conn, status="active", user_id=user_id):
         lanes[str(p["id"])] = {
             "id": p["id"], "project_id": p["id"], "name": p["title"],
             "code": p["code"], "priority": p["priority"], "events": [],
         }
-    for p in project_mod.list_projects(conn, status="paused"):
+    for p in project_mod.list_projects(conn, status="paused", user_id=user_id):
         lanes.setdefault(str(p["id"]), {
             "id": p["id"], "project_id": p["id"], "name": p["title"],
             "code": p["code"], "priority": p["priority"], "events": [],
@@ -384,7 +430,7 @@ def get_timeline(conn: sqlite3.Connection, days: int) -> dict[str, object]:
     # ⚠ 2026-09-07: ここは done を **常に False で書いていた**——`milestone.done_at` が
     # 入っていても帯が「まだ」の顔で残り、済んだ節目が先の予定として並んでいた
     # （主人のご指摘「完了済の…論文修正が残ったまま」）。済んだものは出さない。
-    for m in graph.milestone_list(conn):
+    for m in graph.milestone_list(conn, user_id=user_id):
         if m.get("done_at"):
             continue
         d = date.fromisoformat(str(m["date"])[:10])
@@ -401,7 +447,7 @@ def get_timeline(conn: sqlite3.Connection, days: int) -> dict[str, object]:
         )
 
     # --- project の期限（今日→期限の帯） ---
-    for p in project_mod.list_projects(conn):
+    for p in project_mod.list_projects(conn, user_id=user_id):
         due = p.get("due")
         if not due:
             continue
@@ -425,13 +471,17 @@ def get_timeline(conn: sqlite3.Connection, days: int) -> dict[str, object]:
     # ⚠ 2026-09-07: 済んだ課題も帯として残していた（取り消し線は引かれるが場所は取る）。
     # タイムラインは「この先どうなるか」を見る画面なので、終わったものは出さない
     # ——済んだ仕事は「最近の動き」と日誌が持っている（主人のご指摘）。
-    task_rows = conn.execute(
+    task_sql = (
         "SELECT t.id, t.project_id, t.status, t.due, t.start, t.\"end\", n.title AS title"
         " FROM task t JOIN node n ON n.id = t.id"
         " WHERE (t.due IS NOT NULL OR t.start IS NOT NULL OR t.\"end\" IS NOT NULL)"
-        f" AND t.status NOT IN ({', '.join('?' for _ in _CLOSED_STATUSES)})",
-        tuple(sorted(_CLOSED_STATUSES)),
-    ).fetchall()
+        f" AND t.status NOT IN ({', '.join('?' for _ in _CLOSED_STATUSES)})"
+    )
+    task_params: list[object] = list(sorted(_CLOSED_STATUSES))
+    if user_id is not None:
+        task_sql += " AND t.user_id = ?"
+        task_params.append(user_id)
+    task_rows = conn.execute(task_sql, task_params).fetchall()
     for t in task_rows:
         start_raw = t["start"]
         end_raw = t["end"] or t["due"]
@@ -470,7 +520,18 @@ def get_timeline(conn: sqlite3.Connection, days: int) -> dict[str, object]:
         "SELECT * FROM sqlite_master WHERE type = 'table' AND name = 'secretary_event'"
     ).fetchone()
     if event_table is not None:
-        for ev in conn.execute("SELECT * FROM secretary_event ORDER BY start").fetchall():
+        event_sql = "SELECT * FROM secretary_event"
+        event_params: tuple[object, ...] = ()
+        if user_id is not None:
+            has_user_col = any(
+                str(r["name"]) == "user_id"
+                for r in conn.execute("PRAGMA table_info(secretary_event)").fetchall()
+            )
+            if has_user_col:
+                event_sql += " WHERE (user_id IS NULL OR user_id = ?)"
+                event_params = (user_id,)
+        event_sql += " ORDER BY start"
+        for ev in conn.execute(event_sql, event_params).fetchall():
             sd_s = str(ev["start"])[:10]
             ed_s = str(ev["end"] or ev["start"])[:10]
             try:
@@ -535,7 +596,22 @@ def get_timeline(conn: sqlite3.Connection, days: int) -> dict[str, object]:
     }
 
 
-def get_log(conn: sqlite3.Connection, home: Path) -> dict[str, object]:
+def _decision_task_user_ids(conn: sqlite3.Connection, decision_id: str) -> list[str]:
+    return [
+        str(r["user_id"])
+        for r in conn.execute(
+            "SELECT t.user_id AS user_id FROM edge e JOIN task t ON t.id = e.src"
+            " WHERE e.dst = ? AND e.rel = 'decided_by'",
+            (decision_id,),
+        ).fetchall()
+    ]
+
+
+def get_log(conn: sqlite3.Connection, home: Path, user_id: str | None = None) -> dict[str, object]:
+    """`user_id`（ADR-014 D4）: 渡すと台帳の行を「誰の机か」で絞る（裁定は §D4 の
+    「task に結ばれていない裁定は主人のもの」の規則。委譲・履歴は結ばれた task の
+    利用者で絞る）。`None`（既定）は今までどおり全部。
+    """
     state_path = Path(home) / "STATE.md"
     state_text = state_path.read_text(encoding="utf-8") if state_path.is_file() else ""
     decided = [d for d in decision_mod.list_decisions(conn) if d["status"] != "open"]
@@ -547,6 +623,21 @@ def get_log(conn: sqlite3.Connection, home: Path) -> dict[str, object]:
             "SELECT * FROM task_event ORDER BY id DESC LIMIT 50"
         ).fetchall()
     ]
+
+    if user_id is not None:
+        principal = user_mod.principal_id(conn)
+        if user_id != principal:
+            decided = [
+                d for d in decided
+                if user_id in _decision_task_user_ids(conn, str(d["id"]))
+            ]
+        task_user_by_id: dict[str, str] = {
+            str(r["id"]): str(r["user_id"])
+            for r in conn.execute("SELECT id, user_id FROM task").fetchall()
+        }
+        handoffs = [h for h in handoffs if task_user_by_id.get(str(h["task_id"])) == user_id]
+        events = [e for e in events if task_user_by_id.get(str(e["task_id"])) == user_id]
+
     return {
         "state": state_text,
         "decided": decided,

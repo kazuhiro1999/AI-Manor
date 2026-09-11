@@ -314,11 +314,14 @@ def add_event(
     note: str = "",
     source: str = "manual",
     project_id: str | None = None,
+    user_id: str | None = None,
 ) -> int:
     """予定を1件入れて `id` を返す。`start`/`end` は絶対日時（`validate_datetime` の形）。
 
     `project_id` はタイムラインのレーンを決める（2026-09-07）。**件名から推測しない**
     ——「定期ミーティング」がどの計画のものかは書いてある人にしか分からない。
+
+    `user_id`（ADR-014 D4/D5）: 誰の予定か。`None`（既定）は共通（全員に出る）。
     """
     from manor import util
 
@@ -328,9 +331,9 @@ def add_event(
     start = validate_datetime(start, field="--start")
     end = validate_datetime(end, field="--end") if end else None
     cur = conn.execute(
-        'INSERT INTO secretary_event (start, "end", title, place, note, source, created_at, project_id)'
-        " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-        (start, end, title, place or "", note or "", source, util.now(), project_id),
+        'INSERT INTO secretary_event (start, "end", title, place, note, source, created_at, project_id, user_id)'
+        " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (start, end, title, place or "", note or "", source, util.now(), project_id, user_id),
     )
     return int(cur.lastrowid or 0)
 

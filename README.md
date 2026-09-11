@@ -92,6 +92,7 @@ git config core.hooksPath .githooks   # git 管理下に置くなら（漏れを
 | **夜勤** `manor night` | 就寝中に指示書へ書いた作業だけを自走させる（OS への登録は既定オフ） | [`docs/night.md`](docs/night.md) |
 | **起動ショートカット** `manor shortcut create` | デスクトップに作る。開くと止めて→ビルド→起動→ブラウザ | [`docs/shortcut.md`](docs/shortcut.md) |
 | **家庭のルール** `manor rule` | 門限・来客対応などを scope と tag つきで置く | [`docs/rules.md`](docs/rules.md) |
+| **利用者の切り替え** | 同居の相手を「設定 → 利用者」で足し、右上の 👤 から切り替える。タスク・予定・Slack・カレンダーは人ごと、台所などは共通。執事自身の件は「執事」の机に | [ADR-014](docs/design/ADR-014_users.md) |
 | **日本語 / 英語** | 画面もコマンドも切り替えられます（「設定 → 言語」） | [ADR-012](docs/design/ADR-012_calendar_and_i18n.md) |
 
 声（VOICEVOX）・Slack・Notion は任意の拡張機能です。**1つも入れなくても完全に動きます**

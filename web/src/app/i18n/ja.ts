@@ -410,6 +410,7 @@ export const ja = {
   "extensions.styleAriaLabel": (p) => `${p.label}のスタイル`,
   "extensions.optionsUnavailable": "取得できません。エンジンを起動してから再度お試しください。",
   "extensions.otherGroup": "その他",
+  "extensions.perUserHeading": "利用者ごと",
 
   /* ---------- settings: modules/settings ---------- */
   "settings.language.heading": "言語",
@@ -835,6 +836,37 @@ export const ja = {
   "setup.submit": "登録する",
   "setup.registered": "登録しました",
   "setup.registerFailed": "登録できませんでした",
+
+  /* ---------- ADR-014: 利用者の識別と切り替え（誰として見ているか。認証ではない） ---------- */
+  "user.role.principal": "主人",
+  "user.role.member": "同居の相手",
+  "user.role.butler": "執事",
+
+  "app.user.chipLabel": (p) => `👤 ${p.name} ▾`,
+  "app.user.chipLoading": "👤 … ▾",
+  "app.user.menuAria": "利用者を切り替える",
+  "app.user.manage": "利用者を管理…",
+  "app.user.switchFailed": (p) => `切り替えられませんでした: ${p.reason}`,
+
+  "tasks.form.userLine": (p) => `この件の利用者: ${p.name}`,
+
+  "settings.users.heading": "利用者",
+  "settings.users.hint":
+    "利用者ごとにタスク・プロジェクト・予定が絞られます。台所などの共通の画面は変わりません。",
+  "settings.users.current": "（現在）",
+  "settings.users.add": "+ 利用者を追加",
+  "settings.users.namePlaceholder": "名前",
+  "settings.users.nameRequired": "名前は必須です",
+  "settings.users.newNameAria": "新しい利用者の名前",
+  "settings.users.nameFieldAria": (p) => `${p.name} の名前`,
+  "settings.users.added": "追加しました",
+  "settings.users.addFailed": (p) => `追加できませんでした: ${p.reason}`,
+  "settings.users.renamed": "改名しました",
+  "settings.users.renameFailed": (p) => `改名できませんでした: ${p.reason}`,
+  "settings.users.archiveConfirm": "もう一度押すと畳みます",
+  "settings.users.archived": "畳みました",
+  "settings.users.archiveFailed": (p) => `畳めませんでした: ${p.reason}`,
+  "settings.users.protectedNote": "主人と執事は畳めません",
 } satisfies Record<string, Entry>;
 
 export type TranslationKey = keyof typeof ja;

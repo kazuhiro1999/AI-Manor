@@ -222,33 +222,35 @@ LINE_ALLOWLIST: set[str] = {
     # ——`check()` / Slack の返信と共有する診断文字列なので訳さない。
     # ⚠ 行番号で固定してあるので、上に行を足すとずれる。ずれたら手で数えず、
     #   `_string_constant_offenders` に直接聞いて入れ替えること。
-    "calendar.py:76",
-    "calendar.py:78",
-    "calendar.py:80",
-    "calendar.py:82",
+    # 2026-09-11（ADR-014 D5・段C）: per_user 対応で行数が動いたため、下の一覧は
+    # `_string_constant_offenders` に直接聞き直して入れ替えた（手で数えていない）。
     "calendar.py:89",
-    "calendar.py:101",
-    "calendar.py:107",
-    "calendar.py:110",
-    "calendar.py:200",
-    "calendar.py:348",
-    "calendar.py:364",
-    "calendar.py:431",
-    "calendar.py:462",
-    "calendar.py:469",
-    "calendar.py:491",
-    "calendar.py:500",
-    "calendar.py:507",
-    "calendar.py:509",
-    "calendar.py:532",
-    "calendar.py:575",
-    "calendar.py:577",
-    "calendar.py:595",
-    "calendar.py:602",
-    "calendar.py:604",
-    "calendar.py:611",
-    "calendar.py:613",
-    "calendar.py:620",
+    "calendar.py:91",
+    "calendar.py:93",
+    "calendar.py:95",
+    "calendar.py:102",
+    "calendar.py:114",
+    "calendar.py:120",
+    "calendar.py:123",
+    "calendar.py:238",
+    "calendar.py:432",
+    "calendar.py:448",
+    "calendar.py:525",
+    "calendar.py:560",
+    "calendar.py:567",
+    "calendar.py:589",
+    "calendar.py:598",
+    "calendar.py:605",
+    "calendar.py:607",
+    "calendar.py:630",
+    "calendar.py:673",
+    "calendar.py:675",
+    "calendar.py:693",
+    "calendar.py:700",
+    "calendar.py:702",
+    "calendar.py:709",
+    "calendar.py:711",
+    "calendar.py:718",
     # [共有] face.py: try_open_app_window は web の `/api/v1/face/open` の応答(reason)。
     # _popen_chrome も両方から共有される(コメント参照)。
     "face.py:52", "face.py:226", "face.py:237",
@@ -286,10 +288,18 @@ LINE_ALLOWLIST: set[str] = {
     # 273→274・595→596）。T12 の必要性がさらに裏付けられた。
     # ⚠ **2026-09-11 に4度目**（T35・夜勤が `status()` に withdrawn の docstring を足して
     # 596→601。274 は今回の追記より前なので不変）。
-    "task.py:274", "task.py:601",
+    # ⚠ **2026-09-11 に5度目**（ADR-014・段Aが `add()`/`set()` に `user`（誰の件か）の
+    # 解決・検算とその docstring を足して 274→291・601→639）。
+    "task.py:291", "task.py:639",
     # [データ] project.py: `project.kind` の値そのもの。DB に入っている文字列なので
     # 訳さない——訳すと、既存の行と一致しなくなる（2026-09-09・T26 の実装で追加）。
-    "project.py:18",
+    # ⚠ 2026-09-11（ADR-014）: `user as user_mod` の import を1行足して 18→19。
+    "project.py:19",
+    # [データ] user.py: `seed_defaults` が種（`master`/`butler`）を入れるときの名前の
+    # 既定値（「主人」「執事」）。ADR-014 D1「名前の既定値は i18n を通さない」——
+    # `profile.summary_line` が「執事」を既定にしているのと同じ扱いで、DB の中身
+    # （利用者の呼び名の初期値）であって画面の文言ではない。
+    "user.py:65", "user.py:66",
     # [データ] board/__init__.py・web/__init__.py・archive.py・gate.py・night/__init__.py の
     # `LABEL` 定数。`manor.cli` の `_run_init` が「部下: {name}」の一覧に使う想定の
     # 表示名だが、実際に読まれるのは `staff/*` 配下の担当モジュールだけ(grep で確認)。

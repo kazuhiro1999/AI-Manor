@@ -11,14 +11,14 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 
 from ... import runlog as runlog_mod
 from ...board import api_core as board_core
 from ... import profile as profile_mod
 from ... import talk_session as talk_session_mod
 from ...night import runner as night_runner
-from .._common import WebContext, open_conn, table_exists
+from .._common import WebContext, open_conn, table_exists, viewing_user_id
 
 
 def _bucket_totals(rows: list[dict[str, Any]]) -> dict[str, object]:
@@ -40,9 +40,10 @@ def _bucket_totals(rows: list[dict[str, Any]]) -> dict[str, object]:
 
 def register(app: FastAPI, ctx: WebContext) -> None:
     @app.get("/api/v1/dashboard")
-    def dashboard() -> dict[str, object]:
+    def dashboard(request: Request) -> dict[str, object]:
         with open_conn(ctx) as conn:
-            board = board_core.get_board(conn)
+            uid = viewing_user_id(request, conn)
+            board = board_core.get_board(conn, user_id=uid)
             counts = board["counts"]
             today = str(board["today"])
 

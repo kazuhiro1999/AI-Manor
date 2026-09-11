@@ -44,6 +44,9 @@ MANIFEST: dict[str, object] = {
         "人に教えたり公開の場所に貼ったりしない",
         "保存後、「試す」または `manor calendar sync` で最初の取り込みを行う"
         "（以降は明示的に sync を回したときだけ更新される。自動では同期しない）",
+        "Google カレンダーへ書き込む（#cal）なら、書き込み先カレンダー ID"
+        "（write_calendar_id）も入力する。読んでいる ICS と同じカレンダーでなければ、"
+        "登録した予定が見えなくなる",
     ],
     "fields": [
         {
@@ -52,6 +55,16 @@ MANIFEST: dict[str, object] = {
             "kind": "password",
             "required": True,
             "help": "非公開の iCal 形式 URL（多くは .ics で終わる）",
+            # ADR-014 D5: 取り込み元は利用者ごと（人の利用者ごとに1行）。
+            "per_user": True,
+        },
+        {
+            "key": "write_calendar_id",
+            "label": "書き込み先カレンダー ID",
+            "kind": "text",
+            "required": False,
+            "help": "#cal で書き込む先のカレンダー ID（読んでいる ICS と同じもの）",
+            "per_user": True,
         },
     ],
     "secret_fields": ["url"],

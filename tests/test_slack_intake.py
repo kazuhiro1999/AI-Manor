@@ -118,7 +118,7 @@ def _setup(
     monkeypatch.setattr(slack_mod, "_slack_api", fake)
     monkeypatch.setattr(
         slack_mod, "_push_to_calendar",
-        lambda home, when: push or {"ok": False, "html_link": "", "reason": "（試験）押し出さない"},
+        lambda home, when, **_kw: push or {"ok": False, "html_link": "", "reason": "（試験）押し出さない"},
     )
     # `#task` の分解も既定では呼ばせない（既定は「読めなかった」＝本文そのまま起票）。
     monkeypatch.setattr(
@@ -521,7 +521,7 @@ def test_the_push_happens_after_the_local_save(
         order.append("saved")
         return real_add(*args, **kwargs)
 
-    def spy_push(home_arg, when):
+    def spy_push(home_arg, when, **_kw):
         order.append("pushed")
         return {"ok": False, "html_link": "", "reason": "（試験）"}
 
@@ -779,7 +779,7 @@ def test_the_same_event_is_updated_not_duplicated(
     monkeypatch.setenv("MANOR_TODAY", "2026-09-06")
     calls: list[str] = []
 
-    def fake_push(home_arg, when):
+    def fake_push(home_arg, when, **_kw):
         calls.append(str((when.get("existing") or {}).get("event_id") or ""))
         return {"ok": True, "html_link": "https://www.google.com/calendar/event?eid=x",
                 "mode": "update" if calls[-1] else "create", "event_id": "EV1", "reason": ""}

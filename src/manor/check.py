@@ -23,6 +23,8 @@ CHECK_LABELS: dict[str, str] = {
     "C11": "evidence の無い open decision（警告。終了コードは変えない。ADR-006 D5）",
     "C12": "authorized_by が NULL でない task_event が、実在する decision/handoff を指していない（done は decision のみ許す。ADR-006 D21）",
     "C13": "muted_by_night が立ったまま夜勤が動いていない（home/night/night.lock が無い。ADR-008 D12）",
+    "C14": "task.user_id / project.user_id が user 表に無い・畳んだ利用者を指している",
+    "C15": "role='principal' がちょうど1件、role='butler' がちょうど1件（畳んでいないもの）",
 }
 
 #: 警告のみの check（C10・C11・C13）。存在しても `manor check` の終了コードは変えない
@@ -230,6 +232,44 @@ def check_c13(home: Path) -> list[dict[str, object]]:
     return [{"muted_by_night": True, "lock": False}]
 
 
+def check_c14(conn: sqlite3.Connection) -> list[dict[str, object]]:
+    """`task.user_id` / `project.user_id` が `user` 表に無い・畳んだ利用者を指している
+    行が無いこと（ADR-014 D7）。
+    """
+    out: list[dict[str, object]] = []
+    out.extend(
+        _rows(
+            conn,
+            "SELECT id, user_id FROM task WHERE NOT EXISTS ("
+            "  SELECT 1 FROM user u WHERE u.id = task.user_id AND u.archived_at IS NULL"
+            ") ORDER BY id",
+        )
+    )
+    out.extend(
+        _rows(
+            conn,
+            "SELECT id, user_id FROM project WHERE NOT EXISTS ("
+            "  SELECT 1 FROM user u WHERE u.id = project.user_id AND u.archived_at IS NULL"
+            ") ORDER BY id",
+        )
+    )
+    return out
+
+
+def check_c15(conn: sqlite3.Connection) -> list[dict[str, object]]:
+    """`role='principal'` がちょうど1件、`role='butler'` がちょうど1件（畳んでいないもの）
+    であること（ADR-014 D7）。
+    """
+    out: list[dict[str, object]] = []
+    for role in ("principal", "butler"):
+        n = conn.execute(
+            "SELECT COUNT(*) AS n FROM user WHERE role = ? AND archived_at IS NULL", (role,)
+        ).fetchone()["n"]
+        if n != 1:
+            out.append({"role": role, "count": int(n)})
+    return out
+
+
 def run(conn: sqlite3.Connection, home: Path) -> dict[str, list[object]]:
     return {
         "C1": check_c1(conn),
@@ -245,6 +285,8 @@ def run(conn: sqlite3.Connection, home: Path) -> dict[str, list[object]]:
         "C11": check_c11(conn),
         "C12": check_c12(conn),
         "C13": check_c13(home),
+        "C14": check_c14(conn),
+        "C15": check_c15(conn),
     }
 
 

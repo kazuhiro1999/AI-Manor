@@ -28,6 +28,9 @@ CORE_TABLES: frozenset[str] = frozenset(
     {
         "meta", "node", "task", "task_event", "project", "decision", "milestone", "edge",
         "handoff", "rule", "run", "profile",
+        # ADR-014 D1（利用者の識別と切り替え）: node には紐づかない独立の表
+        # （`rule`/`task_kind` と同じ流儀）。
+        "user",
         # ADR-009 §3（Slack 拡張。5b）: 部下（staff）の接頭規則の対象ではない core の表。
         # `slack_intake` は T4（2026-09-06）の `#task` / `#log` 取り込みの印。
         "slack_message", "slack_reply", "slack_intake",
@@ -158,6 +161,13 @@ def migrate_core(home: Path) -> None:
         # いない home に表を作ってしまうことはない（上の「部下のスキーマを当てては
         # いけない」は `executescript` で表ごと作る話）。
         _add_column_if_missing(conn, "secretary_event", "project_id", "TEXT")
+        # ADR-014 D2: 既存 DB の project/task に「誰の件か」を冪等に足す。**列を足すのは
+        # user.backfill_user_ids() より必ず先**（印を置く前に列が確実にある順番にする約束）。
+        _add_column_if_missing(conn, "project", "user_id", "TEXT NOT NULL DEFAULT 'master'")
+        _add_column_if_missing(conn, "task", "user_id", "TEXT NOT NULL DEFAULT 'master'")
+        # ADR-014 D4/D5: 秘書の予定の利用者列（NULL＝共通）。表が無ければ何もしない
+        # （secretary_event と同じ判断——上の project_id と同じ理由）。
+        _add_column_if_missing(conn, "secretary_event", "user_id", "TEXT")
         # **既定の8つもここで入れる**（執事の裁定 2026-09-04）。`manor init` だけに任せると、
         # 更新後に init を忘れた home は「表はあるが空」になり、種類を1つも選べない——
         # `run`／`notion_page` で2度踏んだのと**同じ穴**（GROWTH G5）。
@@ -167,6 +177,13 @@ def migrate_core(home: Path) -> None:
 
         task_kind_mod.seed_defaults(conn)
         _backfill_authorized_by(conn)
+        # ADR-014 D1/D2: 利用者の種（表が空のときだけ）と、既存行への一回きりの埋め
+        # （`meta` の印が無いときだけ）。列を足した直後に走らせる必要があるため、
+        # 上の `_add_column_if_missing` の後に置く。
+        from . import user as user_mod
+
+        user_mod.seed_defaults(conn)
+        user_mod.backfill_user_ids(conn)
         conn.commit()
     finally:
         conn.close()
@@ -215,6 +232,18 @@ def init(home: Path) -> list[str]:
         # ADR-010 D2: 既存 DB の task に kind 列を冪等に足す（新規 DB は core.sql の
         # CREATE TABLE が最初から持つ）。
         _add_column_if_missing(conn, "task", "kind", "TEXT NOT NULL DEFAULT ''")
+        # T37（2026-09-10）: 既存 DB の task に source 列を冪等に足す。**この行は今回
+        # （ADR-014）まで `init()` に無かった**——`migrate_core` だけが持っていて、
+        # `manor init` を素通しした旧 DB では `task.source` が無いまま
+        # `user.backfill_user_ids()` が読みに行き `sqlite3.OperationalError` になる穴が
+        # あった（`tests/test_db_migration.py` の `_make_old_task_db` で実測）。
+        _add_column_if_missing(conn, "task", "source", "TEXT NOT NULL DEFAULT ''")
+
+        # ADR-014 D2: 既存 DB の project/task に「誰の件か」を冪等に足す（新規 DB は
+        # core.sql の CREATE TABLE が最初から持つ）。**列を足すのは
+        # user.backfill_user_ids() より必ず先**（印を置く前に列が確実にある順番にする約束）。
+        _add_column_if_missing(conn, "project", "user_id", "TEXT NOT NULL DEFAULT 'master'")
+        _add_column_if_missing(conn, "task", "user_id", "TEXT NOT NULL DEFAULT 'master'")
 
         # ADR-006 §2/D21: 既存 DB の HG・done task で authorized_by が未設定のものを
         # decided_by の辺から一回だけ埋める（辺→事実への写し。以後は事実だけを見る）。
@@ -225,6 +254,13 @@ def init(home: Path) -> list[str]:
         from . import task_kind as task_kind_mod
 
         task_kind_mod.seed_defaults(conn)
+
+        # ADR-014 D1/D2: 利用者の種（表が空のときだけ）と、既存行への一回きりの埋め
+        # （`meta` の印が無いときだけ）。上の `_add_column_if_missing` の後に置く。
+        from . import user as user_mod
+
+        user_mod.seed_defaults(conn)
+        user_mod.backfill_user_ids(conn)
 
         for name, module in iter_staff_modules():
             schema_path = _staff_schema_path(module)
@@ -239,6 +275,11 @@ def init(home: Path) -> list[str]:
                     params={"name": name, "exc": str(exc)},
                 ) from exc
             applied.append(name)
+
+        # ADR-014 D4/D5: 秘書の予定の利用者列（NULL＝共通）。**部下のスキーマ適用の後**
+        # ——`_add_column_if_missing` は表が無ければ何もしないので、秘書を導入していない
+        # home に表を作ってしまう心配は無い（`project_id` を足したときと同じ判断）。
+        _add_column_if_missing(conn, "secretary_event", "user_id", "TEXT")
 
         if conn.execute("SELECT value FROM meta WHERE key='schema_version'").fetchone() is None:
             conn.execute("INSERT INTO meta (key, value) VALUES ('schema_version', '1')")

@@ -410,6 +410,7 @@ export const en: { [K in TranslationKey]: MirrorEntry<K> } = {
   "extensions.styleAriaLabel": (p) => `${p.label} style`,
   "extensions.optionsUnavailable": "Couldn't fetch options. Start the engine and try again.",
   "extensions.otherGroup": "Other",
+  "extensions.perUserHeading": "Per user",
 
   /* ---------- settings ---------- */
   "settings.language.heading": "Language",
@@ -832,4 +833,35 @@ export const en: { [K in TranslationKey]: MirrorEntry<K> } = {
   "setup.submit": "Register",
   "setup.registered": "Registered",
   "setup.registerFailed": "Couldn't register",
+
+  /* ---------- ADR-014: user identity & switching (who you're viewing as; not auth) ---------- */
+  "user.role.principal": "Master",
+  "user.role.member": "Housemate",
+  "user.role.butler": "Butler",
+
+  "app.user.chipLabel": (p) => `👤 ${p.name} ▾`,
+  "app.user.chipLoading": "👤 … ▾",
+  "app.user.menuAria": "Switch user",
+  "app.user.manage": "Manage users…",
+  "app.user.switchFailed": (p) => `Couldn't switch: ${p.reason}`,
+
+  "tasks.form.userLine": (p) => `Filed for: ${p.name}`,
+
+  "settings.users.heading": "Users",
+  "settings.users.hint":
+    "Tasks, projects, and the schedule are filtered per user. Shared screens like the kitchen are unaffected.",
+  "settings.users.current": " (current)",
+  "settings.users.add": "+ Add user",
+  "settings.users.namePlaceholder": "Name",
+  "settings.users.nameRequired": "Name is required",
+  "settings.users.newNameAria": "New user's name",
+  "settings.users.nameFieldAria": (p) => `${p.name}'s name`,
+  "settings.users.added": "Added.",
+  "settings.users.addFailed": (p) => `Couldn't add: ${p.reason}`,
+  "settings.users.renamed": "Renamed.",
+  "settings.users.renameFailed": (p) => `Couldn't rename: ${p.reason}`,
+  "settings.users.archiveConfirm": "Press again to archive",
+  "settings.users.archived": "Archived.",
+  "settings.users.archiveFailed": (p) => `Couldn't archive: ${p.reason}`,
+  "settings.users.protectedNote": "You and the butler can't be archived",
 };

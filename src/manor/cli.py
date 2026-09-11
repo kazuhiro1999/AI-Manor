@@ -144,6 +144,7 @@ def cmd_task_add(conn, home, args) -> object:
         recommendation=args.recommendation,
         risk=args.risk,
         kind=args.kind,
+        user=args.user,
     )
     if args.json:
         return {"id": task_id}
@@ -167,6 +168,7 @@ def cmd_task_set(conn, home, args) -> object:
         risk=args.risk,
         kind=args.kind,
         status_note=args.status_note,
+        user=args.user,
     )
     if args.json:
         return {"id": task_id}
@@ -246,6 +248,7 @@ def cmd_task_list(conn, home, args) -> object:
         owner=args.owner,
         include_settled=args.all,
         source=args.source,
+        user_id=args.user,
     )
     if args.json:
         return rows
@@ -296,6 +299,7 @@ def cmd_project_add(conn, home, args) -> object:
         preset=args.preset,
         due=args.due,
         body=args.body,
+        user=args.user,
     )
     if args.json:
         return {"id": project_id}
@@ -314,6 +318,7 @@ def cmd_project_set(conn, home, args) -> object:
         due=args.due,
         body=args.body,
         next_action=args.next_action,
+        user=args.user,
     )
     if args.json:
         return {"id": project_id}
@@ -321,7 +326,7 @@ def cmd_project_set(conn, home, args) -> object:
 
 
 def cmd_project_list(conn, home, args) -> object:
-    rows = project_mod.list_projects(conn, status=args.status, kind=args.kind)
+    rows = project_mod.list_projects(conn, status=args.status, kind=args.kind, user_id=args.user)
     if args.json:
         return rows
     if not rows:
@@ -885,6 +890,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--kind", default="",
         help=i18n.t("cli.task.add.kind.help"),
     )
+    p.add_argument("--user", help=i18n.t("cli.task.add.user.help"))
     p.add_argument("--json", action="store_true")
     p.add_argument("--no-render", action="store_true")
     p.set_defaults(func=cmd_task_add, is_write=True)
@@ -905,6 +911,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--recommendation")
     p.add_argument("--risk")
     p.add_argument("--kind", help=i18n.t("cli.task.set.kind.help"))
+    p.add_argument("--user", help=i18n.t("cli.task.set.user.help"))
     p.add_argument("--json", action="store_true")
     p.add_argument("--no-render", action="store_true")
     p.set_defaults(func=cmd_task_set, is_write=True)
@@ -948,6 +955,7 @@ def build_parser() -> argparse.ArgumentParser:
     # `args.source` を読む側だけ書いてターン上限で落ち、**この行が無いまま朝を迎えた**
     # ——`manor task list` が丸ごと AttributeError で死んでいた。
     p.add_argument("--source")
+    p.add_argument("--user", help=i18n.t("cli.task.list.user.help"))
     p.add_argument("--all", action="store_true")
     p.add_argument("--json", action="store_true")
     p.set_defaults(func=cmd_task_list, is_write=False)
@@ -992,6 +1000,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--preset", default="standard")
     p.add_argument("--due")
     p.add_argument("--body", default="")
+    p.add_argument("--user", help=i18n.t("cli.project.add.user.help"))
     p.add_argument("--json", action="store_true")
     p.add_argument("--no-render", action="store_true")
     p.set_defaults(func=cmd_project_add, is_write=True)
@@ -1006,6 +1015,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--due")
     p.add_argument("--body")
     p.add_argument("--next-action", dest="next_action")
+    p.add_argument("--user", help=i18n.t("cli.project.set.user.help"))
     p.add_argument("--json", action="store_true")
     p.add_argument("--no-render", action="store_true")
     p.set_defaults(func=cmd_project_set, is_write=True)
@@ -1013,6 +1023,7 @@ def build_parser() -> argparse.ArgumentParser:
     p = project_sub.add_parser("list")
     p.add_argument("--status")
     p.add_argument("--kind")
+    p.add_argument("--user", help=i18n.t("cli.project.list.user.help"))
     p.add_argument("--json", action="store_true")
     p.set_defaults(func=cmd_project_list, is_write=False)
 
@@ -1274,6 +1285,9 @@ def build_parser() -> argparse.ArgumentParser:
     from . import task_kind as task_kind_mod
 
     task_kind_mod.register(subparsers)  # ADR-010 D2（タスクの種類）
+    from . import user as user_mod
+
+    user_mod.register(subparsers)  # ADR-014 D1/D6（利用者の識別と切り替え）
     from . import profile as profile_mod
 
     profile_mod.register(subparsers)

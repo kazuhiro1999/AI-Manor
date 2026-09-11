@@ -136,8 +136,18 @@ def _load_slack_config(home: Path) -> dict[str, object]:
     return section if isinstance(section, dict) else {}
 
 
-def channel_id(home: Path) -> str:
-    """`[slack] channel`。無ければ空文字。"""
+def channel_id(home: Path, user_id: str | None = None) -> str:
+    """送り先チャンネル（ADR-014 D5: `channel` は `per_user`）。
+
+    `user_id` を渡せば `extensions.per_user_value` から読む（principal は空なら
+    従来の `[slack] channel` へ読み替える。他の利用者にはこの読み替えをしない）。
+    `user_id` を省略すれば従来どおり `[slack] channel` を直接読む（後方互換）。
+    """
+    if user_id is not None:
+        from . import extensions as extensions_mod  # noqa: PLC0415 - 循環 import を避ける
+
+        value = extensions_mod.per_user_value(home, "slack", "channel", user_id)
+        return value.strip() if isinstance(value, str) else ""
     cfg = _load_slack_config(home)
     ch = cfg.get("channel")
     return ch.strip() if isinstance(ch, str) else ""
@@ -297,9 +307,14 @@ def _clip(text: object, limit: int = 88) -> str:
     return flat if len(flat) <= limit else flat[: limit - 1] + "…"
 
 
-def brief_data(conn: sqlite3.Connection, home: Path) -> dict[str, object]:
+def brief_data(conn: sqlite3.Connection, home: Path, user_id: str | None = None) -> dict[str, object]:
     """「まとめ」の材料。`render.active_data` に、v1 のブリーフィングが持っていて
     v2 が落としていた3つ——**本日の予定・昨夜の作業・控え**——を足す。
+
+    `user_id`（ADR-014 D5）: 渡すとタスク・予定をその利用者に絞る（`None` は今までどおり
+    全部）。夜勤の3つ（`night`/`night_health`/`night_pending`）は **principal のときだけ**
+    入れる——相手・執事の便には夜勤の報告・点検・保留を載せない（ADR-014 D5「夜勤の報告は
+    主人の便にだけ載る」）。
 
     ⚠ 2026-09-07 の主人のご指摘で足した。それまでの `format_mechanical_brief` は
     open decision と section A と今日の milestone しか見ておらず、**カレンダーを
@@ -313,23 +328,31 @@ def brief_data(conn: sqlite3.Connection, home: Path) -> dict[str, object]:
     `staff/secretary/cli.py:cmd_agenda` と同じ読み方をし、夜勤は
     `night/runner.py:report` をそのまま呼ぶ。
     """
-    data = dict(render_mod.active_data(conn))
+    data = dict(render_mod.active_data(conn, user_id=user_id))
     today = util.today()
+    if user_id is not None:
+        # D4: 秘書の予定は絞りの対象・`NULL`（共通）は全員に出る。
+        event_filter = " AND (user_id IS NULL OR user_id = ?)"
+        event_params: tuple[object, ...] = (user_id,)
+    else:
+        event_filter = ""
+        event_params = ()
     data["today_events"] = [
         dict(r)
         for r in conn.execute(
             'SELECT id, start, "end", title, place FROM secretary_event'
-            " WHERE substr(start, 1, 10) = ? ORDER BY start",
-            (today,),
+            f" WHERE substr(start, 1, 10) = ?{event_filter} ORDER BY start",
+            (today, *event_params),
         ).fetchall()
     ]
     # 「今日が空なだけで、明日を知らないままにしない」（v1 brief-prompt.txt）。
     nxt = conn.execute(
         'SELECT id, start, "end", title, place FROM secretary_event'
-        " WHERE substr(start, 1, 10) > ? ORDER BY start LIMIT 1",
-        (today,),
+        f" WHERE substr(start, 1, 10) > ?{event_filter} ORDER BY start LIMIT 1",
+        (today, *event_params),
     ).fetchone()
     data["next_event"] = dict(nxt) if nxt is not None else None
+    # 控え（reminder）は共通のまま（D4）——利用者では絞らない。
     data["reminders"] = [
         dict(r)
         for r in conn.execute(
@@ -338,12 +361,21 @@ def brief_data(conn: sqlite3.Connection, home: Path) -> dict[str, object]:
             (today,),
         ).fetchall()
     ]
-    # 今朝 02:00 に回った夜勤の報告は、今日の日付で綴じられている。
-    data["night"] = night_runner.report(Path(home), today)
-    # 「報告があれば読む」だけでは、落ちた晩に気づけない（2026-09-08・主人のご質問）
-    data["night_health"] = night_runner.health(Path(home))
-    # 何が片付かなかったか。**記録はしない**（数えるのは morning の点検の仕事）
-    data["night_pending"] = night_runner.review(Path(home), record=False)
+    from . import user as user_mod  # noqa: PLC0415 - 循環 import を避けるため遅延
+
+    is_principal_scope = user_id is None or user_id == user_mod.principal_id(conn)
+    if is_principal_scope:
+        # 今朝 02:00 に回った夜勤の報告は、今日の日付で綴じられている。
+        data["night"] = night_runner.report(Path(home), today)
+        # 「報告があれば読む」だけでは、落ちた晩に気づけない（2026-09-08・主人のご質問）
+        data["night_health"] = night_runner.health(Path(home))
+        # 何が片付かなかったか。**記録はしない**（数えるのは morning の点検の仕事）
+        data["night_pending"] = night_runner.review(Path(home), record=False)
+    else:
+        # 相手・執事の便には夜勤の3つを載せない（ADR-014 D5）。
+        data["night"] = None
+        data["night_health"] = None
+        data["night_pending"] = None
     return data
 
 
@@ -630,10 +662,17 @@ def _run_claude_generate(
 # --- brief（送信。D10・D11） -------------------------------------------------------------------
 
 
-def brief(
-    home: Path, *, generate: bool = False, dry_run: bool = False, claude_bin: str | None = None
+def _brief_for_user(
+    conn: sqlite3.Connection,
+    home: Path,
+    user_id: str | None,
+    *,
+    generate: bool,
+    dry_run: bool,
+    claude_bin: str | None,
 ) -> dict[str, object]:
-    """`manor slack brief`。
+    """`brief()` の実体（1人分）。`user_id=None` は今までどおり全部（後方互換）。
+    `conn` は呼び出し側が開閉する——複数人へ回すときに毎回開き直さないため。
 
     1. 「まとめ」を1通組む（既定は `render.active_data` から機械的に。`--generate` なら
        `claude -p` に書き直させる。失敗・`claude` 不在なら機械組みへフォールバック）
@@ -645,146 +684,192 @@ def brief(
     5. まとめを送り、続けて decision ごとに送る。decision の通の `ts` を `slack_message`
        へ1行ずつ記録する（1decision=1行=1ts。D11の対応づけの元）
     """
-    home = Path(home)
-    conn = db.connect(home)
-    try:
-        data = brief_data(conn, home)
-        open_decisions = list(data["open_decisions"])  # type: ignore[assignment]
-        mechanical = format_mechanical_brief(data)
-        summary_text = mechanical
-        generated = False
-        generate_note = ""
+    data = brief_data(conn, home, user_id=user_id)
+    open_decisions = list(data["open_decisions"])  # type: ignore[assignment]
+    mechanical = format_mechanical_brief(data)
+    summary_text = mechanical
+    generated = False
+    generate_note = ""
 
-        if generate:
-            claude_path = claude_bin or shutil.which("claude")
-            if claude_path is None:
-                generate_note = "claude が見つからないため機械組みへフォールバックしました"
-            else:
-                run_id = runlog.start(conn, "talk", ref="slack-brief", model=GENERATE_MODEL)
-                conn.commit()
-                result = _run_claude_generate(
-                    _build_generate_prompt(mechanical), model=GENERATE_MODEL, claude_bin=claude_bin
-                )
-                if result["ok"]:
-                    summary_text = str(result["text"])
-                    generated = True
-                    parsed = result.get("parsed")
-                    if isinstance(parsed, dict):
-                        info = runlog.from_claude_result(parsed)
-                        runlog.finish(
-                            conn, run_id, usage=info["usage"], cost=info["cost"],
-                            turns=info["turns"], exit_reason=info["exit_reason"],
-                        )
-                    else:
-                        runlog.finish(conn, run_id, exit_reason="done", note="結果JSONなし")
+    if generate:
+        claude_path = claude_bin or shutil.which("claude")
+        if claude_path is None:
+            generate_note = "claude が見つからないため機械組みへフォールバックしました"
+        else:
+            run_id = runlog.start(conn, "talk", ref="slack-brief", model=GENERATE_MODEL)
+            conn.commit()
+            result = _run_claude_generate(
+                _build_generate_prompt(mechanical), model=GENERATE_MODEL, claude_bin=claude_bin
+            )
+            if result["ok"]:
+                summary_text = str(result["text"])
+                generated = True
+                parsed = result.get("parsed")
+                if isinstance(parsed, dict):
+                    info = runlog.from_claude_result(parsed)
+                    runlog.finish(
+                        conn, run_id, usage=info["usage"], cost=info["cost"],
+                        turns=info["turns"], exit_reason=info["exit_reason"],
+                    )
                 else:
-                    runlog.finish(conn, run_id, exit_reason="failed", note=str(result.get("reason", "")))
-                    generate_note = f"生成に失敗したため機械組みへフォールバックしました: {result.get('reason', '')}"
-                conn.commit()
+                    runlog.finish(conn, run_id, exit_reason="done", note="結果JSONなし")
+            else:
+                runlog.finish(conn, run_id, exit_reason="failed", note=str(result.get("reason", "")))
+                generate_note = f"生成に失敗したため機械組みへフォールバックしました: {result.get('reason', '')}"
+            conn.commit()
 
-        if open_decisions:
-            summary_text = summary_text + "\n\n" + DECISION_REPLY_HINT
+    if open_decisions:
+        summary_text = summary_text + "\n\n" + DECISION_REPLY_HINT
 
-        # decision ごとの通（常に機械組み。1decision=1通=1スレッドにするための核心）。
-        decision_texts: dict[str, str] = {}
-        for d in open_decisions:
-            decision_id = str(d["id"])
-            detail = decision_mod.show(conn, decision_id)
-            decision_texts[decision_id] = _format_decision_message(decision_id, detail, d.get("days"))
+    # decision ごとの通（常に機械組み。1decision=1通=1スレッドにするための核心）。
+    decision_texts: dict[str, str] = {}
+    for d in open_decisions:
+        decision_id = str(d["id"])
+        detail = decision_mod.show(conn, decision_id)
+        decision_texts[decision_id] = _format_decision_message(decision_id, detail, d.get("days"))
 
-        # 送信直前の禁止語スキャン。**まとめ・個別のどれか1つでも引っかかれば何も送らない**
-        # （中途半端に一部だけ届く状態を作らない）。
-        scan_failures: list[dict[str, object]] = []
-        summary_scan = scan_for_leak_terms(summary_text)
-        if not summary_scan["ok"]:
-            scan_failures.append(
-                {"which": "summary", "reason": summary_scan["reason"], "position": summary_scan["position"]}
-            )
-        for decision_id, text in decision_texts.items():
-            s = scan_for_leak_terms(text)
-            if not s["ok"]:
-                scan_failures.append({"which": decision_id, "reason": s["reason"], "position": s["position"]})
-
-        if scan_failures:
-            # **本文そのものは返さない**——decision のタイトル等、禁止語を含む本文を
-            # そのまま応答に載せると「語は隠したが文脈で漏れる」ことになりかねない。
-            # 返すのは `scan_failures`（`which` と `position` だけ）に留める。
-            return {
-                "sent": False,
-                "reason": "禁止語に一致しました",
-                "scan_failures": scan_failures,
-                "generated": generated,
-                "generate_note": generate_note,
-            }
-
-        if dry_run:
-            return {
-                "sent": False,
-                "dry_run": True,
-                "text": summary_text,
-                "decision_texts": decision_texts,
-                "generated": generated,
-                "generate_note": generate_note,
-                "decisions": list(decision_texts.keys()),
-            }
-
-        token = bot_token()
-        if not token:
-            return {"sent": False, "reason": "bot_token が未設定です", "text": summary_text, "generated": generated}
-        channel = channel_id(home)
-        if not channel:
-            return {
-                "sent": False,
-                "reason": "channel が未設定です（home/config.toml の [slack]）",
-                "text": summary_text,
-                "generated": generated,
-            }
-
-        summary_resp = _slack_api("chat.postMessage", token, params={"channel": channel, "text": summary_text})
-        if not summary_resp.get("ok"):
-            return {
-                "sent": False,
-                "reason": f"Slack API エラー: {summary_resp.get('error', '不明')}",
-                "text": summary_text,
-                "generated": generated,
-            }
-        summary_ts = str(summary_resp.get("ts") or "")
-        sent_channel = str(summary_resp.get("channel") or channel)
-        now_ts = util.now()
-
-        # まとめの通も `slack_message` に記録する（`decision_id IS NULL`）。**decision には
-        # 紐づけない**が、そのスレッドへ「D3 承認」のように id を明示した返信が来たときに
-        # `inbox()` がそのスレッドを引けるようにするための記録（id 優先の対応づけの前提）。
-        conn.execute(
-            "INSERT INTO slack_message (decision_id, channel, ts, sent_at) VALUES (NULL, ?, ?, ?)",
-            (sent_channel, summary_ts, now_ts),
+    # 送信直前の禁止語スキャン。**まとめ・個別のどれか1つでも引っかかれば何も送らない**
+    # （中途半端に一部だけ届く状態を作らない）。
+    scan_failures: list[dict[str, object]] = []
+    summary_scan = scan_for_leak_terms(summary_text)
+    if not summary_scan["ok"]:
+        scan_failures.append(
+            {"which": "summary", "reason": summary_scan["reason"], "position": summary_scan["position"]}
         )
+    for decision_id, text in decision_texts.items():
+        s = scan_for_leak_terms(text)
+        if not s["ok"]:
+            scan_failures.append({"which": decision_id, "reason": s["reason"], "position": s["position"]})
 
-        decision_results: list[dict[str, object]] = []
-        for decision_id, text in decision_texts.items():
-            resp = _slack_api("chat.postMessage", token, params={"channel": sent_channel, "text": text})
-            if not resp.get("ok"):
-                decision_results.append(
-                    {"decision_id": decision_id, "sent": False, "reason": f"Slack API エラー: {resp.get('error', '不明')}"}
-                )
-                continue
-            d_ts = str(resp.get("ts") or "")
-            conn.execute(
-                "INSERT INTO slack_message (decision_id, channel, ts, sent_at) VALUES (?, ?, ?, ?)",
-                (decision_id, sent_channel, d_ts, now_ts),
-            )
-            decision_results.append({"decision_id": decision_id, "sent": True, "ts": d_ts})
-        conn.commit()
-
+    if scan_failures:
+        # **本文そのものは返さない**——decision のタイトル等、禁止語を含む本文を
+        # そのまま応答に載せると「語は隠したが文脈で漏れる」ことになりかねない。
+        # 返すのは `scan_failures`（`which` と `position` だけ）に留める。
         return {
-            "sent": True,
-            "ts": summary_ts,
-            "channel": sent_channel,
-            "text": summary_text,
-            "decisions": decision_results,
+            "sent": False,
+            "reason": "禁止語に一致しました",
+            "scan_failures": scan_failures,
             "generated": generated,
             "generate_note": generate_note,
         }
+
+    if dry_run:
+        return {
+            "sent": False,
+            "dry_run": True,
+            "text": summary_text,
+            "decision_texts": decision_texts,
+            "generated": generated,
+            "generate_note": generate_note,
+            "decisions": list(decision_texts.keys()),
+        }
+
+    token = bot_token()
+    if not token:
+        return {"sent": False, "reason": "bot_token が未設定です", "text": summary_text, "generated": generated}
+    channel = channel_id(home, user_id)
+    if not channel:
+        return {
+            "sent": False,
+            "reason": "channel が未設定です（home/config.toml の [slack]）",
+            "text": summary_text,
+            "generated": generated,
+        }
+
+    summary_resp = _slack_api("chat.postMessage", token, params={"channel": channel, "text": summary_text})
+    if not summary_resp.get("ok"):
+        return {
+            "sent": False,
+            "reason": f"Slack API エラー: {summary_resp.get('error', '不明')}",
+            "text": summary_text,
+            "generated": generated,
+        }
+    summary_ts = str(summary_resp.get("ts") or "")
+    sent_channel = str(summary_resp.get("channel") or channel)
+    now_ts = util.now()
+
+    # まとめの通も `slack_message` に記録する（`decision_id IS NULL`）。**decision には
+    # 紐づけない**が、そのスレッドへ「D3 承認」のように id を明示した返信が来たときに
+    # `inbox()` がそのスレッドを引けるようにするための記録（id 優先の対応づけの前提）。
+    conn.execute(
+        "INSERT INTO slack_message (decision_id, channel, ts, sent_at) VALUES (NULL, ?, ?, ?)",
+        (sent_channel, summary_ts, now_ts),
+    )
+
+    decision_results: list[dict[str, object]] = []
+    for decision_id, text in decision_texts.items():
+        resp = _slack_api("chat.postMessage", token, params={"channel": sent_channel, "text": text})
+        if not resp.get("ok"):
+            decision_results.append(
+                {"decision_id": decision_id, "sent": False, "reason": f"Slack API エラー: {resp.get('error', '不明')}"}
+            )
+            continue
+        d_ts = str(resp.get("ts") or "")
+        conn.execute(
+            "INSERT INTO slack_message (decision_id, channel, ts, sent_at) VALUES (?, ?, ?, ?)",
+            (decision_id, sent_channel, d_ts, now_ts),
+        )
+        decision_results.append({"decision_id": decision_id, "sent": True, "ts": d_ts})
+    conn.commit()
+
+    return {
+        "sent": True,
+        "ts": summary_ts,
+        "channel": sent_channel,
+        "text": summary_text,
+        "decisions": decision_results,
+        "generated": generated,
+        "generate_note": generate_note,
+    }
+
+
+def brief(
+    home: Path,
+    *,
+    generate: bool = False,
+    dry_run: bool = False,
+    claude_bin: str | None = None,
+    user_id: str | None = None,
+) -> dict[str, object]:
+    """`manor slack brief`。
+
+    `user_id` を渡せば、その利用者のチャンネル・机だけで1便送る（`_brief_for_user`
+    へそのまま委譲）。**省略すれば「チャンネルを持つ人の利用者ごとに1便ずつ」**
+    （ADR-014 D5。`user.list_users` の順・執事は対象外）:
+
+    - 誰もチャンネルを設定していなければ、今までどおり `[slack] channel` の1本を使う
+      （後方互換。`_brief_for_user(..., user_id=None)` が `channel_id(home)` を読む）
+    - ちょうど1人だけ設定していれば、その1人へ1便（**主人だけ・最上位に1つだけの家では
+      中身も返り値の主要キー（`sent`/`channel`/`ts`）も今までと同じ**）
+    - 2人以上いれば、それぞれへ1便ずつ送り、`{"ok", "sent", "results": [...]}` の形で返す
+      （`results[].user_id` で誰の便かが分かる）
+    """
+    home = Path(home)
+    conn = db.connect(home)
+    try:
+        if user_id is not None:
+            return _brief_for_user(conn, home, user_id, generate=generate, dry_run=dry_run, claude_bin=claude_bin)
+
+        from . import user as user_mod
+
+        candidates = [
+            str(u["id"])
+            for u in user_mod.list_users(conn)
+            if u["role"] != "butler" and channel_id(home, str(u["id"]))
+        ]
+
+        if len(candidates) <= 1:
+            # 0人（誰も設定していない）→ 後方互換の全体便。1人だけ→その人がそのまま
+            # 従来の単一便に相当する（D5「相手の欄が空なら便は1本のまま」）。
+            single_user = candidates[0] if candidates else None
+            return _brief_for_user(conn, home, single_user, generate=generate, dry_run=dry_run, claude_bin=claude_bin)
+
+        results: list[dict[str, object]] = []
+        for uid in candidates:
+            r = _brief_for_user(conn, home, uid, generate=generate, dry_run=dry_run, claude_bin=claude_bin)
+            results.append({"user_id": uid, "channel": channel_id(home, uid), **r})
+        ok = any(bool(r.get("sent") or r.get("dry_run")) for r in results)
+        return {"ok": ok, "sent": ok, "results": results}
     finally:
         conn.close()
 
@@ -1076,35 +1161,49 @@ def _print_json(obj: object) -> None:
     print(json.dumps(obj, ensure_ascii=False, indent=2))
 
 
+def _print_brief_one(result: dict[str, object]) -> None:
+    if result.get("sent"):
+        print(i18n.t("slack.brief.sent", channel=result.get("channel"), ts=result.get("ts")))
+        for d in result.get("decisions", []):  # type: ignore[union-attr]
+            if isinstance(d, dict) and d.get("sent"):
+                print(i18n.t("slack.brief.decision_sent", decision_id=d["decision_id"], ts=d["ts"]))
+            elif isinstance(d, dict):
+                print(i18n.t("slack.brief.decision_failed", decision_id=d["decision_id"], reason=d.get("reason", "")))
+    elif result.get("dry_run"):
+        print(i18n.t("slack.brief.dry_run_header"))
+        print(i18n.t("slack.brief.dry_run_summary_label"))
+        print(result.get("text", ""))
+        for did, text in (result.get("decision_texts") or {}).items():  # type: ignore[union-attr]
+            print(f"[{did}]")
+            print(text)
+    else:
+        # `reason` は check()（web の拡張ステータス表示）とも共有する診断文字列なので
+        # 訳さない（calendar.py と同じ判断）——包む文だけ訳す。
+        print(i18n.t("slack.brief.not_sent", reason=result.get("reason", "")))
+        for f in result.get("scan_failures", []) or []:  # type: ignore[union-attr]
+            print(i18n.t("slack.brief.scan_failure", which=f["which"], position=f["position"]))
+    note = result.get("generate_note")
+    if note:
+        print(i18n.t("import_v1.note_line", note=note))
+
+
 def _cmd_brief(args: argparse.Namespace) -> int:
     home = util.manor_home()
-    result = brief(home, generate=bool(args.generate), dry_run=bool(args.dry_run))
+    result = brief(
+        home, generate=bool(args.generate), dry_run=bool(args.dry_run), user_id=args.user
+    )
     if args.json:
         _print_json(result)
-    else:
-        if result.get("sent"):
-            print(i18n.t("slack.brief.sent", channel=result.get("channel"), ts=result.get("ts")))
-            for d in result.get("decisions", []):  # type: ignore[union-attr]
-                if isinstance(d, dict) and d.get("sent"):
-                    print(i18n.t("slack.brief.decision_sent", decision_id=d["decision_id"], ts=d["ts"]))
-                elif isinstance(d, dict):
-                    print(i18n.t("slack.brief.decision_failed", decision_id=d["decision_id"], reason=d.get("reason", "")))
-        elif result.get("dry_run"):
-            print(i18n.t("slack.brief.dry_run_header"))
-            print(i18n.t("slack.brief.dry_run_summary_label"))
-            print(result.get("text", ""))
-            for did, text in (result.get("decision_texts") or {}).items():  # type: ignore[union-attr]
-                print(f"[{did}]")
-                print(text)
-        else:
-            # `reason` は check()（web の拡張ステータス表示）とも共有する診断文字列なので
-            # 訳さない（calendar.py と同じ判断）——包む文だけ訳す。
-            print(i18n.t("slack.brief.not_sent", reason=result.get("reason", "")))
-            for f in result.get("scan_failures", []) or []:  # type: ignore[union-attr]
-                print(i18n.t("slack.brief.scan_failure", which=f["which"], position=f["position"]))
-        note = result.get("generate_note")
-        if note:
-            print(i18n.t("import_v1.note_line", note=note))
+        return 0 if (result.get("sent") or result.get("dry_run")) else 1
+    results = result.get("results")
+    if isinstance(results, list):
+        # チャンネルを持つ人が複数（ADR-014 D5）。1人ずつ見出しを添えて出す。
+        for r in results:
+            if isinstance(r, dict):
+                print(f"[{r.get('user_id')}]")
+                _print_brief_one(r)
+        return 0 if result.get("ok") else 1
+    _print_brief_one(result)
     return 0 if (result.get("sent") or result.get("dry_run")) else 1
 
 
@@ -1371,35 +1470,13 @@ def _fetch_history(token: str, channel: str, *, oldest: str) -> dict[str, Any]:
     }
 
 
-def intake(home: Path, *, dry_run: bool = False) -> dict[str, Any]:
-    """`manor slack intake`。チャンネルの新着から `#task` / `#log` を拾う。
-
-    `inbox()`（スレッドの返信を裁定として読む）とは**読む場所が違う**——こちらは
-    `conversations.history` でチャンネルそのものを見る。取り込みの印も別の表
-    （`slack_intake`）に持つので、片方の冪等性がもう片方を黙らせることはない。
-
-    守っていること（v1 `watch-inbox.ps1` から）:
-
-    - **接頭辞のある投稿には必ず何か返す。** 本文が無ければ書き方の案内を返す
-    - **接頭辞の無い雑談には返さない**（会話に割り込まない）
-    - **返信は1回の起動につき1通にまとめる**
-    - **Bot 自身の投稿は読まない**（無限ループの防止）
-    - **新着が無ければ Slack へ何も投げない**（最も頻繁に走る経路を静かに保つ）
-
-    v1 との違い: v1 は `#task` の本文を `claude -p` に分解させていた。ここでは
-    **本文をそのまま起票する**——分解は執事が起きているときにやればよく、
-    取り込みの経路に LLM を挟むと、落ちたときに主人の言葉ごと消える。
+def _intake_one_channel(
+    conn: sqlite3.Connection, home: Path, *, channel: str, user_id: str | None, token: str, dry_run: bool
+) -> dict[str, Any]:
+    """`intake()` の実体（1チャンネル分）。`user_id`（ADR-014 D5）: この便の起票先。
+    `conn` は呼び出し側が開閉する——複数チャンネルへ回すときに毎回開き直さないため。
     """
-    home = Path(home)
-    conn = db.connect(home)
     try:
-        token = bot_token()
-        if not token:
-            return {"ok": False, "reason": "bot_token が未設定です", "taken": [], "replied": False}
-        channel = channel_id(home)
-        if not channel:
-            return {"ok": False, "reason": "channel が未設定です", "taken": [], "replied": False}
-
         fetched = _fetch_history(token, channel, oldest=_intake_oldest(conn, channel))
         if not fetched["ok"]:
             return {"ok": False, "reason": fetched["reason"], "taken": [], "replied": False}
@@ -1469,14 +1546,14 @@ def intake(home: Path, *, dry_run: bool = False) -> dict[str, Any]:
                 )
                 if broken.get("ok"):
                     taken.append({"ts": ts, "kind": kind, "node_id": None, "body": body})
-                    reply_lines.append(_take_task(conn, home, body, broken))
+                    reply_lines.append(_take_task(conn, home, body, broken, user_id=user_id))
                     _record_intake(conn, channel=channel, ts=ts, kind=kind, node_id=None)
                     continue
                 # **読めなければ本文をそのまま1件のタスクにする**——主人の言葉を落とさない
 
             node_id: str | None = None
             if not dry_run:
-                node_id = _create_from_intake(conn, kind=kind, body=body, when=when)
+                node_id = _create_from_intake(conn, kind=kind, body=body, when=when, user_id=user_id)
                 if kind == "cal" and when:
                     # **どう解釈したかは、押し出しの成否と切り離す。** 登録できなくても
                     # 「終日として読んだ」は主人に伝わるべきもの。
@@ -1486,7 +1563,7 @@ def intake(home: Path, *, dry_run: bool = False) -> dict[str, Any]:
                     when["existing"] = _find_existing_event(conn, when)
                     # **手元へ保存したあとで**カレンダーへ押し出す。この順なら、
                     # 押し出しが失敗しても主人の言葉は消えない。
-                    when["pushed"] = _push_to_calendar(home, when)
+                    when["pushed"] = _push_to_calendar(home, when, user_id=user_id)
                     _remember_event(conn, node_id, when)
                 # **`slack_intake.node_id` は `node(id)` への外部キー。** 予定・控えは
                 # 秘書の表の行であって node ではないので、そこには入れない（入れると
@@ -1533,7 +1610,82 @@ def intake(home: Path, *, dry_run: bool = False) -> dict[str, Any]:
             }
         return {"ok": True, "taken": taken, "replied": True, "text": text}
     finally:
+        # `conn` はここでは閉じない（呼び出し側 `intake()` が複数チャンネルへ回す）。
+        # ただし途中で return しても、そこまでの取り込みは必ず反映しておく。
         conn.commit()
+
+
+def intake(home: Path, *, dry_run: bool = False) -> dict[str, Any]:
+    """`manor slack intake`。チャンネルの新着から `#task` / `#log` を拾う。
+
+    `inbox()`（スレッドの返信を裁定として読む）とは**読む場所が違う**——こちらは
+    `conversations.history` でチャンネルそのものを見る。取り込みの印も別の表
+    （`slack_intake`）に持つので、片方の冪等性がもう片方を黙らせることはない。
+
+    守っていること（v1 `watch-inbox.ps1` から）:
+
+    - **接頭辞のある投稿には必ず何か返す。** 本文が無ければ書き方の案内を返す
+    - **接頭辞の無い雑談には返さない**（会話に割り込まない）
+    - **返信はチャンネルごとに1回の起動につき1通にまとめる**
+    - **Bot 自身の投稿は読まない**（無限ループの防止）
+    - **新着が無ければ Slack へ何も投げない**（最も頻繁に走る経路を静かに保つ）
+
+    v1 との違い: v1 は `#task` の本文を `claude -p` に分解させていた。ここでは
+    **本文をそのまま起票する**——分解は執事が起きているときにやればよく、
+    取り込みの経路に LLM を挟むと、落ちたときに主人の言葉ごと消える。
+
+    ADR-014 D5: **チャンネルを持つ利用者ごとに回す**（`user.list_users` の順・執事は
+    対象外）。誰もチャンネルを設定していない・ちょうど1人だけなら、今までどおり
+    単一の結果（`ok`/`taken`/`replied`/...）を返す。2人以上いれば、チャンネルごとに
+    1通ずつ返信し、`{"ok", "taken", "replied", "channels": [...]}` の形で返す
+    （`channels[].user_id` で誰の便かが分かる）。
+    """
+    home = Path(home)
+    conn = db.connect(home)
+    try:
+        token = bot_token()
+        if not token:
+            return {"ok": False, "reason": "bot_token が未設定です", "taken": [], "replied": False}
+
+        from . import user as user_mod
+
+        candidates: list[tuple[str, str]] = []  # (channel, user_id)
+        seen_channels: set[str] = set()
+        for u in user_mod.list_users(conn):
+            if u["role"] == "butler":
+                continue
+            uid = str(u["id"])
+            ch = channel_id(home, uid)
+            if ch and ch not in seen_channels:
+                candidates.append((ch, uid))
+                seen_channels.add(ch)
+
+        if not candidates:
+            return {"ok": False, "reason": "channel が未設定です", "taken": [], "replied": False}
+
+        if len(candidates) == 1:
+            channel, uid = candidates[0]
+            return _intake_one_channel(conn, home, channel=channel, user_id=uid, token=token, dry_run=dry_run)
+
+        overall_ok = True
+        overall_replied = False
+        all_taken: list[dict[str, Any]] = []
+        channel_results: list[dict[str, Any]] = []
+        for channel, uid in candidates:
+            result = _intake_one_channel(conn, home, channel=channel, user_id=uid, token=token, dry_run=dry_run)
+            channel_results.append({"channel": channel, "user_id": uid, **result})
+            all_taken.extend(result.get("taken") or [])
+            if not result.get("ok", True):
+                overall_ok = False
+            if result.get("replied"):
+                overall_replied = True
+        return {
+            "ok": overall_ok,
+            "taken": all_taken,
+            "replied": overall_replied,
+            "channels": channel_results,
+        }
+    finally:
         conn.close()
 
 
@@ -1688,10 +1840,11 @@ def _calendar_slots(when: dict[str, Any]) -> dict[str, Any]:
             "how": f"終わりが無いので{INTAKE_EVENT_MINUTES}分"}
 
 
-def _push_to_calendar(home: Path, when: dict[str, Any]) -> dict[str, object]:
+def _push_to_calendar(home: Path, when: dict[str, Any], *, user_id: str | None = None) -> dict[str, object]:
     """`#cal` を Google カレンダーへ登録する（`calendar.push_event`）。
 
-    **例外は投げない**——ここが失敗しても予定は手元に入っている。
+    **例外は投げない**——ここが失敗しても予定は手元に入っている。`user_id`（ADR-014 D5）:
+    渡せばその利用者の `write_calendar_id` を使う（principal は空なら最上位へ読み替え）。
     """
     from . import calendar as calendar_mod
 
@@ -1702,26 +1855,37 @@ def _push_to_calendar(home: Path, when: dict[str, Any]) -> dict[str, object]:
             title=str(when["text"]), all_day=bool(slots["all_day"]),
             location=str(when.get("place") or ""),
             event_id=str((when.get("existing") or {}).get("event_id") or ""),
+            user_id=user_id,
         )
     except Exception as exc:  # noqa: BLE001 — 登録できないことは、取り込みの失敗ではない
         return {"ok": False, "html_link": "", "reason": str(exc)}
 
 
 def _create_from_intake(
-    conn: sqlite3.Connection, *, kind: str, body: str, when: dict[str, Any] | None = None
+    conn: sqlite3.Connection,
+    *,
+    kind: str,
+    body: str,
+    when: dict[str, Any] | None = None,
+    user_id: str | None = None,
 ) -> str:
     """`#task` はタスク、`#log` はメモ、`#cal` は予定、`#remind` は控えとして DB へ。
 
     **本文は丸ごと残す**（`#task` / `#log`）。`#cal` / `#remind` は秘書の表へ入れる
     ——秘書の書き込みを slack.py が直に書くのは、部下の表へ横から書かない約束
     （ADR-002 §4）に触れるので、**秘書の関数を呼ぶ**。
+
+    `user_id`（ADR-014 D5）: `#task` はその利用者の件に、`#cal` はその利用者の予定に
+    する（`None` は今までどおり——`task.add` の既定推定・秘書の予定は共通）。`#remind`
+    は共通のまま（D4 の表どおり）。
     """
     title = body.splitlines()[0][:INTAKE_TITLE_MAX] or body[:INTAKE_TITLE_MAX]
     if kind == "task":
         from . import task as task_mod
 
         return task_mod.add(
-            conn, title, cls="general", now="Slack から受け取りました（#task）", body=body
+            conn, title, cls="general", now="Slack から受け取りました（#task）", body=body,
+            user=user_id,
         )
     if kind == "idea":
         from . import task as task_mod
@@ -1734,7 +1898,7 @@ def _create_from_intake(
 
         start = f"{when['on']}T{when['at']}" if when.get("at") else str(when["on"])
         return "E" + str(
-            sec_ops.add_event(conn, start=start, title=str(when["text"]), source="slack")
+            sec_ops.add_event(conn, start=start, title=str(when["text"]), source="slack", user_id=user_id)
         )
     if kind == "remind" and when:
         from .staff.secretary import ops as sec_ops
@@ -1892,6 +2056,10 @@ def _add_slack_subcommands(sub: "argparse._SubParsersAction", *, needs_db: bool 
     b.add_argument(
         "--dry-run", action="store_true", dest="dry_run",
         help=i18n.t("cli.slack.brief.dry_run.help"),
+    )
+    b.add_argument(
+        "--user", dest="user", default=None,
+        help=i18n.t("cli.slack.brief.user.help"),
     )
     b.add_argument("--json", action="store_true")
     b.set_defaults(func=_cmd_brief, **extra)
@@ -2169,12 +2337,13 @@ def extract_task(
 
 
 def _take_task(
-    conn: sqlite3.Connection, home: Path, body: str, broken: dict[str, Any]
+    conn: sqlite3.Connection, home: Path, body: str, broken: dict[str, Any], *, user_id: str | None = None
 ) -> str:
     """分解した `#task` を起票し（＋予定があればカレンダーへ）、**確定内容**を1件分の返信にする。
 
     **承認は挟まない**（主人の裁定 2026-09-06）。かわりに「何をどう解釈して、何を作ったか」
     を全部返信に書く——`#cal` の安全網と同じ考え方で、違っていたら主人が直せるようにする。
+    `user_id`（ADR-014 D5）: そのチャンネルの利用者の件・予定にする。
     """
     from . import task as task_mod
 
@@ -2187,6 +2356,7 @@ def _take_task(
             cls="general",
             now="Slack から受け取りました（#task）",
             body=body,
+            user=user_id,
         )
         label = _project_label(conn, str(item["project"]))
         due = f"／期限 {item['due']}" if item["due"] else ""
@@ -2197,8 +2367,8 @@ def _take_task(
         # 予定は `#cal` とまったく同じ道を通る（同じ既定・同じ更新の規則・同じ返信）。
         when["how"] = _calendar_slots(when)["how"]
         when["existing"] = _find_existing_event(conn, when)
-        _create_from_intake(conn, kind="cal", body=body, when=when)
-        when["pushed"] = _push_to_calendar(home, when)
+        _create_from_intake(conn, kind="cal", body=body, when=when, user_id=user_id)
+        when["pushed"] = _push_to_calendar(home, when, user_id=user_id)
         _remember_event(conn, None, when)
         lines.append(_intake_ack("cal", None, body, when))
     return "\n".join(lines)

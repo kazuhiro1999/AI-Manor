@@ -81,6 +81,8 @@ def _validate_manifest(module: ModuleType) -> dict[str, object]:
                 raise ExtensionManifestError(f"{name}: fields[].{key} が不正です: {field!r}")
         if field["kind"] not in VALID_FIELD_KINDS:
             raise ExtensionManifestError(f"{name}: fields[].kind が不正です: {field!r}")
+        if "per_user" in field and not isinstance(field["per_user"], bool):
+            raise ExtensionManifestError(f"{name}: fields[].per_user は真偽値が必要です: {field!r}")
     secret_fields = manifest["secret_fields"]
     if not isinstance(secret_fields, list) or not all(isinstance(s, str) for s in secret_fields):
         raise ExtensionManifestError(f"{name}: secret_fields は文字列のリストが必要です")
@@ -241,11 +243,18 @@ def _missing_required_fields(home: Path, entry: _Entry) -> list[str]:
     cfg_values = _section_values(home, entry)
     id_ = str(entry.manifest["id"])
     secret_keys = set(entry.manifest.get("secret_fields", []))  # type: ignore[arg-type]
+    principal = _safe_principal_id(home)
     missing: list[str] = []
     for field in entry.manifest.get("fields", []):  # type: ignore[union-attr]
         if not field.get("required"):
             continue
         key = field["key"]
+        if field.get("per_user"):
+            # `per_user` 欄の「未設定」は principal（master）で判定する（後方互換の読み替え。
+            # ADR-014 D5）——相手の欄が空でも「未設定」扱いにはしない。
+            if not per_user_value(home, id_, key, principal):
+                missing.append(str(field.get("label", key)))
+            continue
         if key in secret_keys:
             if not secrets_mod.has(id_, key):
                 missing.append(str(field.get("label", key)))
@@ -254,6 +263,70 @@ def _missing_required_fields(home: Path, entry: _Entry) -> list[str]:
             if value is None or (isinstance(value, str) and not value.strip()):
                 missing.append(str(field.get("label", key)))
     return missing
+
+
+# --- 利用者ごとの欄（D5・ADR-014） -----------------------------------------------------
+
+
+def _safe_principal_id(home: Path) -> str:
+    """`user.principal_id`。DB が無い・`user` 表が無いときは `"master"`
+    （`user.PRINCIPAL_ID` と同じ既定）——`extensions` は DB を持たない拡張なので、
+    読めない状況でも壊れない側へ倒す。
+    """
+    from .. import db as db_mod  # noqa: PLC0415 - 循環 import を避けるため遅延
+    from .. import user as user_mod  # noqa: PLC0415
+
+    conn = None
+    try:
+        conn = db_mod.connect(home)
+        return user_mod.principal_id(conn)
+    except Exception:  # noqa: BLE001 - 読めなくても壊さない
+        return user_mod.PRINCIPAL_ID
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+def _per_user_config_value(home: Path, entry: _Entry, key: str, user_id: str) -> str | None:
+    section = _config_section(entry)
+    data = web_config.read_config(home)
+    section_values = data.get(section)
+    users = section_values.get("users") if isinstance(section_values, dict) else None
+    user_values = users.get(user_id) if isinstance(users, dict) else None
+    raw = user_values.get(key) if isinstance(user_values, dict) else None
+    return str(raw) if raw is not None else None
+
+
+def per_user_value(home: Path, id_: str, key: str, user_id: str) -> str | None:
+    """`per_user` 欄の値を読む（ADR-014 D5）。
+
+    秘密でない値は `[<section>.users.<user_id>] <key>`、秘密は
+    `secrets.get(id_, f"{key}@{user_id}")` から読む。**既存の最上位の値は principal
+    （`master`）のものとして読み替える**——`user_id` が principal で、かつ利用者ごとの
+    欄が空（無い・空文字）なら、従来の `[section] key` / `secrets(id_, key)` を返す。
+    **他の利用者にはこの読み替えをしない**（相手が主人のチャンネルへ事故で乗る、を防ぐ）。
+    """
+    home = Path(home)
+    entry = _entry(id_)
+    secret_keys = set(entry.manifest.get("secret_fields", []))  # type: ignore[arg-type]
+    is_secret = key in secret_keys
+
+    if is_secret:
+        value = secrets_mod.get(id_, f"{key}@{user_id}")
+    else:
+        value = _per_user_config_value(home, entry, key, user_id)
+
+    if value:
+        return value
+
+    if user_id != _safe_principal_id(home):
+        return None
+
+    if is_secret:
+        return secrets_mod.get(id_, key)
+    cfg_values = _section_values(home, entry)
+    raw = cfg_values.get(key)
+    return str(raw) if raw is not None else None
 
 
 def status(home: Path, id_: str) -> dict[str, object]:
@@ -310,28 +383,82 @@ def statuses(home: Path) -> list[dict[str, object]]:
 
 
 def _values(home: Path, entry: _Entry) -> dict[str, object]:
-    """現在の値。**秘密は `has_<key>` の真偽だけ**（D4）。"""
+    """現在の値。**秘密は `has_<key>` の真偽だけ**（D4）。`per_user` 欄は principal
+    （master）の値を返す——ADR-014 D5 の読み替えにより、相手を登録していない家では
+    今までどおりの見え方になる。
+    """
     cfg_values = _section_values(home, entry)
     id_ = str(entry.manifest["id"])
     secret_keys = set(entry.manifest.get("secret_fields", []))  # type: ignore[arg-type]
+    principal = _safe_principal_id(home)
     out: dict[str, object] = {}
     for field in entry.manifest.get("fields", []):  # type: ignore[union-attr]
         key = field["key"]
+        per_user = bool(field.get("per_user"))
         if key in secret_keys:
-            out[f"has_{key}"] = secrets_mod.has(id_, key)
+            if per_user:
+                out[f"has_{key}"] = bool(per_user_value(home, id_, key, principal))
+            else:
+                out[f"has_{key}"] = secrets_mod.has(id_, key)
+        elif per_user:
+            out[key] = per_user_value(home, id_, key, principal)
         else:
             out[key] = cfg_values.get(key)
     return out
 
 
+def _per_user_detail(home: Path, entry: _Entry) -> dict[str, object] | None:
+    """`detail()` へ足す `per_user_users`/`per_user_values`（ADR-014 D5）。`per_user`
+    欄が1つも無い拡張では `None`（キー自体を足さない）。
+    """
+    id_ = str(entry.manifest["id"])
+    per_user_fields = [f for f in entry.manifest.get("fields", []) if f.get("per_user")]  # type: ignore[union-attr]
+    if not per_user_fields:
+        return None
+    secret_keys = set(entry.manifest.get("secret_fields", []))  # type: ignore[arg-type]
+
+    from .. import db as db_mod  # noqa: PLC0415 - 循環 import を避けるため遅延
+    from .. import user as user_mod  # noqa: PLC0415
+
+    users: list[dict[str, object]] = []
+    conn = None
+    try:
+        conn = db_mod.connect(home)
+        users = [
+            {"id": u["id"], "name": u["name"], "role": u["role"]}
+            for u in user_mod.list_users(conn)
+            if u["role"] != "butler"
+        ]
+    except Exception:  # noqa: BLE001 - DB が読めなくても画面全体は壊さない
+        users = []
+    finally:
+        if conn is not None:
+            conn.close()
+
+    per_user_values: dict[str, dict[str, object]] = {}
+    for u in users:
+        uid = str(u["id"])
+        vals: dict[str, object] = {}
+        for field in per_user_fields:
+            key = str(field["key"])
+            if key in secret_keys:
+                vals[f"has_{key}"] = bool(per_user_value(home, id_, key, uid))
+            else:
+                vals[key] = per_user_value(home, id_, key, uid)
+        per_user_values[uid] = vals
+    return {"per_user_users": users, "per_user_values": per_user_values}
+
+
 def detail(home: Path, id_: str) -> dict[str, object]:
     """`GET /api/v1/extensions/{id}` の中身: manifest（fields込み）＋現在の値
-    （秘密は has_* のみ）＋install_steps＋現在の状態（D6）。
+    （秘密は has_* のみ）＋install_steps＋現在の状態（D6）。`per_user` 欄を持つ拡張は
+    `per_user_users`（人の利用者一覧）／`per_user_values`（利用者ごとの値。秘密は
+    `has_<key>` のみ）も足す（ADR-014 D5）。
     """
     entry = _entry(id_)
     home = Path(home)
     st = status(home, id_)
-    return {
+    out: dict[str, object] = {
         "id": id_,
         "manifest": dict(entry.manifest),
         "values": _values(home, entry),
@@ -340,36 +467,58 @@ def detail(home: Path, id_: str) -> dict[str, object]:
         "checked_at": st["checked_at"],
         "reason": st["reason"],
     }
+    per_user_extra = _per_user_detail(home, entry)
+    if per_user_extra is not None:
+        out.update(per_user_extra)
+    return out
 
 
-def save_settings(home: Path, id_: str, values: dict[str, object]) -> dict[str, object]:
+def save_settings(
+    home: Path, id_: str, values: dict[str, object], *, user_id: str | None = None
+) -> dict[str, object]:
     """設定の保存（D6 PUT）。秘密は秘密の置き場へ、それ以外は `config.toml` へ。
     **部分更新**——渡さなかったキーはそのまま。`values` に無い・未知のキーは無視する
     （フォームは manifest の `fields` どおりに送る契約）。値が空文字の秘密キーは削除扱い。
 
+    `per_user` 欄（ADR-014 D5）は常に利用者ごとの置き場（非秘密は
+    `[<section>.users.<user_id>]`、秘密は `secrets(id_, f"{key}@{user_id}")`）へ書く
+    ——**最上位（`[section] key` / `secrets(id_, key)`）へは書かない**。`user_id` を
+    省略したときは principal（`master`）の置き場へ（保存は常に利用者ごと、が約束）。
+    `per_user` でない欄は user_id に関わらず今までどおり最上位へ書く。
+
     モジュールが `to_config(values) -> dict` を持てば、非秘密の値をそこへ通してから
     `config.toml` へ書く（ADR-011 D10・ADR-009 D2 の追記）——`speaker_<agent>` のような
     平らなフィールド鍵を `[voice.speakers]` の入れ子のテーブルへ変換するための口。
-    フックが無い拡張はこれまでどおりフィールド鍵をそのまま節へ書く。
+    フックが無い拡張はこれまでどおりフィールド鍵をそのまま節へ書く。**`per_user` 欄を
+    持つ拡張は今のところこのフックを併用しない**（slack/calendar はどちらも持たない）。
     """
     entry = _entry(id_)
     home = Path(home)
     field_keys = {f["key"] for f in entry.manifest.get("fields", [])}  # type: ignore[union-attr]
     secret_keys = set(entry.manifest.get("secret_fields", []))  # type: ignore[arg-type]
+    per_user_keys = {f["key"] for f in entry.manifest.get("fields", []) if f.get("per_user")}  # type: ignore[union-attr]
+    resolved_user = user_id if user_id is not None else _safe_principal_id(home)
+
     non_secret_updates: dict[str, object] = {}
+    per_user_updates: dict[str, dict[str, object]] = {}
     for key, value in values.items():
         if key not in field_keys:
             continue
+        is_per_user = key in per_user_keys
         if key in secret_keys:
             if value is None:
                 continue
             text = str(value)
+            secret_key = f"{key}@{resolved_user}" if is_per_user else key
             if text == "":
-                secrets_mod.delete(id_, key)
+                secrets_mod.delete(id_, secret_key)
             else:
-                secrets_mod.set(id_, key, text)
+                secrets_mod.set(id_, secret_key, text)
         elif value is not None:
-            non_secret_updates[key] = value
+            if is_per_user:
+                per_user_updates.setdefault(resolved_user, {})[key] = value
+            else:
+                non_secret_updates[key] = value
     section = _config_section(entry)
     implied = _implied_config(entry)
     to_config_fn = getattr(entry.module, "to_config", None)
@@ -379,8 +528,11 @@ def save_settings(home: Path, id_: str, values: dict[str, object]) -> dict[str, 
             config_updates = {}
     else:
         config_updates = non_secret_updates
-    if implied or config_updates:
-        web_config.update_section(home, section, {**implied, **config_updates})
+    section_updates: dict[str, object] = {**implied, **config_updates}
+    if per_user_updates:
+        section_updates["users"] = per_user_updates
+    if section_updates:
+        web_config.update_section(home, section, section_updates)
     return status(home, id_)
 
 
@@ -456,9 +608,13 @@ def forget(home: Path, id_: str) -> dict[str, object]:
     current = dict(data.get(section, {})) if isinstance(data.get(section), dict) else {}
     for key in keys_to_clear:
         current.pop(key, None)
+    # `per_user` 欄の利用者ごとの置き場（ADR-014 D5）も、拡張を丸ごと忘れるときは消す。
+    current.pop("users", None)
     data[section] = current
     web_config.write_config(home, data)
 
+    # `secrets_mod.delete(id_)`（key 無し）は `<id>.json` を丸ごと消すので、
+    # `key@user_id` 形式の per_user 秘密も一緒に消える（ADR-014 D5）。
     secrets_mod.delete(id_)
     _clear_state(home, id_)
     return status(home, id_)

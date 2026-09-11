@@ -64,7 +64,10 @@ def test_dashboard_shape_on_fresh_home(home: Path) -> None:
 
 def test_dashboard_reflects_open_decision_and_due_today(conn, home: Path) -> None:
     today = util.today()
-    tid = task_mod.add(conn, "領収書の整理", due=today)
+    # ADR-014 D4: ダッシュボードは見ている利用者（既定=主人）で絞る。ここは主人の
+    # 案件のつもりなので `user="master"` を明示する（owner の既定=butler のままだと
+    # 「誰が動かすか」は執事のままでも、「誰の件か」が執事に落ちて絞られてしまう）。
+    tid = task_mod.add(conn, "領収書の整理", due=today, user="master")
     decision_mod.ask(
         conn,
         "見積もりをどれにするか",
@@ -225,7 +228,10 @@ def test_dashboard_groups_what_the_ai_is_doing_by_owner(conn, home: Path) -> Non
     """**担当ごとに畳む**（誰が何をしているか）。主人ぶんは混ぜない。"""
     mine = task_mod.add(conn, "主人の作業", owner="master")
     task_mod.status(conn, mine, "doing")
-    theirs = task_mod.add(conn, "執事の作業", owner="butler")
+    # ADR-014 D4: ダッシュボードは見ている利用者（既定=主人）で絞る。「執事が動かす
+    # が、主人の関心事」を表すため `user="master"` を明示する（owner=butler のまま
+    # だと、明示しなければ既定で執事の件に落ちて主人の板から消えてしまう）。
+    theirs = task_mod.add(conn, "執事の作業", owner="butler", user="master")
     task_mod.status(conn, theirs, "doing")
     conn.commit()
 
@@ -238,8 +244,10 @@ def test_dashboard_groups_what_the_ai_is_doing_by_owner(conn, home: Path) -> Non
 
 def test_dashboard_lists_today_and_recent(conn, home: Path, monkeypatch) -> None:
     monkeypatch.setenv("MANOR_TODAY", "2026-09-04")
-    today_task = task_mod.add(conn, "今日が期限", due="2026-09-04")
-    done = task_mod.add(conn, "片付いたもの")
+    # ADR-014 D4: ダッシュボードは見ている利用者（既定=主人）で絞るので、主人の板に
+    # 出したい試験データは `user="master"` を明示する。
+    today_task = task_mod.add(conn, "今日が期限", due="2026-09-04", user="master")
+    done = task_mod.add(conn, "片付いたもの", user="master")
     task_mod.status(conn, done, "doing")
     task_mod.status(conn, done, "done")
     conn.commit()
@@ -286,8 +294,10 @@ def test_action_needed_matches_what_the_master_can_actually_see(home: Path, conn
     ものを数えていた。
     """
     # ブロッカーが片付いたのに hold のまま＝ v_blocked_ready に載る形を作る。
-    blocker = task_mod.add(conn, "先に片付ける仕事")
-    blocked = task_mod.add(conn, "その後にやる仕事")
+    # ADR-014 D4: ダッシュボードは見ている利用者（既定=主人）で絞るので、主人の板に
+    # 出したい試験データは `user="master"` を明示する。
+    blocker = task_mod.add(conn, "先に片付ける仕事", user="master")
+    blocked = task_mod.add(conn, "その後にやる仕事", user="master")
     task_mod.link_dependency(conn, blocked, blocker)
     task_mod.status(conn, blocked, "hold", note="先の仕事待ち")
     task_mod.status(conn, blocker, "doing")

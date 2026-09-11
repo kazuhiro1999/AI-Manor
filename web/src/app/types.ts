@@ -39,6 +39,9 @@ export interface Task {
   handoff?: Handoff | null;
   //: 起票の出どころ（例: "idea" = 意見箱）。空文字は通常の起票（src/manor/task.py add() 参照）。
   source?: string | null;
+  // ADR-014 D2:「誰の件か」（`owner`＝誰が動かすか、とは別軸）。バックエンドが
+  // まだ返さない間は undefined になりうる。
+  user_id?: string | null;
 }
 
 export interface WithdrawnTask extends Task {
@@ -81,6 +84,8 @@ export interface Project {
   due?: string | null;
   days_left: number | null;
   interest: ProjectInterest;
+  // ADR-014 D2:「誰の件か」。バックエンドがまだ返さない間は undefined になりうる。
+  user_id?: string | null;
 }
 
 export interface Milestone {
@@ -230,6 +235,16 @@ export interface TaskKind {
   archived_at: string | null;
 }
 
+// ADR-014 D1・D3:「利用者」（誰として見ているか。認証ではない）。GET /api/v1/users・
+// GET /api/v1/meta の user/users がこの形で返す。秘密は持たない（id・name・role だけ）。
+export type UserRole = "principal" | "member" | "butler";
+
+export interface UserInfo {
+  id: string;
+  name: string;
+  role: UserRole;
+}
+
 export interface Meta {
   version: string;
   today: string;
@@ -249,6 +264,10 @@ export interface Meta {
   // 読める唯一の経路（login・setup 画面もここから初期言語を得る）。バックエンドが
   // まだ返さない間は undefined —— その場合は前回のキャッシュ（localStorage）のまま。
   language?: string;
+  // ADR-014 D3: 見ている利用者（cookie `manor_user` から解決した現在の利用者）と、
+  // 切り替え先の選択肢（畳んでいないもの）。バックエンドがまだ返さない間は undefined。
+  user?: UserInfo;
+  users?: UserInfo[];
 }
 
 export interface HealthResponse {

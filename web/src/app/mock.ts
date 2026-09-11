@@ -48,6 +48,7 @@ import type {
   TaskStatus,
   Timeline,
   TimelineLane,
+  UserInfo,
 } from "./types";
 
 const TODAY = new Date().toISOString().slice(0, 10);
@@ -584,6 +585,30 @@ const profileStore: Record<string, string> = setupDone
     }
   : { "butler.callname": "執事" };
 
+/* ---------- users（ADR-014 D1・D3。来月からの同棲に備えた利用者の切り替え） ---------- */
+interface MockUser extends UserInfo {
+  archived_at: string | null;
+}
+const users: MockUser[] = [
+  { id: "master", name: "旦那様", role: "principal", archived_at: null },
+  { id: "u2", name: "同居人", role: "member", archived_at: null },
+  { id: "butler", name: "執事", role: "butler", archived_at: null },
+];
+let userSeq = 2;
+// cookie `manor_user` の合成版（ブラウザの実 Cookie は使わない。mock はこの変数だけで足りる）。
+let viewingUserId = "master";
+
+function activeUsers(): MockUser[] {
+  return users.filter((u) => !u.archived_at);
+}
+
+function currentUserInfo(): UserInfo {
+  const found = activeUsers().find((u) => u.id === viewingUserId);
+  const fallback = activeUsers().find((u) => u.role === "principal") || activeUsers()[0];
+  const u = found || fallback;
+  return { id: u.id, name: u.name, role: u.role };
+}
+
 /* ---------- state ---------- */
 let readOnly = false;
 let authenticated = true;
@@ -736,6 +761,9 @@ export async function mockApi<T>(path: string, options: ApiOptions = {}): Promis
       home_name: "mock-home",
       setup_done: setupDone,
       language: manorLanguage,
+      // ADR-014 D3: 見ている利用者と、切り替え先の選択肢（畳んでいないもの）。
+      user: currentUserInfo(),
+      users: activeUsers().map((u) => ({ id: u.id, name: u.name, role: u.role })),
     };
     return meta as unknown as T;
   }
@@ -755,6 +783,52 @@ export async function mockApi<T>(path: string, options: ApiOptions = {}): Promis
   if (path === "/health" && method === "GET") {
     const h: HealthResponse = { ok: true, started_at: new Date().toISOString(), stale: false };
     return h as unknown as T;
+  }
+
+  // ---------- users（ADR-014 D1・D3） ----------
+  if (path === "/users" && method === "GET") {
+    return { items: activeUsers() } as unknown as T;
+  }
+  if (path === "/users" && method === "POST") {
+    const name = String(body.name || "").trim();
+    if (!name) badRequest("name が空です");
+    let id = String(body.id || "").trim();
+    if (id) {
+      if (!/^[a-z][a-z0-9_-]{0,31}$/.test(id)) badRequest(`id の形式が不正です: ${id}`);
+      if (users.some((u) => u.id === id)) badRequest(`id が重複しています: ${id}`);
+    } else {
+      do {
+        userSeq += 1;
+        id = `u${userSeq}`;
+      } while (users.some((u) => u.id === id));
+    }
+    users.push({ id, name, role: "member", archived_at: null });
+    return { id } as unknown as T;
+  }
+  // `/users/switch` は `/users/{id}` より前に見る（後にすると "switch" が id として食われる）。
+  if (path === "/users/switch" && method === "POST") {
+    const id = String(body.id || "");
+    const u = users.find((x) => x.id === id && !x.archived_at);
+    if (!u) notFound(`user が見つからない、または畳まれています: ${id}`);
+    viewingUserId = id;
+    return { user: { id: u.id, name: u.name, role: u.role } } as unknown as T;
+  }
+  if (path.match(/^\/users\/[^/]+\/archive$/) && method === "POST") {
+    const id = decodeURIComponent(path.split("/")[2]);
+    const u = users.find((x) => x.id === id);
+    if (!u) notFound(`user が見つかりません: ${id}`);
+    if (u.role === "principal" || u.role === "butler") badRequest(`${u.role} は畳めません（ADR-014 D1）`);
+    u.archived_at = new Date().toISOString();
+    return { id } as unknown as T;
+  }
+  if (path.match(/^\/users\/[^/]+$/) && method === "POST") {
+    const id = decodeURIComponent(path.slice("/users/".length));
+    const u = users.find((x) => x.id === id);
+    if (!u) notFound(`user が見つかりません: ${id}`);
+    const name = String(body.name || "").trim();
+    if (!name) badRequest("name が空です");
+    u.name = name;
+    return { id } as unknown as T;
   }
 
   // ---------- tasks ----------

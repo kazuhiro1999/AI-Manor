@@ -21,6 +21,7 @@ from . import db as db_mod
 from . import i18n
 from . import project as project_mod
 from . import task as task_mod
+from . import user as user_mod
 from . import util
 from .errors import ManorError
 from .staff.steward.importer import PRESET_MAPS
@@ -112,6 +113,12 @@ def set_many(conn: sqlite3.Connection, values: dict[str, object]) -> None:
             " ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
             (key, value, now),
         )
+        # ADR-014 D1: 呼び名の正は `user.name` へ移った。`profile.master.callname` は
+        # セットアップ／プロフィール編集がそこへ写す入口になる（`user` 表は `db.init` が
+        # 種を入れているので `master` 行は必ずある。空文字は「まだ何も言っていない」と
+        # 扱い、そこでは写さない——`user.set` も空 name を拒む）。
+        if key == "master.callname" and value.strip():
+            user_mod.set(conn, user_mod.PRINCIPAL_ID, name=value.strip())
 
 
 def is_setup_done(conn: sqlite3.Connection) -> bool:

@@ -2,12 +2,21 @@
 
 from __future__ import annotations
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from ...board import api_staff as board_staff
 from ...errors import ManorError
-from .._common import WebContext, commit_and_render, manor_error_to_http, ns, open_conn, require_writable, table_exists
+from .._common import (
+    WebContext,
+    commit_and_render,
+    manor_error_to_http,
+    ns,
+    open_conn,
+    require_writable,
+    table_exists,
+    viewing_user_id,
+)
 
 
 def _require_secretary(conn) -> None:
@@ -86,9 +95,10 @@ def register(app: FastAPI, ctx: WebContext) -> None:
             return result  # type: ignore[return-value]
 
     @app.get("/api/v1/secretary/agenda")
-    def agenda(days: int = 7) -> object:
+    def agenda(request: Request, days: int = 7) -> object:
         from ...staff.secretary import cli as sec_cli
 
         with open_conn(ctx) as conn:
             _require_secretary(conn)
-            return sec_cli.cmd_agenda(conn, ctx.home, ns(days=days))
+            uid = viewing_user_id(request, conn)
+            return sec_cli.cmd_agenda(conn, ctx.home, ns(days=days, user=uid))

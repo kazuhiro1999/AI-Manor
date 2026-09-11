@@ -8,6 +8,7 @@ import { api, ApiError } from "../../app/api";
 import { useToast } from "../../components/Toast";
 import type { Meta, TaskClass } from "../../app/types";
 import { useT } from "../../app/i18n";
+import { useMetaContext } from "../../app/MetaContext";
 
 const FALLBACK_CLASS_OPTIONS: TaskClass[] = ["L1", "L2", "L3", "HG"].map((id) => ({
   id,
@@ -18,6 +19,10 @@ const FALLBACK_CLASS_OPTIONS: TaskClass[] = ["L1", "L2", "L3", "HG"].map((id) =>
 
 export function TaskForm({ onCreated }: { onCreated?: () => void }) {
   const t = useT();
+  // ADR-014 D3: 「この件の利用者」は見ている利用者（topbar の chip で切り替える）が
+  // 決める。フォーム内に選択肢は置かない（聞きすぎない）——起票の送信自体は
+  // `user` を送らないので、サーバー側が cookie `manor_user` から解決する。
+  const { meta } = useMetaContext();
   const [title, setTitle] = useState("");
   const [project, setProject] = useState("");
   const [classOptions, setClassOptions] = useState<TaskClass[]>(FALLBACK_CLASS_OPTIONS);
@@ -101,6 +106,7 @@ export function TaskForm({ onCreated }: { onCreated?: () => void }) {
       <div className="panel-head">
         <h2>{t("tasks.form.heading")}</h2>
       </div>
+      {meta?.user && <p className="panel-note">{t("tasks.form.userLine", { name: meta.user.name })}</p>}
       <div className="form-grid">
         <div className="form-row">
           <label htmlFor="tf-title">{t("tasks.form.titleLabel")}</label>

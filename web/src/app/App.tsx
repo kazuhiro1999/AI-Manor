@@ -1,16 +1,107 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Navigate, useLocation, useNavigate, useRoutes, type RouteObject } from "react-router-dom";
 import { usePolling } from "./polling";
-import { setUnauthorizedHandler } from "./api";
+import { api, ApiError, setUnauthorizedHandler } from "./api";
 import { APP_NAME } from "./brand";
 import type { Board, Meta } from "./types";
 import { buildRegistry } from "./registry";
 import { Nav } from "../components/Nav";
 import { ToastBanner, ToastProvider, useToast } from "../components/Toast";
 import { isEditingAnywhere } from "./editing";
-import { MetaContext, type MetaContextValue } from "./MetaContext";
+import { MetaContext, useMetaContext, type MetaContextValue } from "./MetaContext";
 import { applyThemeToDocument, readTheme } from "./theme";
 import { formatDay, useT, syncLanguageFromServer } from "./i18n";
+
+/** ADR-014 D3: topbar の「👤 名前 ▾」チップと切り替えメニュー。押すと利用者の一覧
+ * （現在のものに✓）・区切り・「利用者を管理…」（設定画面の「利用者」節へ）を出す。
+ * 選ぶと `POST /users/switch` → cookie が置かれる → meta を再読込し、体感を良くする
+ * ため板のポーリングにも即時の再読込を頼む（次のポーリングを待たない）。
+ * 外側クリック・Esc で閉じる。新しい依存は増やさない（素の DOM イベントだけで組む）。
+ */
+function UserMenu() {
+  const t = useT();
+  const navigate = useNavigate();
+  const { meta, reload: reloadMeta, reloadBoard } = useMetaContext();
+  const { show } = useToast();
+  const [open, setOpen] = useState(false);
+  const wrapRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDocClick = (ev: MouseEvent) => {
+      if (wrapRef.current && !wrapRef.current.contains(ev.target as Node)) setOpen(false);
+    };
+    const onKeyDown = (ev: KeyboardEvent) => {
+      if (ev.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("mousedown", onDocClick);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", onDocClick);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [open]);
+
+  const current = meta?.user;
+  const users = meta?.users || [];
+
+  const switchTo = async (id: string) => {
+    setOpen(false);
+    if (current?.id === id) return;
+    try {
+      await api("/users/switch", { method: "POST", body: { id } });
+      await reloadMeta();
+      await reloadBoard?.();
+    } catch (err) {
+      show(t("app.user.switchFailed", { reason: err instanceof ApiError ? err.message : t("common.unknown") }), "error");
+    }
+  };
+
+  if (!current) return null; // meta がまだ届いていない（初回の一瞬）。
+
+  return (
+    <div className="user-menu-wrap" ref={wrapRef}>
+      <button
+        type="button"
+        className="btn btn-icon chip-user"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        onClick={() => setOpen((v) => !v)}
+      >
+        {t("app.user.chipLabel", { name: current.name })}
+      </button>
+      {open && (
+        <div className="user-menu" role="menu">
+          {users.map((u) => (
+            <button
+              key={u.id}
+              type="button"
+              role="menuitem"
+              className="user-menu-item"
+              aria-current={u.id === current.id}
+              onClick={() => switchTo(u.id)}
+            >
+              <span className="user-menu-check">{u.id === current.id ? "✓" : ""}</span>
+              {u.name}
+            </button>
+          ))}
+          <hr className="user-menu-sep" />
+          <button
+            type="button"
+            role="menuitem"
+            className="user-menu-item"
+            onClick={() => {
+              setOpen(false);
+              navigate("/settings#users");
+            }}
+          >
+            {t("app.user.manage")}
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
 
 function AppInner() {
   const navigate = useNavigate();
@@ -46,10 +137,6 @@ function AppInner() {
   // 次のポーリングか reload() でそちらでも真になる）。
   const [setupJustCompleted, setSetupJustCompleted] = useState(false);
   const markSetupJustCompleted = useCallback(() => setSetupJustCompleted(true), []);
-  const metaCtxValue = useMemo<MetaContextValue>(
-    () => ({ meta, reload: reloadMeta, setupJustCompleted, markSetupJustCompleted }),
-    [meta, reloadMeta, setupJustCompleted, markSetupJustCompleted]
-  );
 
   useEffect(() => {
     setUnauthorizedHandler(() => navigate("/login"));
@@ -82,7 +169,14 @@ function AppInner() {
     return registry.filter((m) => !m.hideFromNav).sort((a, b) => a.order - b.order);
   }, [registry, meta]);
 
-  const { data: board } = usePolling<Board>("/tasks/board", 5000);
+  const { data: board, reload: reloadBoard } = usePolling<Board>("/tasks/board", 5000);
+
+  // ADR-014 D3: 利用者を切り替えた直後、板のポーリング（5秒おき）を待たず体感を
+  // 良くするため reloadBoard も Context 越しに配る（UserMenu が switch 後に呼ぶ）。
+  const metaCtxValue = useMemo<MetaContextValue>(
+    () => ({ meta, reload: reloadMeta, setupJustCompleted, markSetupJustCompleted, reloadBoard }),
+    [meta, reloadMeta, setupJustCompleted, markSetupJustCompleted, reloadBoard]
+  );
 
   // キーボード 1〜9 でモジュール切り替え。入力中（IME 変換中を含む）は無効。
   useEffect(() => {
@@ -157,6 +251,8 @@ function AppInner() {
             <span id="sync" className={"chip chip-sync " + (metaError ? "error" : "live")}>
               {metaError ? t("app.sync.error") : t("app.sync.live")}
             </span>
+            {/* ADR-014 D3: 「見ている利用者」の常時表示と切り替え。歯車の左に置く。 */}
+            <UserMenu />
             {/* ADR-011 D1: 設定はサイドバーから外し、右上のアイコン（歯車）から開く。 */}
             <button
               className="btn btn-icon"

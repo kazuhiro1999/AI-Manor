@@ -34,6 +34,26 @@ const STATUS_KEY: Record<ExtensionStatus, TranslationKey> = {
   error: "extensionsStatus.error",
 };
 
+// ADR-014 D5: `per_user` 欄（Slack の channel・カレンダーの url/write_calendar_id 等）。
+// `web/src/app/types.ts` はまだこの形を持たない（段Bと同時編集中のため、ここではローカルに
+// 型を足すだけに留める——`ExtensionField`/`ExtensionDetail` 本体は書き換えない）。
+type PerUserField = ExtensionField & { per_user?: boolean };
+interface PerUserInfo {
+  id: string;
+  name: string;
+  role: string;
+}
+type ExtensionDetailWithPerUser = ExtensionDetail & {
+  per_user_users?: PerUserInfo[];
+  per_user_values?: Record<string, Record<string, string | number | boolean | null>>;
+};
+
+const ROLE_KEY: Record<string, TranslationKey> = {
+  principal: "user.role.principal",
+  member: "user.role.member",
+  butler: "user.role.butler",
+};
+
 function ExtensionStatusChip({ status }: { status: ExtensionStatus }) {
   const t = useT();
   const cls = STATUS_CLASS[status] || "st-todo";
@@ -205,9 +225,16 @@ function ExtensionForm({
   const [options, setOptions] = useState<Record<string, ExtensionOption[] | undefined>>({});
   const { show } = useToast();
 
+  const withPerUser = detail as ExtensionDetailWithPerUser;
+  // ADR-014 D5: `per_user` の欄は人の利用者ごとに1組ずつ、それ以外はいままでどおり1組。
+  const commonFields = detail.manifest.fields.filter((f) => !(f as PerUserField).per_user);
+  const perUserFields = detail.manifest.fields.filter((f) => (f as PerUserField).per_user) as PerUserField[];
+  const perUserUsers = withPerUser.per_user_users || [];
+  const perUserValues = withPerUser.per_user_values || {};
+
   useEffect(() => {
     const initial: Record<string, string> = {};
-    for (const field of detail.manifest.fields) {
+    for (const field of commonFields) {
       if (field.kind === "password") {
         initial[field.key] = "";
         continue;
@@ -222,7 +249,7 @@ function ExtensionForm({
   useEffect(() => {
     let cancelled = false;
     // カードを開いたとき（＝このフォームがマウントされたとき）に動的な選択肢を取りに行く（D5）。
-    for (const field of detail.manifest.fields) {
+    for (const field of commonFields) {
       if (!field.options_from) continue;
       api<ExtensionOption[]>(`/extensions/${extId}/options/${field.options_from}`)
         .then((opts) => {
@@ -240,7 +267,7 @@ function ExtensionForm({
 
   const save = async () => {
     const body: Record<string, string> = {};
-    for (const field of detail.manifest.fields) {
+    for (const field of commonFields) {
       const v = values[field.key];
       if (v === undefined || v === "") continue; // 空欄は「変更しない」（秘密を空で上書きしない）
       body[field.key] = v;
@@ -256,7 +283,7 @@ function ExtensionForm({
 
   return (
     <div className="form-grid" style={{ marginTop: 8 }}>
-      {detail.manifest.fields.map((field) => (
+      {commonFields.map((field) => (
         <ExtensionFieldInput
           key={field.key}
           field={field}
@@ -266,8 +293,108 @@ function ExtensionForm({
           onChange={(v) => setValues((prev) => ({ ...prev, [field.key]: v }))}
         />
       ))}
+      {commonFields.length > 0 && (
+        <div className="form-actions">
+          <button className="btn btn-primary btn-small" type="button" onClick={save}>
+            {t("common.save")}
+          </button>
+        </div>
+      )}
+      {perUserFields.length > 0 && perUserUsers.length > 0 && (
+        <div className="ext-per-user">
+          <div className="card-evidence-label">{t("extensions.perUserHeading")}</div>
+          {perUserUsers.map((u) => (
+            <PerUserFieldGroup
+              key={u.id}
+              extId={extId}
+              user={u}
+              fields={perUserFields}
+              initialValues={perUserValues[u.id] || {}}
+              onSaved={onSaved}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** ADR-014 D5: `per_user` 欄の1利用者ぶん。保存はその利用者の `user_id` を付けて送る
+ * （`per_user` でない欄とは別の PUT）。人の利用者ごとに小見出し（名前）付きで1組出す。 */
+function PerUserFieldGroup({
+  extId,
+  user,
+  fields,
+  initialValues,
+  onSaved,
+}: {
+  extId: string;
+  user: PerUserInfo;
+  fields: PerUserField[];
+  initialValues: Record<string, string | number | boolean | null>;
+  onSaved: (d: ExtensionDetail) => void;
+}) {
+  const t = useT();
+  const { show } = useToast();
+  const [values, setValues] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    const initial: Record<string, string> = {};
+    for (const field of fields) {
+      if (field.kind === "password") {
+        initial[field.key] = "";
+        continue;
+      }
+      const v = initialValues[field.key];
+      initial[field.key] = v == null ? "" : String(v);
+    }
+    setValues(initial);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user.id]);
+
+  const save = async () => {
+    const body: Record<string, string> = {};
+    for (const field of fields) {
+      const v = values[field.key];
+      if (v === undefined || v === "") continue;
+      body[field.key] = v;
+    }
+    try {
+      const d = await api<ExtensionDetail>(`/extensions/${extId}`, {
+        method: "PUT",
+        body: { values: body, user_id: user.id },
+      });
+      show(t("extensions.saved"), "ok", 3000);
+      onSaved(d);
+    } catch (err) {
+      show(t("errors.saveFailed", { reason: err instanceof ApiError ? err.message : t("common.unknown") }), "error");
+    }
+  };
+
+  const roleKey = ROLE_KEY[user.role];
+
+  return (
+    <div className="ext-per-user-row">
+      <div className="card-title" style={{ fontSize: 13 }}>
+        {user.name}
+        {roleKey && (
+          <span className="panel-note" style={{ marginLeft: 6 }}>
+            {t(roleKey)}
+          </span>
+        )}
+      </div>
+      {fields.map((field) => (
+        <ExtensionFieldInput
+          key={field.key}
+          field={field}
+          value={values[field.key] ?? ""}
+          hasSecret={Boolean(initialValues[`has_${field.key}`])}
+          options={undefined}
+          onChange={(v) => setValues((prev) => ({ ...prev, [field.key]: v }))}
+        />
+      ))}
       <div className="form-actions">
-        <button className="btn btn-primary btn-small" type="button" onClick={save}>
+        <button className="btn btn-small btn-primary" type="button" onClick={save}>
           {t("common.save")}
         </button>
       </div>

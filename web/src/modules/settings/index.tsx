@@ -6,7 +6,7 @@ import { usePolling } from "../../app/polling";
 import { APP_NAME } from "../../app/brand";
 import { useEditingGuard } from "../../app/editing";
 import { api, apiUpload, ApiError } from "../../app/api";
-import type { FaceModelEntry, Meta, RunKindStat, RunRow, RunsData, RunStatsData, SettingsData, SetupInfo, TaskKind } from "../../app/types";
+import type { FaceModelEntry, Meta, RunKindStat, RunRow, RunsData, RunStatsData, SettingsData, SetupInfo, TaskKind, UserInfo } from "../../app/types";
 import { useTheme, THEMES, type Theme } from "../../app/theme";
 import { fmtCost, fmtDateTime, fmtSeconds, runKindLabel } from "../../app/format";
 import { DataTable, type Column } from "../../components/DataTable";
@@ -15,6 +15,7 @@ import { ScreenHeader } from "../../components/ScreenHeader";
 import { t, useT, useLanguageSetting, LANGUAGES, type Language } from "../../app/i18n";
 import { purposeLabel } from "../../app/purposeMeta";
 import { AGENT_LABEL_KEY } from "../../app/agentMeta";
+import { USER_ROLE_LABEL_KEY } from "../../app/userMeta";
 
 function parsePurposeIds(raw?: string): string[] {
   if (!raw) return [];
@@ -106,6 +107,192 @@ function ProfileSection() {
           {t("settings.profile.redoSetup")}
         </Link>
       </div>
+    </section>
+  );
+}
+
+/** ADR-014 D1・D3:「利用者」節。名前の変更・畳む・追加。**主人と執事は畳めない。**
+ * 押す前に `confirm()` は使わず、2度押し（1度目は確認ボタンへ切り替わるだけ）で畳む。
+ */
+function UserRow({
+  user,
+  isCurrent,
+  onChanged,
+}: {
+  user: UserInfo;
+  isCurrent: boolean;
+  onChanged: () => void;
+}) {
+  const t = useT();
+  const [editing, setEditing] = useState(false);
+  const [name, setName] = useState(user.name);
+  const [confirmArchive, setConfirmArchive] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const { show } = useToast();
+  // ADR-014 D1: principal（主人）・butler（執事）は畳めない。
+  const protectedRole = user.role === "principal" || user.role === "butler";
+
+  const startEdit = () => {
+    setName(user.name);
+    setEditing(true);
+  };
+
+  const saveRename = async () => {
+    const trimmed = name.trim();
+    if (!trimmed) {
+      show(t("settings.users.nameRequired"), "error");
+      return;
+    }
+    setBusy(true);
+    try {
+      await api(`/users/${encodeURIComponent(user.id)}`, { method: "POST", body: { name: trimmed } });
+      show(t("settings.users.renamed"), "ok", 3000);
+      setEditing(false);
+      onChanged();
+    } catch (err) {
+      show(t("settings.users.renameFailed", { reason: err instanceof ApiError ? err.message : t("common.unknown") }), "error");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const doArchive = async () => {
+    if (!confirmArchive) {
+      // 1度目は確認ボタンへ切り替えるだけ（`window.confirm` は使わない）。
+      setConfirmArchive(true);
+      return;
+    }
+    setBusy(true);
+    try {
+      await api(`/users/${encodeURIComponent(user.id)}/archive`, { method: "POST" });
+      show(t("settings.users.archived"), "ok", 3000);
+      onChanged();
+    } catch (err) {
+      show(t("settings.users.archiveFailed", { reason: err instanceof ApiError ? err.message : t("common.unknown") }), "error");
+    } finally {
+      setBusy(false);
+      setConfirmArchive(false);
+    }
+  };
+
+  return (
+    <div className="row-item" data-user-id={user.id}>
+      <span className="row-id">{t(USER_ROLE_LABEL_KEY[user.role])}</span>
+      {editing ? (
+        <>
+          <input
+            className="form-input"
+            style={{ flex: 1, minWidth: 160 }}
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            disabled={busy}
+            aria-label={t("settings.users.nameFieldAria", { name: user.name })}
+          />
+          <button className="btn btn-small btn-primary" type="button" disabled={busy} onClick={saveRename}>
+            {t("common.save")}
+          </button>
+          <button className="btn btn-small" type="button" disabled={busy} onClick={() => setEditing(false)}>
+            {t("common.cancel")}
+          </button>
+        </>
+      ) : (
+        <>
+          <span className="row-title">{user.name}</span>
+          {isCurrent && <span className="panel-note">{t("settings.users.current")}</span>}
+          <button className="btn btn-small" type="button" onClick={startEdit}>
+            {t("common.rename")}
+          </button>
+          {protectedRole ? (
+            <span className="panel-note">{t("settings.users.protectedNote")}</span>
+          ) : (
+            <button className="btn btn-small btn-danger" type="button" disabled={busy} onClick={doArchive}>
+              {confirmArchive ? t("settings.users.archiveConfirm") : t("common.archive")}
+            </button>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+/** 追加フォーム。名前だけ聞く——記号（id）は機械が `u2`, `u3`… と振る
+ * （ADR-014 §4「聞きすぎない」）。 */
+function UserAddForm({ onClose, onSaved }: { onClose: () => void; onSaved: () => void }) {
+  const t = useT();
+  const [name, setName] = useState("");
+  const [busy, setBusy] = useState(false);
+  const { show } = useToast();
+
+  const save = async () => {
+    const trimmed = name.trim();
+    if (!trimmed) {
+      show(t("settings.users.nameRequired"), "error");
+      return;
+    }
+    setBusy(true);
+    try {
+      await api("/users", { method: "POST", body: { name: trimmed } });
+      show(t("settings.users.added"), "ok", 3000);
+      onSaved();
+    } catch (err) {
+      show(t("settings.users.addFailed", { reason: err instanceof ApiError ? err.message : t("common.unknown") }), "error");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="form-inline" style={{ marginTop: 8, flexWrap: "wrap" }}>
+      <input
+        className="form-input"
+        placeholder={t("settings.users.namePlaceholder")}
+        value={name}
+        onChange={(e) => setName(e.target.value)}
+        disabled={busy}
+        aria-label={t("settings.users.newNameAria")}
+      />
+      <button className="btn btn-small btn-primary" type="button" disabled={busy} onClick={save}>
+        {t("common.add")}
+      </button>
+      <button className="btn btn-small" type="button" disabled={busy} onClick={onClose}>
+        {t("common.cancel")}
+      </button>
+    </div>
+  );
+}
+
+function UsersSection({ currentUserId }: { currentUserId?: string }) {
+  const t = useT();
+  const { data, error, reload } = usePolling<{ items: UserInfo[] }>("/users", 5000);
+  const [adding, setAdding] = useState(false);
+
+  const rows = data?.items || [];
+
+  return (
+    <section className="panel" id="settings-users">
+      <div className="panel-head">
+        <h2>{t("settings.users.heading")}</h2>
+        <button className="btn btn-small btn-primary" style={{ marginLeft: "auto" }} type="button" onClick={() => setAdding(true)}>
+          {t("settings.users.add")}
+        </button>
+      </div>
+      <p className="panel-note">{t("settings.users.hint")}</p>
+      {error && <p className="panel-note">{t("errors.loadFailed", { reason: error })}</p>}
+      <div className="rows">
+        {!rows.length && <p className="panel-note">{t("common.loading")}</p>}
+        {rows.map((u) => (
+          <UserRow key={u.id} user={u} isCurrent={u.id === currentUserId} onChanged={reload} />
+        ))}
+      </div>
+      {adding && (
+        <UserAddForm
+          onClose={() => setAdding(false)}
+          onSaved={() => {
+            setAdding(false);
+            reload();
+          }}
+        />
+      )}
     </section>
   );
 }
@@ -775,6 +962,8 @@ function SettingsScreen() {
       </section>
 
       <ProfileSection />
+
+      <UsersSection currentUserId={meta?.user?.id} />
 
       <TaskKindsSection />
 

@@ -55,7 +55,7 @@ const ALLOWLIST = new Set<string>([
 // #root が無いという起動時の致命的エラー。どちらも**画面には出ない**——前者は開発中の
 // 実装ミスでしか起きず、後者は index.html の設定崩れという配布時の事故（React が立ち
 // 上がる前に落ちる）。主人が実際に見る文言ではないので、ここでは訳さず許可リストに載せる。
-const LINE_ALLOWLIST = new Set<string>(["app/MetaContext.tsx:16", "components/Toast.tsx:38", "main.tsx:8"]);
+const LINE_ALLOWLIST = new Set<string>(["app/MetaContext.tsx:20", "components/Toast.tsx:38", "main.tsx:8"]);
 
 /** 粗いコメント除去。ブロックコメント全体と、行の `//` 以降を落とす
  * （文字列内の `//` を巻き込みうるが、上のコメントの通り安全側の見逃しに倒れる）。 */

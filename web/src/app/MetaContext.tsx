@@ -16,6 +16,10 @@ export interface MetaContextValue {
   reload: () => Promise<void>;
   setupJustCompleted: boolean;
   markSetupJustCompleted: () => void;
+  // ADR-014 D3: 利用者を切り替えた直後、板のポーリング（5秒おき）を待たず体感を
+  // 良くするための次善の呼び出し先。App がまだポーリングを始めていない場面
+  // （login・setup 等）では未設定になりうる——呼ぶ側は必ず optional chaining で呼ぶ。
+  reloadBoard?: () => Promise<void>;
 }
 
 export const MetaContext = createContext<MetaContextValue | null>(null);
