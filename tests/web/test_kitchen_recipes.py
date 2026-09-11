@@ -85,12 +85,47 @@ def test_recipe_get_missing_is_404(conn, home: Path) -> None:
 
 
 def test_recipe_list_shape(conn, home: Path) -> None:
+    """ADR-015 D9追補: 返り値は `{"items":[...]}`（既存の各行の形は保つ）。"""
     client = make_client(home)
     client.post("/api/v1/kitchen/recipes", json=_minimal_recipe(title="一覧確認用"))
     body = client.get("/api/v1/kitchen/recipes").json()
-    assert any(r["title"] == "一覧確認用" for r in body)
-    row = next(r for r in body if r["title"] == "一覧確認用")
-    assert set(row.keys()) >= {"id", "title", "hero_image", "total_minutes", "tags", "favorite", "times_cooked"}
+    items = body["items"]
+    assert any(r["title"] == "一覧確認用" for r in items)
+    row = next(r for r in items if r["title"] == "一覧確認用")
+    assert set(row.keys()) >= {
+        "id", "title", "hero_image", "total_minutes", "servings", "tags", "favorite",
+        "times_cooked", "last_cooked_at", "kcal", "category", "main_ingredient", "cuisine",
+        "updated_at",
+    }
+
+
+def test_recipe_list_supports_classification_filters_and_sort(conn, home: Path) -> None:
+    client = make_client(home)
+    recipe_id = client.post("/api/v1/kitchen/recipes", json=_minimal_recipe(title="絞り込み確認用")).json()["id"]
+    client.put(f"/api/v1/kitchen/recipes/{recipe_id}/meta", json={"category": "主菜", "cuisine": "和食"})
+
+    hit = client.get("/api/v1/kitchen/recipes", params={"category": "主菜"}).json()["items"]
+    assert recipe_id in [r["id"] for r in hit]
+
+    miss = client.get("/api/v1/kitchen/recipes", params={"category": "デザート"}).json()["items"]
+    assert recipe_id not in [r["id"] for r in miss]
+
+    sorted_by_title = client.get("/api/v1/kitchen/recipes", params={"sort": "title"}).json()["items"]
+    titles = [r["title"] for r in sorted_by_title]
+    assert titles == sorted(titles)
+
+
+def test_recipe_facets_excludes_archived(conn, home: Path) -> None:
+    client = make_client(home)
+    kept_id = client.post("/api/v1/kitchen/recipes", json=_minimal_recipe(title="facets残す")).json()["id"]
+    gone_id = client.post("/api/v1/kitchen/recipes", json=_minimal_recipe(title="facets畳む")).json()["id"]
+    client.put(f"/api/v1/kitchen/recipes/{kept_id}/meta", json={"category": "主菜"})
+    client.put(f"/api/v1/kitchen/recipes/{gone_id}/meta", json={"category": "主菜"})
+    client.post(f"/api/v1/kitchen/recipes/{gone_id}/archive")
+
+    facets = client.get("/api/v1/kitchen/recipes/facets").json()
+    assert set(facets.keys()) == {"category", "main_ingredient", "cuisine", "tags"}
+    assert facets["category"] == [{"value": "主菜", "count": 1}]
 
 
 def test_recipe_update_replaces_body(conn, home: Path) -> None:
@@ -124,7 +159,7 @@ def test_recipe_archive(conn, home: Path) -> None:
     recipe_id = client.post("/api/v1/kitchen/recipes", json=_minimal_recipe()).json()["id"]
     res = client.post(f"/api/v1/kitchen/recipes/{recipe_id}/archive")
     assert res.status_code == 200
-    listed = client.get("/api/v1/kitchen/recipes").json()
+    listed = client.get("/api/v1/kitchen/recipes").json()["items"]
     assert recipe_id not in [r["id"] for r in listed]
 
 
@@ -159,6 +194,7 @@ def test_recipes_not_available_when_table_missing(conn, home: Path) -> None:
     conn.commit()
 
     assert client.get("/api/v1/kitchen/recipes").status_code == 404
+    assert client.get("/api/v1/kitchen/recipes/facets").status_code == 404
     assert client.get("/api/v1/kitchen/recipes/1").status_code == 404
     assert client.post("/api/v1/kitchen/recipes", json=_minimal_recipe()).status_code == 404
     assert client.get("/api/v1/kitchen/cook-sessions/current").status_code == 404

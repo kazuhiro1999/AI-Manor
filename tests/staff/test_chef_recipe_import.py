@@ -123,7 +123,11 @@ def test_extract_text_prefers_json_ld_recipe() -> None:
     ld = source["json_ld_recipe"]
     assert ld is not None
     assert ld["ingredients"] == ["ご飯 300g", "卵 3個"]
-    assert ld["instructions"] == ["卵を溶く。", "ご飯を炒める。"]
+    assert ld["name"] == "テスト炒飯"
+    assert ld["instructions"] == [
+        {"text": "卵を溶く。", "image": None},
+        {"text": "ご飯を炒める。", "image": None},
+    ]
     assert ld["total_time"] == "PT10M"
     assert ld["yield"] == "2人分"
     assert ld["images"] == ["https://example.com/dish.jpg"]
@@ -147,7 +151,9 @@ def test_extract_text_without_json_ld_falls_back_to_body() -> None:
     source = recipe_import.extract_text(_HTML_WITHOUT_JSON_LD, base_url="https://example.com/other")
     assert source["json_ld_recipe"] is None
     assert "材料をよく混ぜます。" in source["text"]
-    assert source["images"] == [{"src": "https://cdn.example.com/x.jpg", "alt": "完成写真"}]
+    assert source["images"] == [
+        {"src": "https://cdn.example.com/x.jpg", "alt": "完成写真", "width": "", "height": ""}
+    ]
 
 
 # --- fetch_page（例外を投げない。上限・エラー種別） ---------------------------------------
@@ -292,10 +298,32 @@ def test_structure_reports_reason_when_claude_missing(monkeypatch: pytest.Monkey
     assert "claude" in result["reason"]
 
 
-# --- import_from_url（保存しない） ---------------------------------------------------------
+# --- import_from_url（保存しない。ADR-015 D7: 既定は mode="auto"） ------------------------
 
 
-def test_import_from_url_never_saves(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_import_from_url_default_mode_is_auto_and_never_calls_claude(monkeypatch: pytest.MonkeyPatch) -> None:
+    """D7「自動抽出を先に」——`mode` を省略すると `claude -p` を一切呼ばない。"""
+    monkeypatch.setattr(
+        recipe_import, "fetch_page",
+        lambda url, **kw: {"ok": True, "html": _HTML_WITH_JSON_LD, "final_url": url, "reason": ""},
+    )
+
+    def boom(*_a, **_kw):
+        raise AssertionError("mode='auto'（既定）では claude を呼んではいけません")
+
+    monkeypatch.setattr("subprocess.run", boom)
+
+    result = recipe_import.import_from_url("https://oceans-nadia.com/user/253470/recipe/440737")
+
+    assert result["ok"] is True
+    assert result["method"] == "jsonld"
+    assert "id" not in result["recipe"]  # DB が振る id はまだ無い(保存していない)
+    assert result["recipe"]["source_url"] == "https://oceans-nadia.com/user/253470/recipe/440737"
+    assert result["recipe"]["source_site"] == "oceans-nadia.com"
+
+
+def test_import_from_url_claude_mode_never_saves(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`mode="claude"` は従来の R2 の経路（`structure()`）を通り、`method` は `"claude"`。"""
     monkeypatch.setattr(
         recipe_import, "fetch_page",
         lambda url, **kw: {"ok": True, "html": _HTML_WITHOUT_JSON_LD, "final_url": url, "reason": ""},
@@ -308,12 +336,22 @@ def test_import_from_url_never_saves(monkeypatch: pytest.MonkeyPatch) -> None:
         ),
     )
 
-    result = recipe_import.import_from_url("https://oceans-nadia.com/user/253470/recipe/440737")
+    result = recipe_import.import_from_url(
+        "https://oceans-nadia.com/user/253470/recipe/440737", mode="claude"
+    )
 
     assert result["ok"] is True
+    assert result["method"] == "claude"
     assert "id" not in result["recipe"]  # DB が振る id はまだ無い(保存していない)
     assert result["recipe"]["source_url"] == "https://oceans-nadia.com/user/253470/recipe/440737"
     assert result["recipe"]["source_site"] == "oceans-nadia.com"
+    assert result["recipe"]["hero_image"] == "https://cdn.example.com/x.jpg"  # 本文最大の画像
+
+
+def test_import_from_url_rejects_unknown_mode() -> None:
+    with pytest.raises(ManorError) as exc_info:
+        recipe_import.import_from_url("https://example.com/recipe", mode="magic")
+    assert exc_info.value.code == 2
 
 
 def test_import_from_url_propagates_url_validation_error() -> None:
@@ -332,9 +370,60 @@ def test_import_from_url_reports_fetch_failure_without_calling_claude(monkeypatc
 
     monkeypatch.setattr("subprocess.run", boom)
 
+    result = recipe_import.import_from_url("https://example.com/recipe", mode="claude")
+    assert result["ok"] is False
+    assert "タイムアウト" in result["reason"]
+
+
+def test_import_from_url_reports_fetch_failure_in_auto_mode(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        recipe_import, "fetch_page",
+        lambda url, **kw: {"ok": False, "html": "", "final_url": "", "reason": "タイムアウトしました"},
+    )
     result = recipe_import.import_from_url("https://example.com/recipe")
     assert result["ok"] is False
     assert "タイムアウト" in result["reason"]
+
+
+# --- refine_with_claude（D7-2） -------------------------------------------------------------
+
+
+def test_refine_with_claude_tightens_overflowing_draft(monkeypatch: pytest.MonkeyPatch) -> None:
+    draft = {
+        "title": "下書き", "servings": 2, "total_minutes": 10,
+        "ingredients": [{"name": "卵", "qty": "1", "unit": "個"}],
+        "tools": [], "phases": [{"id": "cook", "title": "作る"}],
+        "steps": [
+            {
+                "index": 1, "phase": "cook", "title": "卵を炒める", "instruction": "卵を割りほぐして炒める。",
+                "image": None, "ingredients_used": [], "timer_sec": None, "completion": "manual", "tips": [],
+            }
+        ],
+        "source_url": "https://example.com/recipe/1", "source_site": "example.com",
+        "hero_image": "https://example.com/hero.jpg",
+        "meta": {"category": "主菜", "main_ingredient": "", "cuisine": "", "tags": []},
+    }
+    monkeypatch.setattr("shutil.which", lambda name: "claude")
+    monkeypatch.setattr(
+        "subprocess.run",
+        lambda argv, input, **kw: _claude_json_process(
+            _outer(json.dumps(_candidate("卵を炒める"), ensure_ascii=False))
+        ),
+    )
+
+    result = recipe_import.refine_with_claude(draft)
+
+    assert result["ok"] is True
+    assert result["recipe"]["source_url"] == "https://example.com/recipe/1"
+    assert result["recipe"]["hero_image"] == "https://example.com/hero.jpg"
+    assert result["recipe"]["meta"] == draft["meta"]  # 分類は下書きのものを引き継ぐ
+
+
+def test_refine_with_claude_reports_reason_when_claude_missing(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("shutil.which", lambda name: None)
+    result = recipe_import.refine_with_claude({"title": "下書き"})
+    assert result["ok"] is False
+    assert "claude" in result["reason"]
 
 
 # --- estimate_nutrition ---------------------------------------------------------------

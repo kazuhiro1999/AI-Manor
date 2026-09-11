@@ -172,6 +172,11 @@ def migrate_core(home: Path) -> None:
         # ADR-014 D4/D5: 秘書の予定の利用者列（NULL＝共通）。表が無ければ何もしない
         # （secretary_event と同じ判断——上の project_id と同じ理由）。
         _add_column_if_missing(conn, "secretary_event", "user_id", "TEXT")
+        # ADR-015 D9（追補・2026-09-12）: 既存 DB の chef_recipe_meta に分類3軸を
+        # 冪等に足す。表が無ければ何もしない（secretary_event と同じ判断）。
+        _add_column_if_missing(conn, "chef_recipe_meta", "category", "TEXT NOT NULL DEFAULT ''")
+        _add_column_if_missing(conn, "chef_recipe_meta", "main_ingredient", "TEXT NOT NULL DEFAULT ''")
+        _add_column_if_missing(conn, "chef_recipe_meta", "cuisine", "TEXT NOT NULL DEFAULT ''")
         # **既定の8つもここで入れる**（執事の裁定 2026-09-04）。`manor init` だけに任せると、
         # 更新後に init を忘れた home は「表はあるが空」になり、種類を1つも選べない——
         # `run`／`notion_page` で2度踏んだのと**同じ穴**（GROWTH G5）。
@@ -288,6 +293,12 @@ def init(home: Path) -> list[str]:
         # ——`_add_column_if_missing` は表が無ければ何もしないので、秘書を導入していない
         # home に表を作ってしまう心配は無い（`project_id` を足したときと同じ判断）。
         _add_column_if_missing(conn, "secretary_event", "user_id", "TEXT")
+        # ADR-015 D9（追補・2026-09-12）: 既存 DB の chef_recipe_meta に分類3軸を
+        # 冪等に足す（新規 DB は schema.sql の CREATE TABLE が最初から持つ）。
+        # **部下のスキーマ適用の後**（secretary_event の project_id と同じ理由）。
+        _add_column_if_missing(conn, "chef_recipe_meta", "category", "TEXT NOT NULL DEFAULT ''")
+        _add_column_if_missing(conn, "chef_recipe_meta", "main_ingredient", "TEXT NOT NULL DEFAULT ''")
+        _add_column_if_missing(conn, "chef_recipe_meta", "cuisine", "TEXT NOT NULL DEFAULT ''")
 
         if conn.execute("SELECT value FROM meta WHERE key='schema_version'").fetchone() is None:
             conn.execute("INSERT INTO meta (key, value) VALUES ('schema_version', '1')")

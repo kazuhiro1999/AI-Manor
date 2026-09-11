@@ -241,6 +241,111 @@ def test_list_recipes_filters(conn, home: Path) -> None:
     assert [r["id"] for r in by_favorite] == [wa_id]
 
 
+def test_list_recipes_filters_by_classification_axes(conn, home: Path) -> None:
+    rice_id = recipes.add(conn, _minimal_recipe(title="ご飯もの"))
+    soup_id = recipes.add(conn, _minimal_recipe(title="汁物"))
+    recipes.set_meta(conn, rice_id, category="ご飯もの", main_ingredient="肉", cuisine="中華")
+    recipes.set_meta(conn, soup_id, category="汁物", main_ingredient="野菜", cuisine="和食")
+
+    assert [r["id"] for r in recipes.list_recipes(conn, category="ご飯もの")] == [rice_id]
+    assert [r["id"] for r in recipes.list_recipes(conn, main_ingredient="野菜")] == [soup_id]
+    assert [r["id"] for r in recipes.list_recipes(conn, cuisine="中華")] == [rice_id]
+
+
+def test_list_recipes_q_matches_ingredient_names(conn, home: Path) -> None:
+    """`q` は題名**と材料名**（ADR-015 D9 追補）。"""
+    pork_id = recipes.add(
+        conn, _minimal_recipe(title="なんの変哲もない一品", ingredients=[{"name": "豚バラ肉"}])
+    )
+    other_id = recipes.add(
+        conn, _minimal_recipe(title="別の一品", ingredients=[{"name": "鶏むね肉"}])
+    )
+
+    result = recipes.list_recipes(conn, q="豚バラ")
+    assert [r["id"] for r in result] == [pork_id]
+    assert other_id not in [r["id"] for r in result]
+
+
+def test_list_recipes_rows_have_full_shape(conn, home: Path) -> None:
+    recipe_id = recipes.add(conn, _minimal_recipe(title="形の確認用"))
+    recipes.set_meta(conn, recipe_id, kcal=300, category="主菜")
+    row = next(r for r in recipes.list_recipes(conn) if r["id"] == recipe_id)
+    assert set(row.keys()) == {
+        "id", "title", "hero_image", "total_minutes", "servings", "tags", "favorite",
+        "times_cooked", "last_cooked_at", "kcal", "category", "main_ingredient",
+        "cuisine", "updated_at",
+    }
+    assert row["kcal"] == 300
+    assert row["category"] == "主菜"
+
+
+def test_list_recipes_sort_recent_defaults_to_updated_at_desc(conn, home: Path) -> None:
+    first_id = recipes.add(conn, _minimal_recipe(title="先に作った"))
+    second_id = recipes.add(conn, _minimal_recipe(title="後で作った"))
+    # 先に作ったほうを後から更新すると、recent の並びで先頭に来る。
+    recipes.update(conn, first_id, _minimal_recipe(title="先に作った（改訂）"))
+
+    ids = [r["id"] for r in recipes.list_recipes(conn, sort="recent")]
+    assert ids.index(first_id) < ids.index(second_id)
+
+
+def test_list_recipes_sort_cooked_puts_null_last(conn, home: Path) -> None:
+    never_cooked_id = recipes.add(conn, _minimal_recipe(title="まだ作っていない"))
+    cooked_id = recipes.add(conn, _minimal_recipe(title="作ったことがある"))
+    session = recipes.start_session(conn, cooked_id, user_id="master")
+    recipes.end_session(conn, session["id"])
+
+    ids = [r["id"] for r in recipes.list_recipes(conn, sort="cooked")]
+    assert ids.index(cooked_id) < ids.index(never_cooked_id)
+
+
+def test_list_recipes_sort_title_is_alphabetical(conn, home: Path) -> None:
+    recipes.add(conn, _minimal_recipe(title="ぶ"))
+    recipes.add(conn, _minimal_recipe(title="あ"))
+    titles = [r["title"] for r in recipes.list_recipes(conn, sort="title")]
+    assert titles == sorted(titles)
+
+
+def test_list_recipes_rejects_unknown_sort(conn, home: Path) -> None:
+    with pytest.raises(ManorError) as exc_info:
+        recipes.list_recipes(conn, sort="popular")
+    assert exc_info.value.code == 2
+
+
+# --- facets（chip 列の集計） --------------------------------------------------------------
+
+
+def test_facets_counts_exclude_archived(conn, home: Path) -> None:
+    kept_id = recipes.add(conn, _minimal_recipe(title="残す"))
+    gone_id = recipes.add(conn, _minimal_recipe(title="畳む"))
+    recipes.set_meta(conn, kept_id, category="主菜", tags=["定番"])
+    recipes.set_meta(conn, gone_id, category="主菜", tags=["定番"])
+    recipes.archive(conn, gone_id)
+
+    result = recipes.facets(conn)
+    assert result["category"] == [{"value": "主菜", "count": 1}]
+    assert result["tags"] == [{"value": "定番", "count": 1}]
+
+
+def test_facets_shape_has_all_four_axes(conn, home: Path) -> None:
+    recipes.add(conn, _minimal_recipe())
+    result = recipes.facets(conn)
+    assert set(result.keys()) == {"category", "main_ingredient", "cuisine", "tags"}
+
+
+def test_facets_orders_by_count_descending(conn, home: Path) -> None:
+    a = recipes.add(conn, _minimal_recipe(title="a"))
+    b = recipes.add(conn, _minimal_recipe(title="b"))
+    c = recipes.add(conn, _minimal_recipe(title="c"))
+    recipes.set_meta(conn, a, cuisine="和食")
+    recipes.set_meta(conn, b, cuisine="和食")
+    recipes.set_meta(conn, c, cuisine="中華")
+
+    result = recipes.facets(conn)
+    assert result["cuisine"][0] == {"value": "和食", "count": 2}
+    assert result["cuisine"][1] == {"value": "中華", "count": 1}
+
+
 def test_list_recipes_excludes_archived_by_default(conn, home: Path) -> None:
     keep_id = recipes.add(conn, _minimal_recipe(title="残す料理"))
     gone_id = recipes.add(conn, _minimal_recipe(title="畳む料理"))

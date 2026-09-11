@@ -1,0 +1,30 @@
+<!--
+  ADR-015 D7 の試験用に要点だけを切り詰めた合成 HTML（cookpad.com 向けアダプタ）。
+  実物の cookpad.com のページ（2026-09-12 に主人の実測とは別に1件だけ取得して確認）は
+  材料・手順をクライアント側で描画しており、静的 HTML には schema.org の itemprop
+  だけが残る変種がある想定——この合成 HTML はその想定を再現する。
+  意図的に JSON-LD を含めない（①を素通りさせ②のアダプタ経路を試験する）。
+-->
+<html>
+<head><title>鶏むね肉の照り焼き</title></head>
+<body>
+<h1 itemprop="name">鶏むね肉の照り焼き</h1>
+<meta itemprop="image" content="https://asset.example-cookpad.test/hero.jpg">
+<a href="/jp/categories/143-teriyaki">和食</a>
+
+<h2>材料（2人分）</h2>
+<ul>
+<li><span itemprop="recipeIngredient">鶏むね肉 1枚</span></li>
+<li><span itemprop="recipeIngredient">醤油 大さじ2</span></li>
+<li><span itemprop="recipeIngredient">みりん 大さじ2</span></li>
+<li><span itemprop="recipeIngredient">砂糖 小さじ1</span></li>
+</ul>
+
+<h2>作り方</h2>
+<ol>
+<li>鶏むね肉をフォークで数か所刺す。</li>
+<li>フライパンで皮目から焼く。</li>
+<li>調味料を加えて煮からめる。</li>
+</ol>
+</body>
+</html>

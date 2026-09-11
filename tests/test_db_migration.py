@@ -410,6 +410,103 @@ def test_migrate_core_seeds_task_kinds_so_an_un_inited_home_can_choose(tmp_path,
         conn.close()
 
 
+def _make_old_chef_recipe_db(home: Path) -> None:
+    """`chef_recipe_meta` に分類3軸（`category`/`main_ingredient`/`cuisine`）が無い
+    「ADR-015 D9 追補より前の DB」を手作りする（`_make_old_task_db` と同じ流儀）。
+    """
+    home.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(str(home / "manor.db"))
+    try:
+        conn.executescript(
+            """
+            CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+            CREATE TABLE chef_recipe (
+              id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT NOT NULL,
+              source_url TEXT NOT NULL DEFAULT '', source_site TEXT NOT NULL DEFAULT '',
+              hero_image TEXT NOT NULL DEFAULT '', servings INTEGER, total_minutes INTEGER,
+              body TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, archived_at TEXT
+            );
+            CREATE TABLE chef_recipe_meta (
+              recipe_id INTEGER PRIMARY KEY REFERENCES chef_recipe(id) ON DELETE CASCADE,
+              kcal REAL, protein_g REAL, fat_g REAL, carb_g REAL, salt_g REAL,
+              nutrition_source TEXT NOT NULL DEFAULT '' CHECK (nutrition_source IN ('', 'estimated', 'manual')),
+              tags TEXT NOT NULL DEFAULT '[]', rating INTEGER, memo TEXT NOT NULL DEFAULT '',
+              favorite INTEGER NOT NULL DEFAULT 0, times_cooked INTEGER NOT NULL DEFAULT 0,
+              last_cooked_at TEXT
+            );
+            """
+        )
+        conn.execute(
+            "INSERT INTO chef_recipe (title, body, created_at, updated_at)"
+            " VALUES ('旧いレシピ', '{}', '2026-01-01T00:00:00', '2026-01-01T00:00:00')"
+        )
+        conn.execute("INSERT INTO chef_recipe_meta (recipe_id, tags) VALUES (1, '[]')")
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def test_init_adds_recipe_classification_columns_to_old_db(tmp_path: Path) -> None:
+    """ADR-015 D9 追補: 既存 DB の `chef_recipe_meta` に `category`/`main_ingredient`/
+    `cuisine` を冪等に足す（`manor init`）。既存の行は消えず、新しい列は空文字で埋まる。
+    """
+    home = tmp_path / "old_home_recipe_category"
+    _make_old_chef_recipe_db(home)
+
+    before = sqlite3.connect(str(home / "manor.db"))
+    try:
+        cols_before = {r[1] for r in before.execute("PRAGMA table_info(chef_recipe_meta)").fetchall()}
+        assert "category" not in cols_before
+    finally:
+        before.close()
+
+    db_mod.init(home)
+
+    conn = db_mod.connect(home)
+    try:
+        cols = {r["name"] for r in conn.execute("PRAGMA table_info(chef_recipe_meta)").fetchall()}
+        assert {"category", "main_ingredient", "cuisine"} <= cols
+        row = conn.execute("SELECT * FROM chef_recipe_meta WHERE recipe_id = 1").fetchone()
+        assert row["category"] == ""
+        assert row["main_ingredient"] == ""
+        assert row["cuisine"] == ""
+    finally:
+        conn.close()
+
+
+def test_migrate_core_adds_recipe_classification_columns_to_old_db(tmp_path: Path) -> None:
+    """`migrate_core`（`manor init` を回さなくても CLI が毎回当てる軽い経路）だけでも届く
+    （`chef_recipe_meta` が既にある home の想定。`test_migrate_core_adds_task_kind_column_
+    and_table_to_old_db` と同じ流儀）。
+    """
+    home = tmp_path / "old_home_recipe_category_migrate"
+    _make_old_chef_recipe_db(home)
+
+    db_mod.migrate_core(home)
+
+    conn = db_mod.connect(home)
+    try:
+        cols = {r["name"] for r in conn.execute("PRAGMA table_info(chef_recipe_meta)").fetchall()}
+        assert {"category", "main_ingredient", "cuisine"} <= cols
+    finally:
+        conn.close()
+
+
+def test_init_on_old_recipe_db_is_idempotent_run_twice(tmp_path: Path) -> None:
+    home = tmp_path / "old_home_recipe_category_twice"
+    _make_old_chef_recipe_db(home)
+
+    db_mod.init(home)
+    db_mod.init(home)  # 2回目もエラーにならない
+
+    conn = db_mod.connect(home)
+    try:
+        n = conn.execute("SELECT COUNT(*) AS n FROM chef_recipe_meta").fetchone()["n"]
+        assert n == 1  # 二重に増えていない
+    finally:
+        conn.close()
+
+
 def test_migrate_core_does_not_resurrect_archived_kinds(home, conn) -> None:
     """隠した種類を移行が復活させない（seed は「表が完全に空」のときだけ）。"""
     from manor import db as db_mod

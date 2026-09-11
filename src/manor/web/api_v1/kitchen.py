@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from typing import Literal
+
 from fastapi import FastAPI, HTTPException, Request
 from pydantic import BaseModel, Field
 
@@ -83,12 +85,24 @@ class RecipeMetaRequest(BaseModel):
     rating: int | None = None
     memo: str | None = None
     favorite: bool | None = None
+    category: str | None = None
+    main_ingredient: str | None = None
+    cuisine: str | None = None
 
 
 class RecipeImportRequest(BaseModel):
-    """ADR-015 D2・D3。`url` を受け、**保存しない**下書きを返す。"""
+    """ADR-015 D2・D3・D7。`url` を受け、**保存しない**下書きを返す。
+    `mode` の既定は `"auto"`（自動抽出。速い・外部を呼ばない）。
+    """
 
     url: str = Field(..., min_length=1)
+    mode: Literal["auto", "claude"] = "auto"
+
+
+class RecipeRefineRequest(BaseModel):
+    """ADR-015 D7-2。自動抽出の下書きを Claude で整える。**保存しない**。"""
+
+    recipe: dict = Field(default_factory=dict)
 
 
 class CookSessionStartRequest(BaseModel):
@@ -215,13 +229,37 @@ def register(app: FastAPI, ctx: WebContext) -> None:
 
     @app.get("/api/v1/kitchen/recipes")
     def recipes_list(
-        q: str | None = None, tag: str | None = None, favorite: bool | None = None
-    ) -> list[dict[str, object]]:
+        q: str | None = None,
+        tag: str | None = None,
+        favorite: bool | None = None,
+        category: str | None = None,
+        main_ingredient: str | None = None,
+        cuisine: str | None = None,
+        sort: str = "recent",
+    ) -> dict[str, object]:
         from ...staff.chef import recipes as chef_recipes
 
         with open_conn(ctx) as conn:
             _require_chef_recipes(conn)
-            return chef_recipes.list_recipes(conn, q=q, tag=tag, favorite=favorite)
+            try:
+                items = chef_recipes.list_recipes(
+                    conn, q=q, tag=tag, favorite=favorite, category=category,
+                    main_ingredient=main_ingredient, cuisine=cuisine, sort=sort,
+                )
+            except ManorError as exc:
+                raise manor_error_to_http(exc)
+            return {"items": items}
+
+    @app.get("/api/v1/kitchen/recipes/facets")
+    def recipes_facets() -> dict[str, object]:
+        """一覧の chip 列用の集計（ADR-015 D9追補）。**`{recipe_id}` より前に登録する**
+        ——さもないと `facets` が `int` の `recipe_id` に化けようとして 422 になる。
+        """
+        from ...staff.chef import recipes as chef_recipes
+
+        with open_conn(ctx) as conn:
+            _require_chef_recipes(conn)
+            return chef_recipes.facets(conn)
 
     @app.get("/api/v1/kitchen/recipes/{recipe_id}")
     def recipe_get(recipe_id: int) -> dict[str, object]:
@@ -300,18 +338,34 @@ def register(app: FastAPI, ctx: WebContext) -> None:
 
     @app.post("/api/v1/kitchen/recipes/import")
     def recipe_import_from_url(body: RecipeImportRequest) -> dict[str, object]:
-        """**保存しない。** 下書きを返すだけ（登録は `POST /api/v1/kitchen/recipes`）。"""
+        """**保存しない。** 下書きを返すだけ（登録は `POST /api/v1/kitchen/recipes`）。
+        `mode` の既定は `"auto"`（ADR-015 D7。自動抽出を先に）。
+        """
         from ...staff.chef import recipe_import as chef_recipe_import
 
         with open_conn(ctx) as conn:
             _require_chef_recipes(conn)
         try:
-            result = chef_recipe_import.import_from_url(body.url)
+            result = chef_recipe_import.import_from_url(body.url, mode=body.mode)
         except ManorError as exc:
             raise manor_error_to_http(exc)
         if not result.get("ok"):
             raise HTTPException(status_code=502, detail=str(result.get("reason") or ""))
-        return {"recipe": result["recipe"], "warnings": result.get("warnings") or []}
+        return {
+            "recipe": result["recipe"],
+            "method": result.get("method", ""),
+            "warnings": result.get("warnings") or [],
+        }
+
+    @app.post("/api/v1/kitchen/recipes/refine")
+    def recipe_refine(body: RecipeRefineRequest) -> dict[str, object]:
+        """ADR-015 D7-2。自動抽出の下書きを Claude で整える。**保存しない**。"""
+        from ...staff.chef import recipe_import as chef_recipe_import
+
+        result = chef_recipe_import.refine_with_claude(body.recipe)
+        if not result.get("ok"):
+            raise HTTPException(status_code=502, detail=str(result.get("reason") or ""))
+        return {"recipe": result["recipe"], "method": "claude", "warnings": result.get("warnings") or []}
 
     @app.post("/api/v1/kitchen/recipes/{recipe_id}/estimate-nutrition")
     def recipe_estimate_nutrition(recipe_id: int) -> dict[str, object]:

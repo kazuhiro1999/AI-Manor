@@ -51,6 +51,45 @@ def ingredient_categories(path: Path | None = None) -> dict[str, list[str]]:
     return dict(lex.get("ingredient_categories", {}))  # type: ignore[arg-type]
 
 
+# --- レシピ帳の分類3軸（ADR-015 D9。語彙の唯一の出どころは lexicon.toml） -----------
+
+
+def recipe_category_values(path: Path | None = None) -> list[str]:
+    """`category` の語彙（「その他」を含む）。"""
+    lex = load_lexicon(path)
+    return list(lex.get("recipe_category", {}).get("values", []))  # type: ignore[union-attr]
+
+
+def recipe_category_cues(path: Path | None = None) -> dict[str, list[str]]:
+    """`category` の自動推定の手がかり語 → キーワード一覧。"""
+    lex = load_lexicon(path)
+    return dict(lex.get("recipe_category_cues", {}))  # type: ignore[arg-type]
+
+
+def recipe_main_ingredient_values(path: Path | None = None) -> list[str]:
+    """`main_ingredient` の語彙（「その他」を含む）。"""
+    lex = load_lexicon(path)
+    return list(lex.get("recipe_main_ingredient", {}).get("values", []))  # type: ignore[union-attr]
+
+
+def recipe_main_ingredient_cues(path: Path | None = None) -> dict[str, list[str]]:
+    """`main_ingredient` の自動推定の手がかり語 → キーワード一覧。"""
+    lex = load_lexicon(path)
+    return dict(lex.get("recipe_main_ingredient_cues", {}))  # type: ignore[arg-type]
+
+
+def recipe_cuisine_values(path: Path | None = None) -> list[str]:
+    """`cuisine` の語彙（「その他」を含む）。"""
+    lex = load_lexicon(path)
+    return list(lex.get("recipe_cuisine", {}).get("values", []))  # type: ignore[union-attr]
+
+
+def recipe_cuisine_cues(path: Path | None = None) -> dict[str, list[str]]:
+    """`cuisine` の自動推定の手がかり語 → キーワード一覧。"""
+    lex = load_lexicon(path)
+    return dict(lex.get("recipe_cuisine_cues", {}))  # type: ignore[arg-type]
+
+
 # --- 検証（CLI が受ける形式はここで縛る。日付の“解決”は秘書の道具の領分） -------------
 
 

@@ -427,7 +427,9 @@ def _require_chef_recipe_table(conn: sqlite3.Connection) -> None:
 def cmd_recipe_list(conn, home, args) -> object:
     _require_chef_recipe_table(conn)
     rows = recipes.list_recipes(
-        conn, q=args.q, tag=args.tag, favorite=args.favorite, include_archived=args.archived
+        conn, q=args.q, tag=args.tag, favorite=args.favorite,
+        category=args.category, main_ingredient=args.main_ingredient, cuisine=args.cuisine,
+        sort=args.sort, include_archived=args.archived,
     )
     if args.json:
         return rows
@@ -506,6 +508,12 @@ def cmd_recipe_set(conn, home, args) -> object:
         kwargs["memo"] = args.memo
     if args.favorite is not None:
         kwargs["favorite"] = args.favorite
+    if args.category is not None:
+        kwargs["category"] = args.category
+    if args.main_ingredient is not None:
+        kwargs["main_ingredient"] = args.main_ingredient
+    if args.cuisine is not None:
+        kwargs["cuisine"] = args.cuisine
     result = recipes.set_meta(conn, args.id, **kwargs)
     if args.json:
         return result
@@ -521,9 +529,10 @@ def cmd_recipe_archive(conn, home, args) -> object:
 
 
 def cmd_recipe_import(conn, home, args) -> object:
-    """ADR-015 R2。既定は**下書きを JSON で出す**（`--save` が無ければ登録しない）。"""
+    """ADR-015 R2・D7。既定は `--mode auto`（自動抽出。速い・外部を呼ばない）で
+    **下書きを JSON で出す**（`--save` が無ければ登録しない）。"""
     _require_chef_recipe_table(conn)
-    result = recipe_import.import_from_url(args.url)
+    result = recipe_import.import_from_url(args.url, mode=args.mode)
     if not result.get("ok"):
         raise ManorError(
             f"レシピの取り込みに失敗しました: {result.get('reason', '')}",
@@ -531,16 +540,17 @@ def cmd_recipe_import(conn, home, args) -> object:
             params={"reason": result.get("reason", "")},
         )
     recipe = result["recipe"]
+    method = result.get("method", "")
     warnings = result.get("warnings") or []
     if args.save:
         recipe_id = recipes.add(conn, recipe)
         if args.json:
-            return {"id": recipe_id, "warnings": warnings}
+            return {"id": recipe_id, "method": method, "warnings": warnings}
         return i18n.t("chef.recipe.import.saved", id=recipe_id)
     # 保存しないときは下書きをそのまま返す（`_emit_result` が文字列以外は JSON で
     # 出す——ADR-015 D2「編集できる下書き」は構造化データそのものなので、
     # 1行の人間向け文にする意味が薄い。`--json` の有無を問わない）。
-    return {"recipe": recipe, "warnings": warnings}
+    return {"recipe": recipe, "method": method, "warnings": warnings}
 
 
 def cmd_recipe_estimate(conn, home, args) -> object:
@@ -685,6 +695,10 @@ def register(subparsers) -> None:
     p = recipe_sub.add_parser("list")
     p.add_argument("--q")
     p.add_argument("--tag")
+    p.add_argument("--category")
+    p.add_argument("--main-ingredient", dest="main_ingredient")
+    p.add_argument("--cuisine")
+    p.add_argument("--sort", choices=list(recipes.VALID_SORT), default="recent")
     fav_group = p.add_mutually_exclusive_group()
     fav_group.add_argument("--favorite", dest="favorite", action="store_true")
     fav_group.add_argument("--no-favorite", dest="favorite", action="store_false")
@@ -714,6 +728,9 @@ def register(subparsers) -> None:
     p.add_argument("--tags")
     p.add_argument("--rating", type=int)
     p.add_argument("--memo")
+    p.add_argument("--category")
+    p.add_argument("--main-ingredient", dest="main_ingredient")
+    p.add_argument("--cuisine")
     fav_group2 = p.add_mutually_exclusive_group()
     fav_group2.add_argument("--favorite", dest="favorite", action="store_true")
     fav_group2.add_argument("--no-favorite", dest="favorite", action="store_false")
@@ -728,9 +745,10 @@ def register(subparsers) -> None:
     p.add_argument("--no-render", action="store_true")
     p.set_defaults(func=cmd_recipe_archive, is_write=True)
 
-    # --- recipe import/estimate（ADR-015 R2） ---
+    # --- recipe import/estimate（ADR-015 R2・D7） ---
     p = recipe_sub.add_parser("import")
     p.add_argument("url")
+    p.add_argument("--mode", choices=["auto", "claude"], default="auto")
     p.add_argument("--save", action="store_true")
     p.add_argument("--json", action="store_true")
     p.add_argument("--no-render", action="store_true")

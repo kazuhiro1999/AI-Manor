@@ -52,6 +52,8 @@ manor chef taste show / manor chef taste set <key> "<value>"
 manor chef recipe list [--q ..] [--tag ..] [--favorite/--no-favorite] [--archived]
 manor chef recipe show <id>
 manor chef recipe add --file <recipe.json>                   契約 JSON（ADR-015 §3）を検算して登録
+manor chef recipe import <url> [--mode auto|claude] [--save]   URL から下書き（自動抽出。--mode claude で claude -p）
+manor chef recipe estimate <id>                              栄養を推定して meta へ（押したときだけ）
 manor chef recipe set <id> [--kcal ..] [--tags a,b] [--rating 1-5] [--memo ..] [--favorite/--no-favorite]
 manor chef recipe archive <id>
 ```

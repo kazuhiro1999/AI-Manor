@@ -28,6 +28,8 @@ from typing import Any
 from manor import util
 from manor.errors import ManorError
 
+from . import ops
+
 #: `steps[].completion` の語彙（ADR-015 §3）。
 VALID_COMPLETION: tuple[str, ...] = ("manual", "auto", "confirm")
 
@@ -36,6 +38,9 @@ VALID_NUTRITION_SOURCE: tuple[str, ...] = ("", "estimated", "manual")
 
 #: `chef_cook_event.type` の語彙（ADR-015 D3）。
 VALID_EVENT_TYPES: tuple[str, ...] = ("next", "prev", "timer_start", "done")
+
+#: `list_recipes(sort=...)` の語彙（ADR-015 D9 追補）。
+VALID_SORT: tuple[str, ...] = ("recent", "cooked", "title")
 
 _TITLE_MAX = 12
 _INSTRUCTION_MAX = 60
@@ -208,6 +213,28 @@ def validate(recipe: dict) -> dict:
     }
 
 
+def classify(recipe: dict, *, site_tags: list[str] | None = None) -> dict[str, str]:
+    """材料名・題名・タグ（`site_tags` にサイト側のカテゴリ・keywords を渡してよい）から
+    分類3軸を推定する（ADR-015 D9）。当たらなければ空文字——手がかり語は
+    `lexicon.toml` が唯一の出どころ（`ops.recipe_*_cues`）。
+    """
+    parts: list[str] = [str(recipe.get("title") or "")]
+    for ing in recipe.get("ingredients") or []:
+        if isinstance(ing, dict):
+            parts.append(str(ing.get("name") or ""))
+    meta = recipe.get("meta")
+    if isinstance(meta, dict):
+        parts.extend(str(t) for t in (meta.get("tags") or []))
+    parts.extend(str(t) for t in (site_tags or []))
+    haystack = " ".join(parts)
+
+    return {
+        "category": ops.classify_dish_type(haystack, ops.recipe_category_cues()) or "",
+        "main_ingredient": ops.classify_dish_type(haystack, ops.recipe_main_ingredient_cues()) or "",
+        "cuisine": ops.classify_dish_type(haystack, ops.recipe_cuisine_cues()) or "",
+    }
+
+
 def _body_json(v: dict) -> str:
     return json.dumps(
         {"ingredients": v["ingredients"], "tools": v["tools"], "phases": v["phases"], "steps": v["steps"]},
@@ -230,12 +257,14 @@ def _default_meta() -> dict[str, object]:
         "kcal": None, "protein_g": None, "fat_g": None, "carb_g": None, "salt_g": None,
         "nutrition_source": "", "tags": [], "rating": None, "memo": "",
         "favorite": False, "times_cooked": 0, "last_cooked_at": None,
+        "category": "", "main_ingredient": "", "cuisine": "",
     }
 
 
 def _meta_dict(row: sqlite3.Row | None) -> dict[str, object]:
     if row is None:
         return _default_meta()
+    row_keys = row.keys()
     return {
         "kcal": row["kcal"], "protein_g": row["protein_g"], "fat_g": row["fat_g"],
         "carb_g": row["carb_g"], "salt_g": row["salt_g"],
@@ -244,6 +273,11 @@ def _meta_dict(row: sqlite3.Row | None) -> dict[str, object]:
         "rating": row["rating"], "memo": row["memo"],
         "favorite": bool(row["favorite"]), "times_cooked": row["times_cooked"],
         "last_cooked_at": row["last_cooked_at"],
+        # 追補（ADR-015 D9）より前に作られた行の想定は無い（列は db.migrate_core/init が
+        # 先に足す）が、念のため無ければ空文字にする。
+        "category": row["category"] if "category" in row_keys else "",
+        "main_ingredient": row["main_ingredient"] if "main_ingredient" in row_keys else "",
+        "cuisine": row["cuisine"] if "cuisine" in row_keys else "",
     }
 
 
@@ -270,7 +304,14 @@ def _to_contract(conn: sqlite3.Connection, row: sqlite3.Row) -> dict[str, object
 
 def add(conn: sqlite3.Connection, recipe: dict) -> int:
     """検算して登録する。`chef_recipe_meta` は空の行を添えて作る（うちの値は
-    `set_meta` から後で入れる。ADR-015 D1「本体とうちの値を分ける」）。"""
+    `set_meta` から後で入れる。ADR-015 D1「本体とうちの値を分ける」）。
+
+    **ただし** 渡した `recipe` に `meta.category`/`main_ingredient`/`cuisine`/`tags` が
+    あれば、登録と同時にそこへ入れる（ADR-015 D9 追補。取り込みの下書きは
+    `recipe_import.extract_auto()` が `classify()` と出典のタグで `meta` を埋めて返す
+    ——編集して「登録」まで1つのフォームで完結させるための橋渡しで、`meta` の他の欄
+    （栄養・評価・メモ・favorite）は従来どおり `set_meta` の領分のまま触らない）。
+    """
     v = validate(recipe)
     now = util.now()
     cur = conn.execute(
@@ -289,6 +330,16 @@ def add(conn: sqlite3.Connection, recipe: dict) -> int:
         " VALUES (?, '', '[]', 0, 0)",
         (recipe_id,),
     )
+    meta_seed = recipe.get("meta")
+    if isinstance(meta_seed, dict):
+        seed_kwargs: dict[str, object] = {}
+        for key in ("category", "main_ingredient", "cuisine"):
+            if meta_seed.get(key):
+                seed_kwargs[key] = meta_seed[key]
+        if meta_seed.get("tags"):
+            seed_kwargs["tags"] = meta_seed["tags"]
+        if seed_kwargs:
+            set_meta(conn, recipe_id, **seed_kwargs)
     return recipe_id
 
 
@@ -303,18 +354,34 @@ def list_recipes(
     q: str | None = None,
     tag: str | None = None,
     favorite: bool | None = None,
+    category: str | None = None,
+    main_ingredient: str | None = None,
+    cuisine: str | None = None,
+    sort: str = "recent",
     include_archived: bool = False,
 ) -> list[dict[str, object]]:
-    """一覧（ADR-015 D3: title・hero・total_minutes・tags・favorite・times_cooked）。
+    """一覧（ADR-015 D3・D9追補）。各行:
+    `id・title・hero_image・total_minutes・servings・tags・favorite・times_cooked・
+    last_cooked_at・kcal・category・main_ingredient・cuisine・updated_at`。
+
+    `q` は題名**と材料名**（`body` の JSON を読んで突き合わせる）。`sort` は
+    `recent`（既定。`updated_at` 降順）・`cooked`（`last_cooked_at` 降順。NULL は末尾）・
+    `title`（あいうえお順）。
 
     突き合わせは Python 側で行う（`chef_pantry` の在庫規模と同じ想定——1人分のレシピ帳が
     数千件を超えることは無いので、SQL の JSON 関数に頼らず素直に読む）。
     """
+    if sort not in VALID_SORT:
+        raise ManorError(
+            f"sort は {'/'.join(VALID_SORT)} のいずれかです: {sort!r}", code=2
+        )
+
     rows = conn.execute(
         "SELECT r.*, m.tags AS meta_tags, m.favorite AS meta_favorite,"
-        " m.times_cooked AS meta_times_cooked"
+        " m.times_cooked AS meta_times_cooked, m.last_cooked_at AS meta_last_cooked_at,"
+        " m.kcal AS meta_kcal, m.category AS meta_category,"
+        " m.main_ingredient AS meta_main_ingredient, m.cuisine AS meta_cuisine"
         " FROM chef_recipe r LEFT JOIN chef_recipe_meta m ON m.recipe_id = r.id"
-        " ORDER BY r.id DESC"
     ).fetchall()
 
     out: list[dict[str, object]] = []
@@ -323,24 +390,95 @@ def list_recipes(
             continue
         tags = json.loads(row["meta_tags"]) if row["meta_tags"] else []
         fav = bool(row["meta_favorite"]) if row["meta_favorite"] is not None else False
-        if q and q.lower() not in str(row["title"]).lower():
-            continue
+        row_category = row["meta_category"] or ""
+        row_main_ingredient = row["meta_main_ingredient"] or ""
+        row_cuisine = row["meta_cuisine"] or ""
+
+        if q:
+            body = json.loads(row["body"])
+            ingredient_names = " ".join(
+                str(ing.get("name", "")) for ing in body.get("ingredients") or []
+            )
+            haystack = f"{row['title']} {ingredient_names}".lower()
+            if q.lower() not in haystack:
+                continue
         if tag and tag not in tags:
             continue
         if favorite is not None and fav != bool(favorite):
             continue
+        if category and row_category != category:
+            continue
+        if main_ingredient and row_main_ingredient != main_ingredient:
+            continue
+        if cuisine and row_cuisine != cuisine:
+            continue
+
         out.append(
             {
                 "id": row["id"],
                 "title": row["title"],
                 "hero_image": row["hero_image"],
                 "total_minutes": row["total_minutes"],
+                "servings": row["servings"],
                 "tags": tags,
                 "favorite": fav,
                 "times_cooked": row["meta_times_cooked"] or 0,
+                "last_cooked_at": row["meta_last_cooked_at"],
+                "kcal": row["meta_kcal"],
+                "category": row_category,
+                "main_ingredient": row_main_ingredient,
+                "cuisine": row_cuisine,
+                "updated_at": row["updated_at"],
             }
         )
+
+    if sort == "title":
+        out.sort(key=lambda r: str(r["title"]))
+    elif sort == "cooked":
+        # last_cooked_at は ISO8601（辞書順=時系列順）。NULL は "" として最小値扱いにし、
+        # reverse=True で末尾へ回す。
+        out.sort(key=lambda r: str(r["last_cooked_at"] or ""), reverse=True)
+    else:  # "recent"（既定）
+        out.sort(key=lambda r: str(r["updated_at"]), reverse=True)
+
     return out
+
+
+def facets(conn: sqlite3.Connection) -> dict[str, list[dict[str, object]]]:
+    """一覧の chip 列用の集計（ADR-015 D9追補）。**畳んだもの（archived）を除いた件数**。
+
+    返り値: `{"category":[{"value","count"}],"main_ingredient":[...],"cuisine":[...],
+    "tags":[...]}`。件数の多い順（同数は値の辞書順）。
+    """
+    rows = conn.execute(
+        "SELECT m.category AS category, m.main_ingredient AS main_ingredient,"
+        " m.cuisine AS cuisine, m.tags AS tags"
+        " FROM chef_recipe r LEFT JOIN chef_recipe_meta m ON m.recipe_id = r.id"
+        " WHERE r.archived_at IS NULL"
+    ).fetchall()
+
+    def _count(values: list[str]) -> list[dict[str, object]]:
+        counts: dict[str, int] = {}
+        for v in values:
+            if not v:
+                continue
+            counts[v] = counts.get(v, 0) + 1
+        return sorted(
+            ({"value": k, "count": n} for k, n in counts.items()),
+            key=lambda d: (-int(d["count"]), str(d["value"])),
+        )
+
+    tags: list[str] = []
+    for row in rows:
+        if row["tags"]:
+            tags.extend(json.loads(row["tags"]))
+
+    return {
+        "category": _count([row["category"] or "" for row in rows]),
+        "main_ingredient": _count([row["main_ingredient"] or "" for row in rows]),
+        "cuisine": _count([row["cuisine"] or "" for row in rows]),
+        "tags": _count(tags),
+    }
 
 
 def update(conn: sqlite3.Connection, recipe_id: int, recipe: dict) -> dict[str, object]:
@@ -373,6 +511,9 @@ def set_meta(
     rating: Any = _UNSET,
     memo: Any = _UNSET,
     favorite: Any = _UNSET,
+    category: Any = _UNSET,
+    main_ingredient: Any = _UNSET,
+    cuisine: Any = _UNSET,
 ) -> dict[str, object]:
     """うちの値の部分更新。**渡した欄だけ**書き換える（渡さなかった引数は既定値の
     `_UNSET` のままなので、SQL の SET句にも入らない）。
@@ -380,6 +521,10 @@ def set_meta(
     栄養の数値（`kcal`/`protein_g`/`fat_g`/`carb_g`/`salt_g`）を1つでも手で渡し、
     かつ `nutrition_source` を明示していなければ、`nutrition_source` を自動で
     `'manual'` にする（ADR-015 D1「栄養の数値を手で渡したら manual」）。
+
+    `category`/`main_ingredient`/`cuisine` は語彙外なら `ManorError(code=2)`
+    （ADR-015 D9。語彙の唯一の出どころは `lexicon.toml`＝`ops.recipe_*_values()`）。
+    空文字は「未分類に戻す」として常に許す。
     """
     _recipe_row(conn, recipe_id)
     conn.execute(
@@ -410,12 +555,36 @@ def set_meta(
             raise ManorError("tags はリストである必要があります", code=2)
         tags = [str(t) for t in tags]
 
+    if category is not _UNSET and category:
+        values = ops.recipe_category_values()
+        if category not in values:
+            raise ManorError(
+                f"category は次のいずれかにしてください: {', '.join(values)}（受け取った値: {category!r}）",
+                code=2,
+            )
+    if main_ingredient is not _UNSET and main_ingredient:
+        values = ops.recipe_main_ingredient_values()
+        if main_ingredient not in values:
+            raise ManorError(
+                f"main_ingredient は次のいずれかにしてください: {', '.join(values)}"
+                f"（受け取った値: {main_ingredient!r}）",
+                code=2,
+            )
+    if cuisine is not _UNSET and cuisine:
+        values = ops.recipe_cuisine_values()
+        if cuisine not in values:
+            raise ManorError(
+                f"cuisine は次のいずれかにしてください: {', '.join(values)}（受け取った値: {cuisine!r}）",
+                code=2,
+            )
+
     columns: list[str] = []
     params: list[object] = []
     for col, value in (
         ("kcal", kcal), ("protein_g", protein_g), ("fat_g", fat_g),
         ("carb_g", carb_g), ("salt_g", salt_g), ("nutrition_source", nutrition_source),
-        ("memo", memo),
+        ("memo", memo), ("category", category), ("main_ingredient", main_ingredient),
+        ("cuisine", cuisine),
     ):
         if value is not _UNSET:
             columns.append(col)

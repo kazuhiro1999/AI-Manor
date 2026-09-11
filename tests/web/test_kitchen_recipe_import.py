@@ -66,7 +66,51 @@ def test_import_returns_draft_without_saving(conn, home: Path, monkeypatch: pyte
     assert body["recipe"]["title"] == "取り込み品"
     assert body["warnings"] == []
     # 保存していない(一覧に出てこない)。
-    assert client.get("/api/v1/kitchen/recipes").json() == []
+    assert client.get("/api/v1/kitchen/recipes").json() == {"items": []}
+
+
+def test_import_defaults_to_auto_mode(conn, home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    seen_modes: list[str] = []
+
+    def fake_import(url, *, mode="auto", **kw):
+        seen_modes.append(mode)
+        return {"ok": True, "recipe": _draft_recipe(), "method": "generic", "warnings": [], "reason": ""}
+
+    monkeypatch.setattr(recipe_import_mod, "import_from_url", fake_import)
+    client = make_client(home)
+
+    res = client.post("/api/v1/kitchen/recipes/import", json={"url": "https://example.com/recipe/1"})
+
+    assert res.status_code == 200
+    assert seen_modes == ["auto"]
+    assert res.json()["method"] == "generic"
+
+
+def test_import_can_request_claude_mode(conn, home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    seen_modes: list[str] = []
+
+    def fake_import(url, *, mode="auto", **kw):
+        seen_modes.append(mode)
+        return {"ok": True, "recipe": _draft_recipe(), "method": "claude", "warnings": [], "reason": ""}
+
+    monkeypatch.setattr(recipe_import_mod, "import_from_url", fake_import)
+    client = make_client(home)
+
+    res = client.post(
+        "/api/v1/kitchen/recipes/import", json={"url": "https://example.com/recipe/1", "mode": "claude"}
+    )
+
+    assert res.status_code == 200
+    assert seen_modes == ["claude"]
+    assert res.json()["method"] == "claude"
+
+
+def test_import_rejects_unknown_mode_as_422(conn, home: Path) -> None:
+    client = make_client(home)
+    res = client.post(
+        "/api/v1/kitchen/recipes/import", json={"url": "https://example.com/recipe/1", "mode": "magic"}
+    )
+    assert res.status_code == 422
 
 
 def test_import_reports_warnings_from_overflowing_steps(
@@ -180,3 +224,37 @@ def test_estimate_nutrition_requires_writable(conn, home: Path, monkeypatch: pyt
 
     res = client.post(f"/api/v1/kitchen/recipes/{recipe_id}/estimate-nutrition")
     assert res.status_code == 403
+
+
+# --- refine（D7-2。保存しない） ------------------------------------------------------------
+
+
+def test_refine_returns_tightened_draft(conn, home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    refined = _draft_recipe()
+    monkeypatch.setattr(
+        recipe_import_mod, "refine_with_claude",
+        lambda recipe, **kw: {"ok": True, "recipe": refined, "warnings": [], "reason": ""},
+    )
+    client = make_client(home)
+
+    res = client.post("/api/v1/kitchen/recipes/refine", json={"recipe": _draft_recipe()})
+
+    assert res.status_code == 200
+    body = res.json()
+    assert body["method"] == "claude"
+    assert body["recipe"]["title"] == "取り込み品"
+    # 保存していない(一覧に出てこない)。
+    assert client.get("/api/v1/kitchen/recipes").json() == {"items": []}
+
+
+def test_refine_claude_missing_is_502(conn, home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        recipe_import_mod, "refine_with_claude",
+        lambda recipe, **kw: {"ok": False, "recipe": None, "warnings": [], "reason": "claude が見つかりません"},
+    )
+    client = make_client(home)
+
+    res = client.post("/api/v1/kitchen/recipes/refine", json={"recipe": _draft_recipe()})
+
+    assert res.status_code == 502
+    assert "claude" in res.json()["detail"]

@@ -263,7 +263,9 @@ LINE_ALLOWLIST: set[str] = {
     # [データ] chef/ops.py: validate_date の既定 field="日付"。tests/staff/test_chef.py が
     # field 省略で呼ぶため既定値は残すが、エラーの ManorError 側では呼び出し元が
     # field_key を渡して訳している(cli.py 側からの呼び出しはすべて明示的)。
-    "staff/chef/ops.py:57",
+    # ⚠ 2026-09-12（ADR-015 D9追補）: レシピ分類3軸の lexicon アクセサを validate_date
+    # より前に足したので行がずれた（57 → 96）。
+    "staff/chef/ops.py:96",
     # [データ] secretary/ops.py: 曜日の対訳表・相対日付(今日/明日/明後日)の受理語彙は
     # 「主人が入力する側」の語彙(ADR-002 §6)であって、出力の文言ではない。
     "staff/secretary/ops.py:26", "staff/secretary/ops.py:33",
@@ -315,28 +317,52 @@ LINE_ALLOWLIST: set[str] = {
     # 読み取るための正規表現。ランナー側の出力形式そのものであって manor の文言では
     # ない。
     "gate.py:91",
-    # [データ] staff/chef/recipe_import.py（ADR-015 R2・2026-09-12）: `claude -p` へ渡す
-    # 構造化・栄養推定の指示文面そのもの（`STRUCTURE_PROMPT_TEMPLATE`/`STRUCTURE_RETRY_
-    # SUFFIX`/`NUTRITION_PROMPT_TEMPLATE`。端末には出ない。calendar.py の
+    # [データ] staff/chef/recipe_import.py（ADR-015 R2・2026-09-12。D7/D8/D9追補、
+    # および同日の追補2（3つの取りこぼし: タグ混入・題名の尾・工程写真の穴埋め）で
+    # 行が大きくずれたため、その都度 `_string_constant_offenders` で洗い直した）:
+    # `claude -p` へ渡す構造化・整形（D7-2）・栄養推定の指示文面そのもの
+    # （`STRUCTURE_PROMPT_TEMPLATE`/`STRUCTURE_RETRY_SUFFIX`/`REFINE_PROMPT_TEMPLATE`/
+    # `NUTRITION_PROMPT_TEMPLATE`。端末には出ない。calendar.py の
     # PUSH_PROMPT_TEMPLATE/EXTRACT_PROMPT_TEMPLATE と同じ扱い）と、fetch_page/
-    # _call_claude_for_json/_length_violations の `reason` 文字列（calendar.fetch_ics の
-    # `reason` と同じ「共有の診断文字列」の扱い。CLI/Web の呼び出し側が包む文だけ訳す）。
+    # _call_claude_for_json/_length_violations/_resolve_hero_image/extract_auto/
+    # _fill_missing_step_images_from_html の `reason`/`warnings` 文字列
+    # （calendar.fetch_ics の `reason` と同じ「共有の診断文字列」の扱い。CLI/Web の
+    # 呼び出し側が包む文だけ訳す）。
     # ⚠ 行番号で固定してあるので、上に行を足すとここがずれる。ずれたら
     #   `_string_constant_offenders` に直接聞いて入れ替えること（手で数えない）。
-    "staff/chef/recipe_import.py:126", "staff/chef/recipe_import.py:128",
-    "staff/chef/recipe_import.py:130", "staff/chef/recipe_import.py:132",
-    "staff/chef/recipe_import.py:137", "staff/chef/recipe_import.py:343",
-    "staff/chef/recipe_import.py:359", "staff/chef/recipe_import.py:366",
-    "staff/chef/recipe_import.py:368", "staff/chef/recipe_import.py:370",
-    "staff/chef/recipe_import.py:375", "staff/chef/recipe_import.py:383",
-    "staff/chef/recipe_import.py:418", "staff/chef/recipe_import.py:427",
-    "staff/chef/recipe_import.py:429", "staff/chef/recipe_import.py:432",
-    "staff/chef/recipe_import.py:436", "staff/chef/recipe_import.py:448",
-    "staff/chef/recipe_import.py:456", "staff/chef/recipe_import.py:459",
-    "staff/chef/recipe_import.py:482", "staff/chef/recipe_import.py:483",
-    "staff/chef/recipe_import.py:488", "staff/chef/recipe_import.py:489",
-    "staff/chef/recipe_import.py:603", "staff/chef/recipe_import.py:627",
-    "staff/chef/recipe_import.py:629", "staff/chef/recipe_import.py:665",
+    "staff/chef/recipe_import.py:129", "staff/chef/recipe_import.py:131",
+    "staff/chef/recipe_import.py:133", "staff/chef/recipe_import.py:135",
+    "staff/chef/recipe_import.py:140", "staff/chef/recipe_import.py:426",
+    "staff/chef/recipe_import.py:541", "staff/chef/recipe_import.py:542",
+    "staff/chef/recipe_import.py:613", "staff/chef/recipe_import.py:614",
+    "staff/chef/recipe_import.py:646", "staff/chef/recipe_import.py:741",
+    "staff/chef/recipe_import.py:746", "staff/chef/recipe_import.py:769",
+    "staff/chef/recipe_import.py:813", "staff/chef/recipe_import.py:829",
+    "staff/chef/recipe_import.py:836", "staff/chef/recipe_import.py:838",
+    "staff/chef/recipe_import.py:840", "staff/chef/recipe_import.py:845",
+    "staff/chef/recipe_import.py:853", "staff/chef/recipe_import.py:888",
+    "staff/chef/recipe_import.py:897", "staff/chef/recipe_import.py:899",
+    "staff/chef/recipe_import.py:902", "staff/chef/recipe_import.py:906",
+    "staff/chef/recipe_import.py:920", "staff/chef/recipe_import.py:928",
+    "staff/chef/recipe_import.py:931", "staff/chef/recipe_import.py:954",
+    "staff/chef/recipe_import.py:955", "staff/chef/recipe_import.py:960",
+    "staff/chef/recipe_import.py:961", "staff/chef/recipe_import.py:1038",
+    "staff/chef/recipe_import.py:1176", "staff/chef/recipe_import.py:1200",
+    "staff/chef/recipe_import.py:1202", "staff/chef/recipe_import.py:1238",
+    # [データ] staff/chef/recipe_shaping.py（ADR-015 D7・2026-09-12）: 下ごしらえ語
+    # （`_PREP_WORDS`）・既定の phase 見出し（`_PHASE_DEFS` の「下ごしらえ」「調理」
+    # 「仕上げ」）は自動抽出が機械的に使う手がかり語・レシピ本体に残る見出し文字列
+    # ——画面の文言ではなくデータ（`lexicon.toml` の分類語彙と同じ扱い）。
+    "staff/chef/recipe_shaping.py:25", "staff/chef/recipe_shaping.py:26",
+    "staff/chef/recipe_shaping.py:34", "staff/chef/recipe_shaping.py:35",
+    "staff/chef/recipe_shaping.py:36", "staff/chef/recipe_shaping.py:82",
+    # [データ] staff/chef/recipe_sites/cookpad.py（ADR-015 D7・2026-09-12）:
+    # 「作り方」「手順」はサイトの見出し語を拾うための正規表現の一部（データ）。
+    "staff/chef/recipe_sites/cookpad.py:25",
+    # [データ] staff/chef/recipe_sites/generic.py（ADR-015 D7・2026-09-12）:
+    # 見出し語の手がかり（「材料」「作り方」「手順」等）——lexicon.toml の分類語彙と
+    # 同じ「データ」の扱いで、画面の文言ではない。
+    "staff/chef/recipe_sites/generic.py:23", "staff/chef/recipe_sites/generic.py:24",
 }
 
 

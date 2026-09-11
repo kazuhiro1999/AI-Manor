@@ -50,7 +50,11 @@ CREATE TABLE IF NOT EXISTS chef_recipe_meta (   -- うちの値。手で直し�
   memo         TEXT NOT NULL DEFAULT '',   -- 「うちは油少なめ」等
   favorite     INTEGER NOT NULL DEFAULT 0,
   times_cooked INTEGER NOT NULL DEFAULT 0,
-  last_cooked_at TEXT
+  last_cooked_at TEXT,
+  -- 分類の3軸（ADR-015 D9）。語彙は lexicon.toml が唯一の出どころ。空文字＝未分類。
+  category         TEXT NOT NULL DEFAULT '',
+  main_ingredient  TEXT NOT NULL DEFAULT '',
+  cuisine          TEXT NOT NULL DEFAULT ''
 );
 
 CREATE TABLE IF NOT EXISTS chef_cook_session (  -- XR／画面で「作り始めた」〜「作り終えた」

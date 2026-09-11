@@ -1,0 +1,51 @@
+<!--
+  ADR-015 D7 追補（2026-09-12。主人が実ページ https://oceans-nadia.com/user/253470/recipe/440737
+  を mode=auto で回した実測から）の試験用に要点だけを切り詰めた合成 HTML。
+  実物と同じく JSON-LD の Recipe と、Nadia 特有の本文 DOM（工程の写真）の**両方**を持つ
+  ——JSON-LD 経路（①）が選ばれつつ、本文側の工程写真で補う経路を試験する。
+  3つの罠を仕込んである:
+    1. recipeInstructions[].text にタグが混ざる（<a href="...">みじん切り</a>）
+    2. <title> にサイト名の尾が付く（JSON-LD の name は綺麗なまま）
+    3. JSON-LD の HowToStep に image が無い（本文側の CookingProcess に工程数と同じ枚数がある）
+-->
+<html>
+<head><title>豚バラの生姜焼き | レシピサイトNadia風</title>
+<script type="application/ld+json">
+{"@context": "https://schema.org/", "@type": "Recipe", "name": "豚バラの生姜焼き",
+ "recipeIngredient": ["豚バラ肉 200g", "玉ねぎ 1/2個", "生姜 1かけ", "醤油 大さじ1"],
+ "recipeInstructions": [
+   {"@type": "HowToStep", "text": "豚バラ肉は一口大に切る。"},
+   {"@type": "HowToStep", "text": "玉ねぎは<a href=\"/wordlist/みじん切り\">みじん切り</a>にする。"},
+   {"@type": "HowToStep", "text": "生姜はすりおろす。"},
+   {"@type": "HowToStep", "text": "フライパンで豚肉を炒める。"},
+   {"@type": "HowToStep", "text": "玉ねぎを加えてさらに炒める。"},
+   {"@type": "HowToStep", "text": "生姜だれを絡めて仕上げる。"}
+ ],
+ "totalTime": "PT10M", "recipeYield": "2人分", "recipeCategory": "主菜", "recipeCuisine": "日本",
+ "image": ["https://asset.example-nadia.test/hero/jsonld.jpg?w=800&h=800"]}
+</script>
+</head>
+<body>
+<div class="pc_category__8mdqA"><span class="RecipeTypeBadge_staple__5l3O1">主菜</span></div>
+<h1 class="RecipeTitle_RecipeTitle__NG9RZ">豚バラの生姜焼き</h1>
+<div class="RecipeMainImage_modalImage__gctNp"><img src="https://asset.example-nadia.test/hero/jsonld.jpg?w=800&amp;h=800" width="800" height="800"/></div>
+
+<h2 class="RecipeHeading_heading__be7bg">材料<span class="RecipeHeading_bunryoYield__zSg6N">2人分</span></h2>
+<ul class="IngredientsList_list__0Zyys">
+<li><div class="IngredientsList_group__kmzYa"></div><div class="IngredientsList_ingredient__DYoCy">豚バラ肉</div><div class="IngredientsList_amount__uQJk8">200g</div></li>
+<li><div class="IngredientsList_group__kmzYa"></div><div class="IngredientsList_ingredient__DYoCy">玉ねぎ</div><div class="IngredientsList_amount__uQJk8">1/2個</div></li>
+<li><div class="IngredientsList_group__kmzYa"></div><div class="IngredientsList_ingredient__DYoCy">生姜</div><div class="IngredientsList_amount__uQJk8">1かけ</div></li>
+<li><div class="IngredientsList_group__kmzYa"></div><div class="IngredientsList_ingredient__DYoCy">醤油</div><div class="IngredientsList_amount__uQJk8">大さじ1</div></li>
+</ul>
+
+<h2 class="RecipeHeading_heading__be7bg">作り方</h2>
+<ul class="CookingProcess_list__S2P2K">
+<li><div class="CookingProcess_group__qfzPk"><span>1</span></div><div class="CookingProcess_textBox__RJVsq"><p class="CookingProcess_text__ZoCP4"><span>豚バラ肉は一口大に切る。</span></p><div class="CookingProcess_processImage__WPcFd"><img src="https://asset.example-nadia.test/step/1.jpg?w=100&amp;h=100" alt="工程1" width="100" height="100" loading="lazy"/></div></div></li>
+<li><div class="CookingProcess_group__qfzPk"><span>2</span></div><div class="CookingProcess_textBox__RJVsq"><p class="CookingProcess_text__ZoCP4"><span>玉ねぎはみじん切りにする。</span></p><div class="CookingProcess_processImage__WPcFd"><img data-src="https://asset.example-nadia.test/step/2.jpg?w=100&amp;h=100" alt="工程2" width="100" height="100" loading="lazy"/></div></div></li>
+<li><div class="CookingProcess_group__qfzPk"><span>3</span></div><div class="CookingProcess_textBox__RJVsq"><p class="CookingProcess_text__ZoCP4"><span>生姜はすりおろす。</span></p><div class="CookingProcess_processImage__WPcFd"><img src="https://asset.example-nadia.test/step/3.jpg?w=100&amp;h=100" alt="工程3" width="100" height="100" loading="lazy"/></div></div></li>
+<li><div class="CookingProcess_group__qfzPk"><span>4</span></div><div class="CookingProcess_textBox__RJVsq"><p class="CookingProcess_text__ZoCP4"><span>フライパンで豚肉を炒める。</span></p><div class="CookingProcess_processImage__WPcFd"><img src="https://asset.example-nadia.test/step/4.jpg?w=100&amp;h=100" alt="工程4" width="100" height="100" loading="lazy"/></div></div></li>
+<li><div class="CookingProcess_group__qfzPk"><span>5</span></div><div class="CookingProcess_textBox__RJVsq"><p class="CookingProcess_text__ZoCP4"><span>玉ねぎを加えてさらに炒める。</span></p><div class="CookingProcess_processImage__WPcFd"><img src="https://asset.example-nadia.test/step/5.jpg?w=100&amp;h=100" alt="工程5" width="100" height="100" loading="lazy"/></div></div></li>
+<li><div class="CookingProcess_group__qfzPk"><span>6</span></div><div class="CookingProcess_textBox__RJVsq"><p class="CookingProcess_text__ZoCP4"><span>生姜だれを絡めて仕上げる。</span></p><div class="CookingProcess_processImage__WPcFd"><img src="https://asset.example-nadia.test/step/6.jpg?w=100&amp;h=100" alt="工程6" width="100" height="100" loading="lazy"/></div></div></li>
+</ul>
+</body>
+</html>
