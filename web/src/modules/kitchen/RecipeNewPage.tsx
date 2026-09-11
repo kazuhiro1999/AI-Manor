@@ -19,15 +19,34 @@ import { api, ApiError } from "../../app/api";
 import { useToast } from "../../components/Toast";
 import { ScreenHeader } from "../../components/ScreenHeader";
 import { useT } from "../../app/i18n";
-import type { Recipe, RecipeImportResult } from "../../app/types";
+import type { Recipe, RecipeImportResult, RecipeMeta } from "../../app/types";
 import { RecipeFieldsEditor } from "./RecipeFieldsEditor";
 import {
   describeImportMethod,
+  emptyNutritionForm,
   emptyRecipeForm,
   formValueToRecipeBody,
+  NUTRITION_FIELDS,
+  NUTRITION_LABEL_KEY,
+  NUTRITION_SOURCE_LABEL_KEY,
+  nutritionMetaToForm,
   recipeBodyToFormValue,
+  type NutritionFormValue,
   type RecipeFormValue,
 } from "./recipeShared";
+
+// 取り込みの下書きが持つ「うちの値」相当（分類3軸）——登録画面には専用の select は
+// 置かない（編集ページの `RecipeMetaForm` が本来の置き場）が、下書きに入っていた値は
+// 捨てずに持っておき、登録直後の `PUT /recipes/{id}/meta` に一緒に乗せる（ADR-015 D1
+// 「本体とうちの値を分ける」を保ちつつ、取り込んだ分類を無かったことにしない）。
+interface ImportedAxis {
+  category: string;
+  mainIngredient: string;
+  cuisine: string;
+}
+function emptyImportedAxis(): ImportedAxis {
+  return { category: "", mainIngredient: "", cuisine: "" };
+}
 
 // 「薄い抽出」の目安。generic かつ warnings がこれ以上あれば Claude を勧める
 // （§6 D7「サイト別の抽出は壊れる前提——汎用も薄ければ Claude を勧める帯を出す」）。
@@ -47,6 +66,23 @@ export function RecipeNewPage() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
+  // 取り込みの下書きが「うちの値」（分類3軸・栄養5つ・出どころ）を持ってきたときの一時置き場
+  // （§6 追補。バックエンドが `meta.nutrition_source: "site"` 等を返す想定）。
+  const [nutrition, setNutrition] = useState<NutritionFormValue>(() => emptyNutritionForm());
+  const [nutritionSource, setNutritionSource] = useState<RecipeMeta["nutrition_source"]>("");
+  const [importedAxis, setImportedAxis] = useState<ImportedAxis>(() => emptyImportedAxis());
+
+  const applyImportedMeta = (meta: RecipeImportResult["meta"]) => {
+    if (!meta) return;
+    setNutrition(nutritionMetaToForm(meta));
+    setNutritionSource(meta.nutrition_source ?? "");
+    setImportedAxis({
+      category: meta.category || "",
+      mainIngredient: meta.main_ingredient || "",
+      cuisine: meta.cuisine || "",
+    });
+  };
+
   const runImport = async (mode: "auto" | "claude" = "auto") => {
     setError(null);
     if (!importUrl.trim()) {
@@ -59,6 +95,7 @@ export function RecipeNewPage() {
       setForm(recipeBodyToFormValue(res.recipe));
       setWarnings(res.warnings || []);
       setMethod(res.method);
+      applyImportedMeta(res.meta);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : t("errors.saveFailed", { reason: t("common.unknown") }));
     } finally {
@@ -74,6 +111,7 @@ export function RecipeNewPage() {
       setForm(recipeBodyToFormValue(res.recipe));
       setWarnings(res.warnings || []);
       setMethod(res.method);
+      applyImportedMeta(res.meta);
       show(t("kitchen.recipes.refined"), "ok", 3000);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : t("errors.saveFailed", { reason: t("common.unknown") }));
@@ -88,6 +126,9 @@ export function RecipeNewPage() {
     setMethod(null);
     setError(null);
     setImportUrl("");
+    setNutrition(emptyNutritionForm());
+    setNutritionSource("");
+    setImportedAxis(emptyImportedAxis());
   };
 
   const recommendClaude = method === "generic" && warnings.length >= GENERIC_WARNING_HINT_THRESHOLD;
@@ -98,6 +139,29 @@ export function RecipeNewPage() {
     try {
       const body = formValueToRecipeBody(form);
       const recipe = await api<Recipe>("/kitchen/recipes", { method: "POST", body });
+
+      // 取り込みの下書き・手入力のどちらかで「うちの値」（分類3軸・栄養5つ）に値が
+      // 入っていれば、登録直後に別送信で乗せる（`POST /recipes` 自体は本体だけの契約
+      // ——ADR-015 D1「本体とうちの値を分ける」。ここで作った id が要るので後追いになる）。
+      const metaBody: Record<string, unknown> = {};
+      if (importedAxis.category) metaBody.category = importedAxis.category;
+      if (importedAxis.mainIngredient) metaBody.main_ingredient = importedAxis.mainIngredient;
+      if (importedAxis.cuisine) metaBody.cuisine = importedAxis.cuisine;
+      for (const key of NUTRITION_FIELDS) {
+        if (nutrition[key].trim() !== "") metaBody[key] = Number(nutrition[key]);
+      }
+      // `nutrition_source` は分かっているときだけ明示する——数値を1つでも渡すと
+      // `chef_recipe.set_meta` が既定で `manual` に倒すため（`RecipeMetaForm.tsx` 冒頭の
+      // 注記と同じ理由）、取り込みが `site`/`estimated` を返していたらそれを守る。
+      if (nutritionSource) metaBody.nutrition_source = nutritionSource;
+      if (Object.keys(metaBody).length) {
+        try {
+          await api(`/kitchen/recipes/${recipe.id}/meta`, { method: "PUT", body: metaBody });
+        } catch {
+          // うちの値は付随情報——ここで失敗しても登録自体は成立させる（一覧・編集で後から直せる）。
+        }
+      }
+
       show(t("kitchen.recipes.created"), "ok", 3000);
       // 相対経路にしておく（`RecipesRouter` の `new` から `:id` への移動。単独マウントした
       // 試験でも解決できる——絶対経路だと `RecipesRouter` を単体でレンダーする試験で
@@ -164,6 +228,30 @@ export function RecipeNewPage() {
           <h2>{t("kitchen.recipes.formHeading")}</h2>
         </div>
         <RecipeFieldsEditor value={form} onChange={setForm} />
+
+        {/* 「うちの値」の栄養5つは本来は編集ページ（RecipeMetaForm）の持ち物だが、取り込みの
+         * 下書きが `meta.kcal` 等（例: Nadia のページの表示値）を持ってくることがあるので、
+         * 登録の時点でも小さく見せて確かめられるようにする（ここで直した値は登録直後の
+         * `PUT /recipes/{id}/meta` に乗る）。 */}
+        <h3>{t("kitchen.recipes.nutritionHeading")}</h3>
+        <div className="form-inline">
+          {NUTRITION_FIELDS.map((key) => (
+            <div className="form-row" style={{ maxWidth: 100 }} key={key}>
+              <label htmlFor={`new-nutrition-${key}`}>{t(NUTRITION_LABEL_KEY[key])}</label>
+              <input
+                id={`new-nutrition-${key}`}
+                className="form-input"
+                type="number"
+                value={nutrition[key]}
+                onChange={(e) => setNutrition({ ...nutrition, [key]: e.target.value })}
+              />
+            </div>
+          ))}
+        </div>
+        <p className="panel-note">
+          {t("kitchen.recipes.nutritionSourceLabel")}: {t(NUTRITION_SOURCE_LABEL_KEY[nutritionSource] ?? "kitchen.recipes.nutritionSourceNone")}
+        </p>
+
         {error && <div className="form-error">{error}</div>}
         <div className="form-actions">
           <button type="button" className="btn btn-primary" disabled={busy} onClick={submit}>

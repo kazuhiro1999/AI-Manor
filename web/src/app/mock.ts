@@ -1381,6 +1381,9 @@ export async function mockApi<T>(path: string, options: ApiOptions = {}): Promis
         recipe: draft,
         method: "adapter:nadia",
         warnings: ["完成画像が見つかりません（工程の写真は取得できました）", "工程2の見出しが13文字です（上限12文字）"],
+        // §6 追補: Nadia のページに載っている栄養表示をそのまま持ってきた例
+        // （`nutrition_source: "site"`＝出典の表示値。登録画面の栄養5つに前もって入る）。
+        meta: { kcal: 685, protein_g: 20.5, fat_g: 35.2, carb_g: 66.5, salt_g: 2.8, nutrition_source: "site" },
       };
       return result as unknown as T;
     }

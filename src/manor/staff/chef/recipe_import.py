@@ -332,7 +332,46 @@ def _normalize_recipe_ld(obj: dict) -> dict[str, object]:
         "images": images,
         "total_time": str(obj.get("totalTime") or ""),
         "yield": obj.get("recipeYield"),
+        "nutrition": _normalize_ld_nutrition(obj.get("nutrition")),
     }
+
+
+#: JSON-LD の `NutritionInformation` の鍵 → 契約の `meta` の鍵（ADR-015 §6 追補）。
+#: **`sodiumContent`（ナトリウム）はここに含めない**——食塩相当量とは別の値で、
+#: 換算せずに無視する（主人の指摘。`salt_g` はサイトの DOM 表示からしか入らない）。
+_LD_NUTRITION_FIELD_MAP: tuple[tuple[str, str], ...] = (
+    ("calories", "kcal"),
+    ("proteinContent", "protein_g"),
+    ("fatContent", "fat_g"),
+    ("carbohydrateContent", "carb_g"),
+)
+
+_NUTRITION_NUMBER_RE = re.compile(r"[\d]+(?:\.[\d]+)?")
+
+
+def _parse_nutrition_number(value: object) -> float | None:
+    """「685 kcal」「20.5g」のような文字列（や素の数値）から数値だけを取り出す。"""
+    if value is None:
+        return None
+    m = _NUTRITION_NUMBER_RE.search(str(value))
+    if not m:
+        return None
+    try:
+        return float(m.group())
+    except ValueError:
+        return None
+
+
+def _normalize_ld_nutrition(value: object) -> dict[str, float]:
+    """JSON-LD `Recipe.nutrition`（`NutritionInformation`）から取れた分だけを返す。"""
+    if not isinstance(value, dict):
+        return {}
+    out: dict[str, float] = {}
+    for src_key, dst_key in _LD_NUTRITION_FIELD_MAP:
+        parsed = _parse_nutrition_number(value.get(src_key))
+        if parsed is not None:
+            out[dst_key] = parsed
+    return out
 
 
 def _find_recipe_json_ld(parts: list[str]) -> dict[str, object] | None:
@@ -564,6 +603,57 @@ def _build_meta(recipe: dict[str, object], *, site_tags: list[str]) -> dict[str,
     }
 
 
+# --- 栄養価をサイトから取り込む（ADR-015 §6 追補。主人の指摘） -----------------------------
+#
+# 取り込み順: ①JSON-LD の `nutrition`（`_normalize_recipe_ld` が既に取り出し済み）
+# ②サイト別アダプタの `extract_nutrition(html)`（DOM のラベル語の隣の数値。
+# `recipe_sites/nadia.py` 参照）。取れた分だけ `recipe["meta"]` へ入れ、1つでも
+# 取れれば `nutrition_source` を `"site"`（出典の表示値）にする——`estimated`
+# （`estimate_nutrition`。Claude）・`manual`（画面で手直し）とは別の出所として区別する。
+
+_NUTRITION_META_KEYS: tuple[str, ...] = ("kcal", "protein_g", "fat_g", "carb_g", "salt_g")
+
+
+def _merge_nutrition(
+    recipe: dict[str, object], *, ld: dict[str, object] | None, html: str, host: str
+) -> None:
+    """取れた栄養価を `recipe["meta"]` へ入れる（`recipe["meta"]` は `_build_meta` が
+    先に作っている前提）。**`salt_g` は JSON-LD からは入れない**——JSON-LD の
+    `sodiumContent`（ナトリウム）は食塩相当量と別の値で、換算せずに無視する
+    （主人の指摘。`_normalize_ld_nutrition` が最初から `salt_g` を作らない）。
+    """
+    values: dict[str, float] = {}
+    if isinstance(ld, dict):
+        ld_nutrition = ld.get("nutrition")
+        if isinstance(ld_nutrition, dict):
+            values.update(ld_nutrition)  # type: ignore[arg-type]
+
+    missing = [k for k in _NUTRITION_META_KEYS if k not in values]
+    if missing:
+        matched = recipe_sites.match(host)
+        if matched is not None:
+            _name, module = matched
+            adapter_fn = getattr(module, "extract_nutrition", None)
+            if callable(adapter_fn):
+                try:
+                    site_values = adapter_fn(html)
+                except Exception:  # noqa: BLE001 - 「壊れる前提」（D7 と同じ約束）
+                    site_values = {}
+                for key in missing:
+                    if isinstance(site_values, dict) and site_values.get(key) is not None:
+                        values[key] = site_values[key]
+
+    if not values:
+        return
+    meta = recipe.get("meta")
+    if not isinstance(meta, dict):
+        return
+    for key in _NUTRITION_META_KEYS:
+        if key in values:
+            meta[key] = values[key]
+    meta["nutrition_source"] = "site"
+
+
 # --- 自動抽出（ADR-015 D7）: JSON-LD → サイト別アダプタ → 汎用 ------------------------------
 
 
@@ -682,13 +772,19 @@ def extract_auto(html: str, url: str) -> dict[str, object]:
                 title=_resolve_title(source, host=host, ld=ld),
                 servings=_parse_yield(ld.get("yield")),
                 total_minutes=_iso8601_minutes(str(ld.get("total_time") or "")),
-                ingredients=[shaping.parse_ingredient_line(str(i)) for i in ld["ingredients"]],  # type: ignore[union-attr]
+                ingredients=[
+                    ing
+                    for i in ld["ingredients"]  # type: ignore[union-attr]
+                    for ing in shaping.parse_ingredient_line(str(i))
+                ],
                 tools=[],
                 raw_steps=raw_steps,
                 hero_candidates=ld_images,
                 source=source,
             )
+            recipe["source_site"] = host  # ADR-015「ついで」: 下書きに必ずホスト名を入れる
             recipe["meta"] = _build_meta(recipe, site_tags=[])
+            _merge_nutrition(recipe, ld=ld, html=html, host=host)
             return {
                 "ok": True, "recipe": recipe, "method": "jsonld",
                 "warnings": warnings + image_warnings, "reason": "",
@@ -717,7 +813,9 @@ def extract_auto(html: str, url: str) -> dict[str, object]:
                 hero_candidates=hero_candidates,
                 source=source,
             )
+            recipe["source_site"] = host  # ADR-015「ついで」: 下書きに必ずホスト名を入れる
             recipe["meta"] = _build_meta(recipe, site_tags=list(adapted.get("site_tags") or []))  # type: ignore[arg-type]
+            _merge_nutrition(recipe, ld=ld, html=html, host=host)
             return {
                 "ok": True, "recipe": recipe, "method": f"adapter:{adapter_name}",
                 "warnings": warnings, "reason": "",
@@ -758,7 +856,9 @@ def extract_auto(html: str, url: str) -> dict[str, object]:
             hero_candidates=hero_candidates,
             source=source,
         )
+        recipe["source_site"] = host  # ADR-015「ついで」: 下書きに必ずホスト名を入れる
         recipe["meta"] = _build_meta(recipe, site_tags=list(generic_draft.get("site_tags") or []))  # type: ignore[arg-type]
+        _merge_nutrition(recipe, ld=ld, html=html, host=host)
         return {
             "ok": True, "recipe": recipe, "method": "generic",
             "warnings": thin_warnings + warnings, "reason": "",
@@ -1162,6 +1262,9 @@ def import_from_url(
     hero_image, hero_warnings = _resolve_hero_image(source, candidates=_ld_image_candidates(source))
     recipe["hero_image"] = hero_image
     recipe["meta"] = _build_meta(recipe, site_tags=[])
+    _merge_nutrition(
+        recipe, ld=source.get("json_ld_recipe"), html=html, host=str(recipe["source_site"])
+    )
 
     return {
         "ok": True, "recipe": recipe, "method": "claude",

@@ -69,6 +69,33 @@ def test_import_returns_draft_without_saving(conn, home: Path, monkeypatch: pyte
     assert client.get("/api/v1/kitchen/recipes").json() == {"items": []}
 
 
+def test_import_top_level_meta_matches_recipe_meta(
+    conn, home: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """画面は `result.meta` を読む（コーディネーターの指示・2026-09-12）——
+    `recipe["meta"]` と同じ辞書がトップレベルにも返る（`recipe["meta"]` 自体は
+    CLI・`--save` 向けに残す）。
+    """
+    recipe = _draft_recipe()
+    recipe["meta"] = {
+        "category": "主菜", "main_ingredient": "肉", "cuisine": "和食", "tags": ["主菜"],
+        "kcal": 685.0, "protein_g": 20.5, "fat_g": 35.2, "carb_g": 66.5, "salt_g": 2.8,
+        "nutrition_source": "site",
+    }
+    monkeypatch.setattr(
+        recipe_import_mod, "import_from_url",
+        lambda url, **kw: {"ok": True, "recipe": recipe, "warnings": [], "reason": ""},
+    )
+    client = make_client(home)
+
+    res = client.post("/api/v1/kitchen/recipes/import", json={"url": "https://example.com/recipe/1"})
+
+    assert res.status_code == 200
+    body = res.json()
+    assert body["meta"] == body["recipe"]["meta"]
+    assert body["meta"]["nutrition_source"] == "site"
+
+
 def test_import_defaults_to_auto_mode(conn, home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     seen_modes: list[str] = []
 
@@ -245,6 +272,27 @@ def test_refine_returns_tightened_draft(conn, home: Path, monkeypatch: pytest.Mo
     assert body["recipe"]["title"] == "取り込み品"
     # 保存していない(一覧に出てこない)。
     assert client.get("/api/v1/kitchen/recipes").json() == {"items": []}
+
+
+def test_refine_top_level_meta_matches_recipe_meta(
+    conn, home: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`import` と同じ約束（コーディネーターの指示・2026-09-12）: `refine` も
+    トップレベルの `meta` を `recipe["meta"]` と同じ辞書で返す。
+    """
+    refined = _draft_recipe()
+    refined["meta"] = {"category": "副菜", "main_ingredient": "", "cuisine": "", "tags": []}
+    monkeypatch.setattr(
+        recipe_import_mod, "refine_with_claude",
+        lambda recipe, **kw: {"ok": True, "recipe": refined, "warnings": [], "reason": ""},
+    )
+    client = make_client(home)
+
+    res = client.post("/api/v1/kitchen/recipes/refine", json={"recipe": _draft_recipe()})
+
+    assert res.status_code == 200
+    body = res.json()
+    assert body["meta"] == body["recipe"]["meta"]
 
 
 def test_refine_claude_missing_is_502(conn, home: Path, monkeypatch: pytest.MonkeyPatch) -> None:

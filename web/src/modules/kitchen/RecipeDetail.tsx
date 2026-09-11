@@ -11,6 +11,7 @@ import { useToast } from "../../components/Toast";
 import { ScreenHeader } from "../../components/ScreenHeader";
 import { formatDay, useT } from "../../app/i18n";
 import type { Recipe } from "../../app/types";
+import { NUTRITION_SOURCE_LABEL_KEY } from "./recipeShared";
 
 export function RecipeDetail() {
   const t = useT();
@@ -242,6 +243,9 @@ export function RecipeDetail() {
             <p className="panel-note">
               {t("kitchen.recipes.fatLabel")}: {recipe.meta.fat_g ?? t("common.none")} / {t("kitchen.recipes.carbLabel")}: {recipe.meta.carb_g ?? t("common.none")} /{" "}
               {t("kitchen.recipes.saltLabel")}: {recipe.meta.salt_g ?? t("common.none")}
+            </p>
+            <p className="panel-note">
+              {t("kitchen.recipes.nutritionSourceLabel")}: {t(NUTRITION_SOURCE_LABEL_KEY[recipe.meta.nutrition_source] ?? "kitchen.recipes.nutritionSourceNone")}
             </p>
             <p className="panel-note">
               {t("kitchen.recipes.ratingLabel")}: {recipe.meta.rating ?? t("common.none")}

@@ -12,7 +12,8 @@
 <head><title>豚バラの生姜焼き | レシピサイトNadia風</title>
 <script type="application/ld+json">
 {"@context": "https://schema.org/", "@type": "Recipe", "name": "豚バラの生姜焼き",
- "recipeIngredient": ["豚バラ肉 200g", "玉ねぎ 1/2個", "生姜 1かけ", "醤油 大さじ1"],
+ "recipeIngredient": ["豚バラ肉 200g", "玉ねぎ 1/2個", "生姜 1かけ", "醤油 大さじ1",
+   "鶏ガラスープの素 小さじ1", "塩、にんにくチューブ 各小さじ1/2", "粗挽き黒胡椒 小さじ1/4"],
  "recipeInstructions": [
    {"@type": "HowToStep", "text": "豚バラ肉は一口大に切る。"},
    {"@type": "HowToStep", "text": "玉ねぎは<a href=\"/wordlist/みじん切り\">みじん切り</a>にする。"},
@@ -22,7 +23,9 @@
    {"@type": "HowToStep", "text": "生姜だれを絡めて仕上げる。"}
  ],
  "totalTime": "PT10M", "recipeYield": "2人分", "recipeCategory": "主菜", "recipeCuisine": "日本",
- "image": ["https://asset.example-nadia.test/hero/jsonld.jpg?w=800&h=800"]}
+ "image": ["https://asset.example-nadia.test/hero/jsonld.jpg?w=800&h=800"],
+ "nutrition": {"@type": "NutritionInformation", "calories": "685 kcal", "proteinContent": "20.5g",
+   "fatContent": "35.2g", "carbohydrateContent": "66.5g", "sodiumContent": "1090mg"}}
 </script>
 </head>
 <body>
@@ -36,6 +39,13 @@
 <li><div class="IngredientsList_group__kmzYa"></div><div class="IngredientsList_ingredient__DYoCy">玉ねぎ</div><div class="IngredientsList_amount__uQJk8">1/2個</div></li>
 <li><div class="IngredientsList_group__kmzYa"></div><div class="IngredientsList_ingredient__DYoCy">生姜</div><div class="IngredientsList_amount__uQJk8">1かけ</div></li>
 <li><div class="IngredientsList_group__kmzYa"></div><div class="IngredientsList_ingredient__DYoCy">醤油</div><div class="IngredientsList_amount__uQJk8">大さじ1</div></li>
+</ul>
+
+<!-- 栄養価の表示（ADR-015 §6 追補）。JSON-LD の nutrition には無い食塩相当量
+     （sodiumContent はナトリウムで別物・換算しない）はここから拾う。 -->
+<ul class="RecipeInfo_nutritionSet__CAJs7">
+<li><div class="RecipeInfo_active__u0zYx"><div class="RecipeInfo_contents__jzpln"><span class="RecipeInfo_head__f7x6g"><svg><path d="M1,2"></path></svg>エネルギー</span><span class="RecipeInfo_value__vwLM0">685<span class="RecipeInfo_unit__T0aQb">kcal</span></span></div></div></li>
+<li><div class="RecipeInfo_active__u0zYx"><div class="RecipeInfo_contents__jzpln"><span class="RecipeInfo_head__f7x6g"><svg><path d="M1,2"></path></svg>食塩相当量</span><span class="RecipeInfo_value__vwLM0">2.8<span class="RecipeInfo_unit__T0aQb">g</span></span></div></div></li>
 </ul>
 
 <h2 class="RecipeHeading_heading__be7bg">作り方</h2>

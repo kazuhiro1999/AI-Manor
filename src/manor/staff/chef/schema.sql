@@ -44,7 +44,9 @@ CREATE TABLE IF NOT EXISTS chef_recipe (
 CREATE TABLE IF NOT EXISTS chef_recipe_meta (   -- うちの値。手で直したものは自動で上書きしない
   recipe_id    INTEGER PRIMARY KEY REFERENCES chef_recipe(id) ON DELETE CASCADE,
   kcal REAL, protein_g REAL, fat_g REAL, carb_g REAL, salt_g REAL,   -- 1人分
-  nutrition_source TEXT NOT NULL DEFAULT '' CHECK (nutrition_source IN ('', 'estimated', 'manual')),
+  -- 'site'（出典の表示値。ADR-015 §6 追補）を既存 DB へ足すのは db.py の表の作り直し
+  -- （SQLite は ALTER TABLE で CHECK 制約を変えられない）。
+  nutrition_source TEXT NOT NULL DEFAULT '' CHECK (nutrition_source IN ('', 'estimated', 'manual', 'site')),
   tags         TEXT NOT NULL DEFAULT '[]', -- JSON 配列
   rating       INTEGER,                    -- 1..5
   memo         TEXT NOT NULL DEFAULT '',   -- 「うちは油少なめ」等

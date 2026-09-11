@@ -34,7 +34,9 @@ from . import ops
 VALID_COMPLETION: tuple[str, ...] = ("manual", "auto", "confirm")
 
 #: `chef_recipe_meta.nutrition_source` の語彙（schema.sql の CHECK と一致させる）。
-VALID_NUTRITION_SOURCE: tuple[str, ...] = ("", "estimated", "manual")
+#: `"site"`（出典の表示値。ADR-015 §6 追補）は既存 DB では `db.py` の表の作り直しで
+#: 冪等に足す——SQLite は `ALTER TABLE` で `CHECK` 制約を変えられないため。
+VALID_NUTRITION_SOURCE: tuple[str, ...] = ("", "estimated", "manual", "site")
 
 #: `chef_cook_event.type` の語彙（ADR-015 D3）。
 VALID_EVENT_TYPES: tuple[str, ...] = ("next", "prev", "timer_start", "done")
@@ -309,8 +311,12 @@ def add(conn: sqlite3.Connection, recipe: dict) -> int:
     **ただし** 渡した `recipe` に `meta.category`/`main_ingredient`/`cuisine`/`tags` が
     あれば、登録と同時にそこへ入れる（ADR-015 D9 追補。取り込みの下書きは
     `recipe_import.extract_auto()` が `classify()` と出典のタグで `meta` を埋めて返す
-    ——編集して「登録」まで1つのフォームで完結させるための橋渡しで、`meta` の他の欄
-    （栄養・評価・メモ・favorite）は従来どおり `set_meta` の領分のまま触らない）。
+    ——編集して「登録」まで1つのフォームで完結させるための橋渡し）。**栄養価
+    （`kcal`/`protein_g`/`fat_g`/`carb_g`/`salt_g`）と `nutrition_source` も同じ理由で
+    渡っていれば入れる**（ADR-015 §6 追補。`recipe_import._merge_nutrition()` が
+    サイトの表示値を `meta` へ入れて返す——`nutrition_source='site'` を明示するので
+    `set_meta` の「数値を渡したら自動で manual」は働かない）。`meta` の他の欄
+    （評価・メモ・favorite）は従来どおり `set_meta` の領分のまま触らない。
     """
     v = validate(recipe)
     now = util.now()
@@ -338,6 +344,11 @@ def add(conn: sqlite3.Connection, recipe: dict) -> int:
                 seed_kwargs[key] = meta_seed[key]
         if meta_seed.get("tags"):
             seed_kwargs["tags"] = meta_seed["tags"]
+        for key in ("kcal", "protein_g", "fat_g", "carb_g", "salt_g"):
+            if meta_seed.get(key) is not None:
+                seed_kwargs[key] = meta_seed[key]
+        if meta_seed.get("nutrition_source"):
+            seed_kwargs["nutrition_source"] = meta_seed["nutrition_source"]
         if seed_kwargs:
             set_meta(conn, recipe_id, **seed_kwargs)
     return recipe_id
@@ -540,7 +551,7 @@ def set_meta(
 
     if nutrition_source is not _UNSET and nutrition_source not in VALID_NUTRITION_SOURCE:
         raise ManorError(
-            f"nutrition_source は 空文字/estimated/manual のいずれかです: {nutrition_source!r}",
+            f"nutrition_source は 空文字/estimated/manual/site のいずれかです: {nutrition_source!r}",
             code=2,
         )
     if rating is not _UNSET and rating is not None:

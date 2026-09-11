@@ -109,6 +109,23 @@ export function RecipeFieldsEditor({
         <label htmlFor="recipe-source-url">{t("kitchen.recipes.sourceUrlLabel")}</label>
         <input id="recipe-source-url" className="form-input" value={value.sourceUrl} onChange={(e) => setField("sourceUrl", e.target.value)} />
       </div>
+      {/* 主人の実データ取り込みで判明: 完成画像の欄自体が無く、取り込みの下書きが持つ
+       * hero_image が登録で捨てられていた（recipeShared.ts 参照）。ここに欄を置き、
+       * その場でプレビューする——空なら淡い札にして「未設定」だと分かるようにする。 */}
+      <div className="form-row">
+        <label htmlFor="recipe-hero-image">{t("kitchen.recipes.heroImageLabel")}</label>
+        <input
+          id="recipe-hero-image"
+          className="form-input"
+          value={value.heroImage}
+          onChange={(e) => setField("heroImage", e.target.value)}
+        />
+        {value.heroImage.trim() ? (
+          <img className="hero-image-preview" src={value.heroImage.trim()} alt="" />
+        ) : (
+          <span className="hero-image-preview hero-image-preview-empty">{t("kitchen.recipes.noPhoto")}</span>
+        )}
+      </div>
       <div className="form-inline">
         <div className="form-row" style={{ maxWidth: 120 }}>
           <label htmlFor="recipe-servings">{t("kitchen.recipes.servingsLabel")}</label>

@@ -351,10 +351,15 @@ def register(app: FastAPI, ctx: WebContext) -> None:
             raise manor_error_to_http(exc)
         if not result.get("ok"):
             raise HTTPException(status_code=502, detail=str(result.get("reason") or ""))
+        recipe = result["recipe"]
+        assert isinstance(recipe, dict)  # noqa: S101 - import_from_url() が ok なら必ず dict
         return {
-            "recipe": result["recipe"],
+            "recipe": recipe,
             "method": result.get("method", ""),
             "warnings": result.get("warnings") or [],
+            # 画面は result.meta を読む（コーディネーターの指示。2026-09-12）。
+            # recipe["meta"] と同じ辞書——CLI/`--save` はそちらを使うので残す。
+            "meta": recipe.get("meta"),
         }
 
     @app.post("/api/v1/kitchen/recipes/refine")
@@ -365,7 +370,14 @@ def register(app: FastAPI, ctx: WebContext) -> None:
         result = chef_recipe_import.refine_with_claude(body.recipe)
         if not result.get("ok"):
             raise HTTPException(status_code=502, detail=str(result.get("reason") or ""))
-        return {"recipe": result["recipe"], "method": "claude", "warnings": result.get("warnings") or []}
+        recipe = result["recipe"]
+        assert isinstance(recipe, dict)  # noqa: S101 - refine_with_claude() が ok なら必ず dict
+        return {
+            "recipe": recipe,
+            "method": "claude",
+            "warnings": result.get("warnings") or [],
+            "meta": recipe.get("meta"),
+        }
 
     @app.post("/api/v1/kitchen/recipes/{recipe_id}/estimate-nutrition")
     def recipe_estimate_nutrition(recipe_id: int) -> dict[str, object]:

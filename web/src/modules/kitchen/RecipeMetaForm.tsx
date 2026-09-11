@@ -15,7 +15,14 @@ import { api, ApiError } from "../../app/api";
 import { useToast } from "../../components/Toast";
 import { useT } from "../../app/i18n";
 import type { Recipe } from "../../app/types";
-import { CATEGORY_OPTIONS, CUISINE_OPTIONS, MAIN_INGREDIENT_OPTIONS } from "./recipeShared";
+import {
+  CATEGORY_OPTIONS,
+  CUISINE_OPTIONS,
+  MAIN_INGREDIENT_OPTIONS,
+  NUTRITION_FIELDS,
+  NUTRITION_LABEL_KEY,
+  NUTRITION_SOURCE_LABEL_KEY,
+} from "./recipeShared";
 
 // §6 D9「分類の3軸」。select は3つとも同じ形（語彙＋「未設定」）なので1つの部品にまとめる。
 function AxisSelect({
@@ -65,19 +72,7 @@ function toStrings(meta: Recipe["meta"]): NutritionStrings {
   };
 }
 
-const NUTRITION_KEY_LABEL: { key: keyof NutritionStrings; labelKey: "kitchen.recipes.kcalLabel" | "kitchen.recipes.proteinLabel" | "kitchen.recipes.fatLabel" | "kitchen.recipes.carbLabel" | "kitchen.recipes.saltLabel" }[] = [
-  { key: "kcal", labelKey: "kitchen.recipes.kcalLabel" },
-  { key: "protein_g", labelKey: "kitchen.recipes.proteinLabel" },
-  { key: "fat_g", labelKey: "kitchen.recipes.fatLabel" },
-  { key: "carb_g", labelKey: "kitchen.recipes.carbLabel" },
-  { key: "salt_g", labelKey: "kitchen.recipes.saltLabel" },
-];
-
-const NUTRITION_SOURCE_KEY: Record<string, "kitchen.recipes.nutritionSourceEstimated" | "kitchen.recipes.nutritionSourceManual" | "kitchen.recipes.nutritionSourceNone"> = {
-  estimated: "kitchen.recipes.nutritionSourceEstimated",
-  manual: "kitchen.recipes.nutritionSourceManual",
-  "": "kitchen.recipes.nutritionSourceNone",
-};
+const NUTRITION_KEY_LABEL = NUTRITION_FIELDS.map((key) => ({ key, labelKey: NUTRITION_LABEL_KEY[key] }));
 
 export function RecipeMetaForm({ recipe, onUpdated }: { recipe: Recipe; onUpdated: (recipe: Recipe) => void }) {
   const t = useT();
@@ -174,7 +169,7 @@ export function RecipeMetaForm({ recipe, onUpdated }: { recipe: Recipe; onUpdate
 
       <h3>{t("kitchen.recipes.nutritionHeading")}</h3>
       <p className="panel-note">
-        {t("kitchen.recipes.nutritionSourceLabel")}: {t(NUTRITION_SOURCE_KEY[nutritionSource] ?? "kitchen.recipes.nutritionSourceNone")}
+        {t("kitchen.recipes.nutritionSourceLabel")}: {t(NUTRITION_SOURCE_LABEL_KEY[nutritionSource] ?? "kitchen.recipes.nutritionSourceNone")}
       </p>
       <div className="form-inline">
         {NUTRITION_KEY_LABEL.map(({ key, labelKey }) => (

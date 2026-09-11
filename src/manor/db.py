@@ -125,6 +125,77 @@ def _add_column_if_missing(conn: sqlite3.Connection, table: str, column: str, co
         conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {coltype}")
 
 
+#: 一回だけの移行の印（`meta` 表のキー）。ADR-015 §6 追補: `chef_recipe_meta.
+#: nutrition_source` の CHECK 制約に `'site'`（出典の表示値。栄養価をサイトから取り込む
+#: 機能で使う）を足す。
+_CHEF_RECIPE_META_NUTRITION_SITE_FLAG = "chef_recipe_meta_nutrition_source_site_migrated"
+
+
+def _migrate_chef_recipe_meta_nutrition_source_site(conn: sqlite3.Connection) -> None:
+    """`chef_recipe_meta.nutrition_source` の語彙に `'site'` を足す（ADR-015 §6 追補）。
+
+    SQLite は `ALTER TABLE` で `CHECK` 制約を変えられないので、新しい制約の表を
+    作り直してデータをコピーし、入れ替える（新表を作る→コピー→古い表を消す→改名。
+    `_add_column_if_missing` の「列を足すだけ」では済まない唯一の移行）。
+
+    **一度だけでよい**——`meta` 表に印を置き、2回目以降は何もしない。表がまだ無ければ
+    何もしない（`_add_column_if_missing` と同じ判断。chef 部下を導入していない home では
+    不要）。新規 DB（`schema.sql` が最初から `'site'` を持つ）では、作り直しの手間を
+    掛けずに印だけ置く。**呼ぶのは `category`/`main_ingredient`/`cuisine` の列を足した
+    後**（作り直す新しい表がそれらの列も持つので、コピー元に列が揃っている必要がある）。
+    """
+    exists = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'chef_recipe_meta'"
+    ).fetchone()
+    if exists is None:
+        return
+    if conn.execute(
+        "SELECT value FROM meta WHERE key = ?", (_CHEF_RECIPE_META_NUTRITION_SITE_FLAG,)
+    ).fetchone() is not None:
+        return
+
+    row = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'chef_recipe_meta'"
+    ).fetchone()
+    already_new = bool(row and row["sql"] and "'site'" in row["sql"])
+
+    if not already_new:
+        cols = [r["name"] for r in conn.execute("PRAGMA table_info(chef_recipe_meta)").fetchall()]
+        col_list = ", ".join(cols)
+        conn.executescript(
+            """
+            CREATE TABLE chef_recipe_meta__nutrition_site_migration (
+              recipe_id    INTEGER PRIMARY KEY REFERENCES chef_recipe(id) ON DELETE CASCADE,
+              kcal REAL, protein_g REAL, fat_g REAL, carb_g REAL, salt_g REAL,
+              nutrition_source TEXT NOT NULL DEFAULT ''
+                CHECK (nutrition_source IN ('', 'estimated', 'manual', 'site')),
+              tags         TEXT NOT NULL DEFAULT '[]',
+              rating       INTEGER,
+              memo         TEXT NOT NULL DEFAULT '',
+              favorite     INTEGER NOT NULL DEFAULT 0,
+              times_cooked INTEGER NOT NULL DEFAULT 0,
+              last_cooked_at TEXT,
+              category         TEXT NOT NULL DEFAULT '',
+              main_ingredient  TEXT NOT NULL DEFAULT '',
+              cuisine          TEXT NOT NULL DEFAULT ''
+            );
+            """
+        )
+        conn.execute(
+            f"INSERT INTO chef_recipe_meta__nutrition_site_migration ({col_list})"
+            f" SELECT {col_list} FROM chef_recipe_meta"
+        )
+        conn.execute("DROP TABLE chef_recipe_meta")
+        conn.execute(
+            "ALTER TABLE chef_recipe_meta__nutrition_site_migration RENAME TO chef_recipe_meta"
+        )
+
+    conn.execute(
+        "INSERT OR REPLACE INTO meta (key, value) VALUES (?, '1')",
+        (_CHEF_RECIPE_META_NUTRITION_SITE_FLAG,),
+    )
+
+
 def migrate_core(home: Path) -> None:
     """**中核の表・列だけ**を冪等に当てる（部下のスキーマには触れない）。
 
@@ -177,6 +248,9 @@ def migrate_core(home: Path) -> None:
         _add_column_if_missing(conn, "chef_recipe_meta", "category", "TEXT NOT NULL DEFAULT ''")
         _add_column_if_missing(conn, "chef_recipe_meta", "main_ingredient", "TEXT NOT NULL DEFAULT ''")
         _add_column_if_missing(conn, "chef_recipe_meta", "cuisine", "TEXT NOT NULL DEFAULT ''")
+        # ADR-015 §6（追補・2026-09-12）: `nutrition_source` の語彙に `'site'` を冪等に足す。
+        # 表の作り直しなので、上の3つの ADD COLUMN の**後**（列が揃った状態でコピーする）。
+        _migrate_chef_recipe_meta_nutrition_source_site(conn)
         # **既定の8つもここで入れる**（執事の裁定 2026-09-04）。`manor init` だけに任せると、
         # 更新後に init を忘れた home は「表はあるが空」になり、種類を1つも選べない——
         # `run`／`notion_page` で2度踏んだのと**同じ穴**（GROWTH G5）。
@@ -299,6 +373,9 @@ def init(home: Path) -> list[str]:
         _add_column_if_missing(conn, "chef_recipe_meta", "category", "TEXT NOT NULL DEFAULT ''")
         _add_column_if_missing(conn, "chef_recipe_meta", "main_ingredient", "TEXT NOT NULL DEFAULT ''")
         _add_column_if_missing(conn, "chef_recipe_meta", "cuisine", "TEXT NOT NULL DEFAULT ''")
+        # ADR-015 §6（追補・2026-09-12）: `nutrition_source` の語彙に `'site'` を冪等に足す。
+        # 表の作り直しなので、上の3つの ADD COLUMN の**後**（列が揃った状態でコピーする）。
+        _migrate_chef_recipe_meta_nutrition_source_site(conn)
 
         if conn.execute("SELECT value FROM meta WHERE key='schema_version'").fetchone() is None:
             conn.execute("INSERT INTO meta (key, value) VALUES ('schema_version', '1')")

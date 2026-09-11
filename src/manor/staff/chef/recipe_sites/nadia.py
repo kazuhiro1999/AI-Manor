@@ -46,6 +46,49 @@ _STEP_RE = re.compile(
 
 _IMG_TAG_RE = re.compile(r"<img\b([^>]*)>")
 
+#: 栄養価の表示（ADR-015 §6 追補。主人の指摘: 「Nadia AI の自動計算による推定値」欄）。
+#: `<span class="RecipeInfo_head...">ラベル（SVGアイコン混じり）</span>`
+#: `<span class="RecipeInfo_value...">数値<span class="RecipeInfo_unit...">単位</span></span>`
+#: の並び（2026-09-12・主人の実測 URL を1回だけ取得して確認した構造）。
+_NUTRITION_ITEM_RE = re.compile(
+    r'class="RecipeInfo_head[^"]*">(.*?)</span>\s*'
+    r'<span class="RecipeInfo_value[^"]*">\s*([\d.]+)',
+    re.S,
+)
+
+#: ラベル語 → 契約の栄養キー（ADR-015 §3 `meta`）。**「糖質」は見ない**——契約の
+#: `carb_g` は「炭水化物」に対応し、糖質・食物繊維の内訳までは持たない設計のため。
+_NUTRITION_LABELS: tuple[tuple[str, str], ...] = (
+    ("エネルギー", "kcal"),
+    ("たんぱく質", "protein_g"),
+    ("脂質", "fat_g"),
+    ("炭水化物", "carb_g"),
+    ("食塩相当量", "salt_g"),
+)
+
+
+def extract_nutrition(html: str) -> dict[str, float]:
+    """栄養価の表示値（1人分）をラベル語の隣の数値から拾う（ADR-015 §6 追補）。
+
+    JSON-LD の `nutrition`（`recipe_import._normalize_recipe_ld`）が優先だが、
+    **食塩相当量（`salt_g`）は JSON-LD に無いことが多い**——Nadia の JSON-LD は
+    `sodiumContent`（ナトリウム。食塩相当量とは別物で換算しない）しか持たないため、
+    ここが実質唯一の出どころ。取れた分だけを返す（`recipe_import._merge_nutrition`
+    が JSON-LD で埋まらなかった分だけをここから補う）。
+    """
+    text = shaping.strip_html_comments(html or "")
+    out: dict[str, float] = {}
+    for label_html, value in _NUTRITION_ITEM_RE.findall(text):
+        label = _text_only(label_html)
+        for word, key in _NUTRITION_LABELS:
+            if word in label and key not in out:
+                try:
+                    out[key] = float(value)
+                except ValueError:
+                    pass
+                break
+    return out
+
 
 def _text_only(fragment: str) -> str:
     return html_lib.unescape(re.sub(r"<[^>]+>", "", fragment or "")).strip()
@@ -90,11 +133,11 @@ def extract(html: str, url: str) -> dict | None:
         if not name:
             continue
         amount = _text_only(amount_html)
-        qty_m = re.match(r"([\d./~〜]+)\s*(.*)", amount)
-        qty, unit = (qty_m.group(1), qty_m.group(2)) if qty_m else ("", amount)
-        ingredients.append(
-            {"name": name, "qty": qty, "unit": unit, "group": _text_only(group_html)}
-        )
+        group = _text_only(group_html)
+        # 主人の実測（2026-09-12）: 「塩、にんにくチューブ」＋「各小さじ1/2」のように
+        # 名前と量は DOM で既に分かれていても、1つの `<li>` が複数の材料を表すことがある
+        # ——`shaping.split_grouped_ingredient` へ委ねる（ADR-015 §6 追補）。
+        ingredients.extend(shaping.split_grouped_ingredient(name, amount, group=group))
 
     raw_steps = []
     for _order, instruction_html, image_html in (m.groups() for m in step_matches):

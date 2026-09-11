@@ -356,7 +356,7 @@ export interface RecipeMeta {
   fat_g: number | null;
   carb_g: number | null;
   salt_g: number | null;
-  nutrition_source: "" | "estimated" | "manual";
+  nutrition_source: "" | "site" | "estimated" | "manual";
   tags: string[];
   rating: number | null;
   memo: string;
@@ -428,6 +428,11 @@ export interface RecipeImportResult {
   recipe: RecipeBody;
   method: string;
   warnings: string[];
+  // バックエンドが下書きに「うちの値」相当（分類3軸・栄養5つ・出どころ）を添えてくることが
+  // ある（例: Nadia のページの kcal 等。`nutrition_source: "site"`）。`recipe`（RecipeBody）
+  // は id・meta を持たない契約なので、これは別枠——登録フォームは検算せず、そのまま
+  // 「うちの値」欄の初期値に流し込み、登録直後の `PUT /recipes/{id}/meta` で乗せる。
+  meta?: Partial<RecipeMeta>;
 }
 
 export type RecipeImportMode = "auto" | "claude";

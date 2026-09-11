@@ -32,8 +32,9 @@ def test_nadia_adapter_extracts_contract_shape() -> None:
 
     assert recipe["title"] == "豚バラの生姜焼き"
     assert recipe["servings"] == 2
-    assert len(recipe["ingredients"]) == 4
-    assert [ing["group"] for ing in recipe["ingredients"]] == ["", "", "A", "A"]
+    # 「塩、にんにくチューブ」＋「各小さじ1/2」は2件へ分かれる（ADR-015 §6 追補）。
+    assert len(recipe["ingredients"]) == 6
+    assert [ing["group"] for ing in recipe["ingredients"]] == ["", "", "A", "A", "A", "A"]
     assert len(recipe["steps"]) == 6
     assert all(len(s["title"]) <= 12 for s in recipe["steps"])
     assert [s["index"] for s in recipe["steps"]] == [1, 2, 3, 4, 5, 6]
@@ -72,6 +73,38 @@ def test_nadia_adapter_feeds_category_badge_into_classification() -> None:
     assert meta["category"] == "主菜"
     assert meta["main_ingredient"] == "肉"  # 「豚バラ肉」から
     assert "主菜" in meta["tags"]
+
+
+def test_nadia_adapter_splits_each_grouped_ingredient() -> None:
+    """主人の実測（2026-09-12）: 「塩、にんにくチューブ」＋「各小さじ1/2」は
+    DOM 上でも1つの `<li>` にまとまっている——名前を読点で割り、同じ量をそれぞれに
+    付ける（ADR-015 §6 追補）。"""
+    html = _read_fixture("nadia_min.html")
+    result = recipe_import.extract_auto(html, "https://oceans-nadia.com/user/1/recipe/1")
+
+    by_name = {ing["name"]: ing for ing in result["recipe"]["ingredients"]}
+    assert by_name["塩"]["qty"] == "1/2"
+    assert by_name["塩"]["unit"] == "小さじ"
+    assert by_name["塩"]["group"] == "A"
+    assert by_name["にんにくチューブ"]["qty"] == "1/2"
+    assert by_name["にんにくチューブ"]["unit"] == "小さじ"
+    assert by_name["にんにくチューブ"]["group"] == "A"
+
+
+def test_nadia_adapter_feeds_site_nutrition_into_meta() -> None:
+    """ADR-015 §6 追補: JSON-LD が無いページでも、Nadia の栄養価の DOM（ラベル語の
+    隣の数値）から `meta` へ入る（出典の表示値。`nutrition_source == "site"`）。
+    """
+    html = _read_fixture("nadia_min.html")
+    result = recipe_import.extract_auto(html, "https://oceans-nadia.com/user/1/recipe/1")
+
+    meta = result["recipe"]["meta"]
+    assert meta["kcal"] == 450.0
+    assert meta["protein_g"] == 18.4
+    assert meta["fat_g"] == 30.1
+    assert meta["carb_g"] == 15.2
+    assert meta["salt_g"] == 2.1
+    assert meta["nutrition_source"] == "site"
 
 
 # --- cookpad アダプタ -------------------------------------------------------------------
@@ -298,3 +331,80 @@ def test_jsonld_route_keeps_own_image_when_ld_already_has_one() -> None:
     steps = result["recipe"]["steps"]
     assert steps[0]["image"] == "https://example.com/ld-step1.jpg"
     assert steps[1]["image"] is None  # HTML側での穴埋めはしない(1件でも画像があれば経路ごと信頼する)
+
+
+# --- 材料の分割（罠4。ADR-015 §6 追補・2026-09-12・主人の実測） --------------------------
+
+
+def test_jsonld_route_splits_name_and_amount_that_do_not_start_with_a_digit() -> None:
+    """罠4: JSON-LD の `recipeIngredient` は「名前 空白 量」の1本の文字列で来る——
+    「粗挽き黒胡椒 小さじ1/4」のように**数字で始まらない**量は、直すまで材料名に
+    混ざって残っていた。
+    """
+    result = _extract_nadia_jsonld()
+    by_name = {ing["name"]: ing for ing in result["recipe"]["ingredients"]}
+
+    assert "粗挽き黒胡椒" in by_name
+    assert by_name["粗挽き黒胡椒"]["qty"] == "1/4"
+    assert by_name["粗挽き黒胡椒"]["unit"] == "小さじ"
+
+
+def test_jsonld_route_splits_each_grouped_ingredient() -> None:
+    """罠4続き: 「塩、にんにくチューブ 各小さじ1/2」は個別の2件へ分かれ、
+    同じ量がそれぞれに付く。"""
+    result = _extract_nadia_jsonld()
+    by_name = {ing["name"]: ing for ing in result["recipe"]["ingredients"]}
+
+    assert by_name["塩"]["qty"] == "1/2"
+    assert by_name["塩"]["unit"] == "小さじ"
+    assert by_name["にんにくチューブ"]["qty"] == "1/2"
+    assert by_name["にんにくチューブ"]["unit"] == "小さじ"
+
+
+# --- 栄養価をサイトから取り込む（ADR-015 §6 追補） ----------------------------------------
+
+
+def test_jsonld_nutrition_fills_meta_except_salt() -> None:
+    """JSON-LD の `nutrition` から `kcal`/`protein_g`/`fat_g`/`carb_g` が入る。
+    `sodiumContent`（ナトリウム）は食塩相当量と別物なので**換算しない**——
+    `salt_g` は本文の DOM（食塩相当量ラベル）から入る。
+    """
+    result = _extract_nadia_jsonld()
+    meta = result["recipe"]["meta"]
+
+    assert meta["kcal"] == 685.0
+    assert meta["protein_g"] == 20.5
+    assert meta["fat_g"] == 35.2
+    assert meta["carb_g"] == 66.5
+    assert meta["salt_g"] == 2.8  # DOM の「食塩相当量」から（JSON-LD の値ではない）
+    assert meta["nutrition_source"] == "site"
+
+
+_NADIA_HTML_WITHOUT_NUTRITION = """
+<html><head><title>栄養価表示の無いレシピ | 架空レシピサイトNadia風</title></head>
+<body>
+<h1 class="RecipeTitle_RecipeTitle__NG9RZ">栄養価表示の無いレシピ</h1>
+<h2 class="RecipeHeading_heading__be7bg">材料<span class="RecipeHeading_bunryoYield__zSg6N">2人分</span></h2>
+<ul class="IngredientsList_list__0Zyys">
+<li><div class="IngredientsList_group__kmzYa"></div><div class="IngredientsList_ingredient__DYoCy">鮭</div><div class="IngredientsList_amount__uQJk8">2切れ</div></li>
+</ul>
+<h2 class="RecipeHeading_heading__be7bg">作り方</h2>
+<ul class="CookingProcess_list__S2P2K">
+<li><div class="CookingProcess_group__qfzPk"><span>1</span></div><div class="CookingProcess_textBox__RJVsq"><p class="CookingProcess_text__ZoCP4"><span>鮭に塩を振る。</span></p></div></li>
+</ul>
+</body></html>
+"""
+
+
+def test_nutrition_absent_from_both_leaves_meta_untouched() -> None:
+    """JSON-LD の `nutrition` も、サイト別アダプタの栄養 DOM も無ければ、
+    `meta` に栄養の鍵は増えず `nutrition_source` も既定のまま（空文字相当）。
+    """
+    result = recipe_import.extract_auto(
+        _NADIA_HTML_WITHOUT_NUTRITION, "https://oceans-nadia.com/user/1/recipe/2"
+    )
+
+    assert result["method"] == "adapter:nadia"
+    meta = result["recipe"]["meta"]
+    assert "kcal" not in meta
+    assert "nutrition_source" not in meta

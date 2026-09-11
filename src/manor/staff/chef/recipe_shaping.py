@@ -94,30 +94,142 @@ def strip_html_comments(html: str) -> str:
     return _HTML_COMMENT_RE.sub("", html or "")
 
 
-#: 「名前 数量単位」の素朴な分割（末尾の数量らしき塊を amount とみなす）。
-_AMOUNT_RE = re.compile(r"^(?P<name>.*?)[\s　]+(?P<amount>[\d０-９].*)$")
-#: `amount` から数量だけを切り出す（先頭の数字・分数・波ダッシュの塊）。
-_QTY_HEAD_RE = re.compile(r"^([\d０-９./~〜]+)\s*(.*)$")
+#: 材料の分割（主人の実測。ADR-015 §6 追補・2026-09-12）。実測で見つかった穴:
+#: 「粗挽き黒胡椒 小さじ1/4」のように**数字で始まらない**量（小さじ・大さじ・少々…）が
+#: 材料名に混ざって残る／「塩、にんにくチューブ 各小さじ1/2」のように**複数の材料が
+#: 1行にまとまり量に「各」が付く**のに分けられない、の2つ。
+#:
+#: `parse_ingredient_line()` は1行の文字列（JSON-LD の `recipeIngredient`・汎用抽出の
+#: `<li>` テキストなど、名前と量がまだ1本の文字列のまま）を対象に、**末尾から**量の語彙を
+#: 認識して切り出す。サイト別アダプタが名前と量を別々の DOM から取れるときは
+#: `split_grouped_ingredient()` を直接使ってよい（`recipe_sites/nadia.py` 参照）。
+#:
+#: どちらも**複数件**（`list[dict]`）を返す——「各」や読点区切りで1行が複数の材料を
+#: 表すことがあるため（呼び出し側は `for line in lines for ing in parse_ingredient_line(line)`
+#: のように展開する。`recipe_import.py`・`recipe_sites/generic.py`・`recipe_sites/
+#: cookpad.py` 参照）。
+
+#: 量だけで数字を伴わない語（「小さじ」等の助数詞そのものは別枠）。
+_QTY_PHRASE_WORDS: tuple[str, ...] = ("適量", "少々", "ひとつまみ", "ふたつまみ", "お好みで")
+
+#: 数字の後ろに付く助数詞・単位（ADR-015 §6 追補の語彙）。長い候補を先に置き、
+#: `切れ` を `れ` 単独等で誤って途中一致させない（正規表現の | は先勝ち）。
+_QTY_COUNTER_UNITS: tuple[str, ...] = (
+    "kg", "ml", "cc", "cm", "㎝", "g", "個", "枚", "本", "切れ", "束", "株", "房",
+    "丁", "片", "袋", "缶", "合", "杯", "滴",
+)
+
+#: 数量の数字部分（整数・小数・分数・全角数字・「1と1/2」のような帯分数）。
+_NUM_PART = r"[\d０-９]+(?:[./][\d０-９]+)?(?:と[\d０-９]+(?:[./][\d０-９]+)?)?"
+
+#: 行（または DOM から取れた amount 文字列）の**末尾**にある量を認識する。
+#: 「各」は数字の直前（間に空白があってもよい）に付く——「各小さじ1/2」「各 200g」の両方を拾う。
+_AMOUNT_TAIL_RE = re.compile(
+    r"(?P<each>各\s*)?"
+    r"(?P<amount>"
+    rf"(?:大さじ|小さじ|カップ)\s*{_NUM_PART}"
+    rf"|{'|'.join(_QTY_PHRASE_WORDS)}"
+    rf"|{_NUM_PART}\s*(?:{'|'.join(_QTY_COUNTER_UNITS)})(?:分)?"
+    r")\s*$"
+)
+
+#: 材料名の先頭に付くグループ記号（ADR-015 §6 追補）。`(A)`／`（A）`／`【A】`／`★`／
+#: 素の1文字（`A 醤油…` のように空白1つを挟んで続く形）。素の1文字は日本語の材料名の
+#: 先頭には現れない前提の緩いヒューリスティック——当たらなければ何もしない。
+_GROUP_PREFIX_RE = re.compile(
+    r"^(?:\(([^)]{1,4})\)|（([^）]{1,4})）|【([^】]{1,4})】|(★)|([A-Za-zＡ-Ｚａ-ｚ])(?=[\s　]))[\s　]*"
+)
+
+#: 材料名を複数へ割る区切り（読点・カンマ・中黒）。
+_NAME_SPLIT_RE = re.compile(r"[、,・]")
 
 
-def parse_ingredient_line(line: str) -> dict[str, str]:
-    """「ご飯 300g」のような1行を `{"name","qty","unit","group"}` へ素朴に分ける
-    （JSON-LD・汎用抽出向け。サイト別アダプタが DOM から名前と数量を別々に取れる
-    ときはこれを使わなくてよい）。当たらなければ `qty`/`unit` は空文字のまま。
+def _split_amount_text(amount: str) -> tuple[str, str]:
+    """量の文字列を `(qty, unit)` へ分ける。「大さじ2と1/2」→`("2と1/2","大さじ")`、
+    「300g」→`("300","g")`、「少々」のような数字を伴わない語→`("","少々")`
+    （ADR-015 §6「unit は『大さじ』『g』等、qty は数（`2と1/2` は文字列のまま可）」）。
+    """
+    text = (amount or "").strip()
+    if not text:
+        return "", ""
+    for word in ("大さじ", "小さじ", "カップ"):
+        if text.startswith(word):
+            return text[len(word):].strip(), word
+    if text in _QTY_PHRASE_WORDS:
+        return "", text
+    m = re.match(rf"^({_NUM_PART})[\s　]*(.*)$", text)
+    if m:
+        return m.group(1), m.group(2).strip()
+    return "", text
+
+
+def split_grouped_ingredient(name: str, amount: str, *, group: str = "") -> list[dict[str, str]]:
+    """名前と量が**既に別々**（サイト別アダプタが DOM から取れた形）の材料を、
+    「各」＋読点区切りの複数材料へ必要なら分ける（ADR-015 §6 の実測: Nadia の
+    「塩、にんにくチューブ」＋「各小さじ1/2」）。
+
+    - `amount` の先頭が `各` なら、`name` を読点（`、`/`,`/`・`）で割った**すべて**に
+      同じ `qty`/`unit` を付ける
+    - `各` が無くても `name` に読点区切りで2つ以上並んでいれば分ける。この場合は
+      **最後の1つにだけ** `qty`/`unit` を付け、他は空にする（ADR-015 §6）
+    - 割れなければ（材料が1つだけ）今までどおり1件を返す
+    """
+    name = (name or "").strip()
+    amount = (amount or "").strip()
+    each = amount.startswith("各")
+    if each:
+        amount = amount[1:].strip()
+    qty, unit = _split_amount_text(amount)
+
+    if not name:
+        return []
+
+    names = [n.strip() for n in _NAME_SPLIT_RE.split(name) if n.strip()]
+    if len(names) < 2:
+        return [{"name": name, "qty": qty, "unit": unit, "group": group}]
+
+    last = len(names) - 1
+    return [
+        {
+            "name": n,
+            "qty": qty if (each or i == last) else "",
+            "unit": unit if (each or i == last) else "",
+            "group": group,
+        }
+        for i, n in enumerate(names)
+    ]
+
+
+def parse_ingredient_line(line: str) -> list[dict[str, str]]:
+    """「ご飯 300g」「塩、にんにくチューブ 各小さじ1/2」のような1行（名前と量が
+    まだ1本の文字列のまま）を `[{"name","qty","unit","group"}, ...]` へ分ける
+    （JSON-LD・汎用抽出向け。サイト別アダプタが DOM から名前と量を別々に取れるときは
+    `split_grouped_ingredient()` を直接使ってよい）。
+
+    先頭のグループ記号（`(A)`等）を落としてから、**末尾**の量の語彙を認識する。
+    量を認識できなければ `qty`/`unit` は空文字のまま全文を `name` に入れる
+    （ADR-015 §6「今より悪くしない」）。1行が複数件になり得るので**常にリストを返す**。
     """
     text = (line or "").strip()
     if not text:
-        return {"name": "", "qty": "", "unit": "", "group": ""}
-    m = _AMOUNT_RE.match(text)
-    if m:
-        name, amount = m.group("name").strip(), m.group("amount").strip()
-    else:
-        name, amount = text, ""
-    qty, unit = "", ""
-    if amount:
-        qm = _QTY_HEAD_RE.match(amount)
-        if qm:
-            qty, unit = qm.group(1), qm.group(2).strip()
-        else:
-            unit = amount
-    return {"name": name or text, "qty": qty, "unit": unit, "group": ""}
+        return []
+
+    group = ""
+    gm = _GROUP_PREFIX_RE.match(text)
+    if gm:
+        group = next((g for g in gm.groups() if g), "")
+        text = text[gm.end():].strip()
+        if not text:
+            return [{"name": "", "qty": "", "unit": "", "group": group}]
+
+    m = _AMOUNT_TAIL_RE.search(text)
+    if not m:
+        return [{"name": text, "qty": "", "unit": "", "group": group}]
+
+    name_part = text[: m.start()].strip()
+    if not name_part:
+        # 量らしき語だけで名前が空になるのは誤検出——安全側に倒して全文を name に戻す。
+        return [{"name": text, "qty": "", "unit": "", "group": group}]
+
+    amount_text = ("各" if m.group("each") else "") + m.group("amount")
+    return split_grouped_ingredient(name_part, amount_text, group=group)

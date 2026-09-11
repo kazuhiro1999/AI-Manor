@@ -10,6 +10,8 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
+import pytest
+
 from manor import db as db_mod
 
 
@@ -524,3 +526,111 @@ def test_migrate_core_does_not_resurrect_archived_kinds(home, conn) -> None:
         assert rows["admin"]["archived_at"] is not None
     finally:
         c2.close()
+
+
+# --- ADR-015 §6 追補: chef_recipe_meta.nutrition_source に 'site' を足す表の作り直し ------
+
+
+def test_init_widens_nutrition_source_check_to_allow_site(tmp_path: Path) -> None:
+    """既存 DB（`nutrition_source` の CHECK が `'site'` を持たない）に `manor init` を
+    通すと、表を作り直してでも `'site'` を受け付けるようになる（SQLite は ALTER TABLE
+    で CHECK 制約を変えられないため）。既存の手入力（`manual`・kcal）は残る。
+    """
+    home = tmp_path / "old_home_nutrition_site"
+    _make_old_chef_recipe_db(home)
+    conn = sqlite3.connect(str(home / "manor.db"))
+    try:
+        conn.execute(
+            "UPDATE chef_recipe_meta SET kcal = 500, nutrition_source = 'manual' WHERE recipe_id = 1"
+        )
+        conn.commit()
+        with pytest.raises(sqlite3.IntegrityError):
+            conn.execute(
+                "UPDATE chef_recipe_meta SET nutrition_source = 'site' WHERE recipe_id = 1"
+            )
+    finally:
+        conn.rollback()
+        conn.close()
+
+    db_mod.init(home)
+
+    conn = db_mod.connect(home)
+    try:
+        # 既存の値は残る（作り直しはコピーであって、消えない）。
+        row = conn.execute("SELECT * FROM chef_recipe_meta WHERE recipe_id = 1").fetchone()
+        assert row["kcal"] == 500
+        assert row["nutrition_source"] == "manual"
+
+        # 'site' が通るようになっている（作り直しが効いた証拠）。
+        conn.execute("UPDATE chef_recipe_meta SET nutrition_source = 'site' WHERE recipe_id = 1")
+        conn.commit()
+        row2 = conn.execute("SELECT nutrition_source FROM chef_recipe_meta WHERE recipe_id = 1").fetchone()
+        assert row2["nutrition_source"] == "site"
+    finally:
+        conn.close()
+
+
+def test_migrate_core_widens_nutrition_source_check_to_allow_site(tmp_path: Path) -> None:
+    """`migrate_core`（`manor init` を回さなくても CLI が毎回当てる軽い経路）だけでも届く。"""
+    home = tmp_path / "old_home_nutrition_site_migrate"
+    _make_old_chef_recipe_db(home)
+
+    db_mod.migrate_core(home)
+
+    conn = db_mod.connect(home)
+    try:
+        conn.execute("UPDATE chef_recipe_meta SET nutrition_source = 'site' WHERE recipe_id = 1")
+        conn.commit()
+        row = conn.execute("SELECT nutrition_source FROM chef_recipe_meta WHERE recipe_id = 1").fetchone()
+        assert row["nutrition_source"] == "site"
+    finally:
+        conn.close()
+
+
+def test_init_nutrition_source_migration_is_idempotent_run_twice(tmp_path: Path) -> None:
+    """2回 `init()` を通しても既存の行は増えず、値も保たれる（冪等）。"""
+    home = tmp_path / "old_home_nutrition_site_twice"
+    _make_old_chef_recipe_db(home)
+    conn = sqlite3.connect(str(home / "manor.db"))
+    try:
+        conn.execute(
+            "UPDATE chef_recipe_meta SET kcal = 685, nutrition_source = 'manual' WHERE recipe_id = 1"
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    db_mod.init(home)
+    db_mod.init(home)  # 2回目もエラーにならない・積み増さない
+
+    conn = db_mod.connect(home)
+    try:
+        n = conn.execute("SELECT COUNT(*) AS n FROM chef_recipe_meta").fetchone()["n"]
+        assert n == 1
+        row = conn.execute("SELECT * FROM chef_recipe_meta WHERE recipe_id = 1").fetchone()
+        assert row["kcal"] == 685
+        assert row["nutrition_source"] == "manual"
+    finally:
+        conn.close()
+
+
+def test_fresh_db_already_allows_site_nutrition_source(tmp_path: Path) -> None:
+    """新規 DB は最初から `'site'` を受け付ける（`schema.sql` が最初から持つ経路も確かめる）。"""
+    home = tmp_path / "fresh_home_nutrition_site"
+    db_mod.init(home)
+
+    conn = db_mod.connect(home)
+    try:
+        conn.execute(
+            "INSERT INTO chef_recipe (title, body, created_at, updated_at)"
+            " VALUES ('新しいレシピ', '{}', '2026-01-01T00:00:00', '2026-01-01T00:00:00')"
+        )
+        conn.execute(
+            "INSERT INTO chef_recipe_meta (recipe_id, nutrition_source, tags)"
+            " VALUES (1, 'site', '[]')"
+        )
+        conn.commit()
+        row = conn.execute("SELECT nutrition_source FROM chef_recipe_meta WHERE recipe_id = 1").fetchone()
+        assert row["nutrition_source"] == "site"
+    finally:
+        conn.close()

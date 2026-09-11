@@ -97,7 +97,7 @@ def extract(html: str, url: str, *, title: str = "") -> dict | None:
         "title": title,
         "servings": None,
         "total_minutes": None,
-        "ingredients": [shaping.parse_ingredient_line(t) for t in ingredients_raw],
+        "ingredients": [ing for t in ingredients_raw for ing in shaping.parse_ingredient_line(t)],
         "tools": [],
         "raw_steps": [{"instruction": t, "image": None} for t in steps_raw],
         "hero_image": "",

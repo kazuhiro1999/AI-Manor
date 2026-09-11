@@ -7,13 +7,51 @@
  */
 import { api } from "../../app/api";
 import type { TranslationKey } from "../../app/i18n";
-import type { RecipeBody, RecipeFacets, RecipeIngredient, RecipeListItem, StepCompletion } from "../../app/types";
+import type { RecipeBody, RecipeFacets, RecipeIngredient, RecipeListItem, RecipeMeta, StepCompletion } from "../../app/types";
 
 // §6 D9「語彙は固定」（`staff/chef/lexicon.toml` が唯一の出どころ。ここは画面の select・
 // 一覧の絞り込みチップに使う写し）。
 export const CATEGORY_OPTIONS = ["主菜", "副菜", "汁物", "ご飯もの", "麺", "デザート", "その他"] as const;
 export const MAIN_INGREDIENT_OPTIONS = ["肉", "魚介", "卵", "野菜", "豆腐・大豆", "きのこ", "その他"] as const;
 export const CUISINE_OPTIONS = ["和食", "洋食", "中華", "韓国", "エスニック", "その他"] as const;
+
+// ADR-015 D1「うちの値」の栄養5つ——`RecipeMetaForm`（編集）・`RecipeNewPage`（登録。小さく
+// 出す版）の両方が同じ語彙・並びを使う（画面間で書き写さない）。
+export const NUTRITION_FIELDS = ["kcal", "protein_g", "fat_g", "carb_g", "salt_g"] as const;
+export type NutritionField = (typeof NUTRITION_FIELDS)[number];
+export const NUTRITION_LABEL_KEY: Record<NutritionField, TranslationKey> = {
+  kcal: "kitchen.recipes.kcalLabel",
+  protein_g: "kitchen.recipes.proteinLabel",
+  fat_g: "kitchen.recipes.fatLabel",
+  carb_g: "kitchen.recipes.carbLabel",
+  salt_g: "kitchen.recipes.saltLabel",
+};
+// `nutrition_source` の表示語（`RecipeMetaForm`・`RecipeDetail`・`RecipeNewPage` で共通）。
+// ``=未設定／`site`=出典サイトの表示値をそのまま採った／`estimated`=Claude 推定／
+// `manual`=手入力、の4状態。
+export const NUTRITION_SOURCE_LABEL_KEY: Record<string, TranslationKey> = {
+  "": "kitchen.recipes.nutritionSourceNone",
+  site: "kitchen.recipes.nutritionSourceSite",
+  estimated: "kitchen.recipes.nutritionSourceEstimated",
+  manual: "kitchen.recipes.nutritionSourceManual",
+};
+
+export type NutritionFormValue = Record<NutritionField, string>;
+
+export function emptyNutritionForm(): NutritionFormValue {
+  return { kcal: "", protein_g: "", fat_g: "", carb_g: "", salt_g: "" };
+}
+
+/** 下書き・サーバの `meta`（数値 or null）→ 画面の入力欄（文字列）。 */
+export function nutritionMetaToForm(meta: Partial<RecipeMeta> | null | undefined): NutritionFormValue {
+  const out = emptyNutritionForm();
+  if (!meta) return out;
+  for (const key of NUTRITION_FIELDS) {
+    const v = meta[key];
+    out[key] = v == null ? "" : String(v);
+  }
+  return out;
+}
 
 // 契約 §3 の上限（`chef/recipes.py` の `_TITLE_MAX`/`_INSTRUCTION_MAX` と同じ値）。
 export const STEP_TITLE_MAX = 12;
@@ -49,6 +87,7 @@ export interface RecipeFormValue {
   title: string;
   sourceUrl: string;
   sourceSite: string;
+  heroImage: string;
   servings: string;
   totalMinutes: string;
   tools: string; // カンマ区切り
@@ -92,6 +131,7 @@ export function emptyRecipeForm(): RecipeFormValue {
     title: "",
     sourceUrl: "",
     sourceSite: "",
+    heroImage: "",
     servings: "",
     totalMinutes: "",
     tools: "",
@@ -112,6 +152,7 @@ export function recipeBodyToFormValue(body: RecipeBody): RecipeFormValue {
     title: body.title,
     sourceUrl: body.source_url,
     sourceSite: body.source_site,
+    heroImage: body.hero_image || "",
     servings: body.servings == null ? "" : String(body.servings),
     totalMinutes: body.total_minutes == null ? "" : String(body.total_minutes),
     tools: (body.tools || []).join(", "),
@@ -155,7 +196,7 @@ export function formValueToRecipeBody(form: RecipeFormValue): RecipeBody {
     title: form.title.trim(),
     source_url: form.sourceUrl.trim(),
     source_site: form.sourceSite.trim() || deriveSiteFromUrl(form.sourceUrl),
-    hero_image: "",
+    hero_image: form.heroImage.trim(),
     servings: form.servings.trim() === "" ? null : Number(form.servings),
     total_minutes: form.totalMinutes.trim() === "" ? null : Number(form.totalMinutes),
     ingredients: form.ingredients.map((ing) => ({

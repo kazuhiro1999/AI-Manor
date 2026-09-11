@@ -288,6 +288,31 @@ describe("kitchen recipes — 一覧（ADR-015 D4・§6 D4'・D9）", () => {
     await waitFor(() => expect(screen.queryByText("パラパラ炒飯")).toBeNull());
     expect(screen.getByText("鶏の唐揚げ")).toBeTruthy();
   });
+
+  it("hero_image があるカードは img の src にそのまま描かれる（無いカードは札になる）", async () => {
+    const withPhoto = { ...chahan(), hero_image: "https://picsum.photos/seed/chahan-real/480/360" };
+    const withoutPhoto = karaage(); // hero_image: ""
+    mockListAndFacets([withPhoto, withoutPhoto]);
+
+    const { container } = render(
+      <MemoryRouter initialEntries={["/"]}>
+        <ToastProvider>
+          <RecipesRouter />
+        </ToastProvider>
+      </MemoryRouter>
+    );
+
+    await waitFor(() => expect(screen.getByText("パラパラ炒飯")).toBeTruthy());
+
+    // `alt=""` の装飾画像はアクセシビリティツリーの img ロールから外れるので querySelector で見る。
+    const photoCard = screen.getByText("パラパラ炒飯").closest(".recipe-card") as HTMLElement;
+    const img = photoCard.querySelector("img") as HTMLImageElement;
+    expect(img.src).toBe("https://picsum.photos/seed/chahan-real/480/360");
+
+    const noPhotoCard = screen.getByText("鶏の唐揚げ").closest(".recipe-card") as HTMLElement;
+    expect(noPhotoCard.querySelector("img")).toBeNull();
+    expect(container.querySelectorAll(".recipe-card-placeholder").length).toBe(1);
+  });
 });
 
 describe("kitchen recipes — 登録・取り込み（ADR-015 D2・D4・§6 D7）", () => {
@@ -547,6 +572,9 @@ describe("kitchen recipes — 登録・取り込み（ADR-015 D2・D4・§6 D7�
     await user.type(phaseInputs[1], "仕上げ");
     await user.type(screen.getByLabelText("見出し"), "混ぜる");
     await user.type(screen.getByLabelText("本文"), "全部混ぜるだけ。");
+    // 完成画像の URL 欄（主人「枠自体はあるんでしょうか」への対応）——手入力でも欄に
+    // 打った値がそのまま送信される（旧版は `hero_image: ""` 固定で捨てられていた）。
+    await user.type(screen.getByLabelText("完成画像の URL"), "https://example.com/photo.jpg");
 
     await user.click(screen.getByRole("button", { name: "登録" }));
 
@@ -575,7 +603,96 @@ describe("kitchen recipes — 登録・取り込み（ADR-015 D2・D4・§6 D7�
     ]);
     expect(body.ingredients).toEqual([]);
     expect(body.tools).toEqual([]);
-    expect(body.hero_image).toBe("");
+    // 下書き（フォームの中身）の URL がそのまま乗る——旧版はここが `""` 固定の不具合だった。
+    expect(body.hero_image).toBe("https://example.com/photo.jpg");
+  });
+
+  it("取り込みの下書きの hero_image・栄養（うちの値）が登録にそのまま乗る（Nadia 想定）", async () => {
+    const calls: { url: string; init?: RequestInit }[] = [];
+    const draftHeroImage = "https://picsum.photos/seed/nadia-hero-real/480/360";
+    globalThis.fetch = vi.fn().mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = (init?.method || "GET").toUpperCase();
+      calls.push({ url, init });
+      if (url.endsWith("/api/v1/kitchen/recipes/import") && method === "POST") {
+        const draft = {
+          recipe: {
+            title: "取り込んだレシピ（Nadia）",
+            source_url: "https://oceans-nadia.com/user/1/recipe/2",
+            source_site: "oceans-nadia.com",
+            hero_image: draftHeroImage,
+            servings: 2,
+            total_minutes: 15,
+            ingredients: [{ name: "材料1", qty: "1", unit: "個", prep: "", group: "" }],
+            tools: [],
+            phases: [{ id: "prep", title: "下ごしらえ" }],
+            steps: [
+              { index: 1, phase: "prep", title: "混ぜる", instruction: "全部混ぜるだけ。", image: null, ingredients_used: [], timer_sec: null, completion: "manual", tips: [] },
+            ],
+          },
+          method: "adapter:nadia",
+          warnings: [],
+          meta: { kcal: 685, protein_g: 20.5, fat_g: 35.2, carb_g: 66.5, salt_g: 2.8, nutrition_source: "site" },
+        };
+        return { ok: true, status: 200, json: async () => draft };
+      }
+      if (url.endsWith("/api/v1/kitchen/recipes") && method === "POST") {
+        const created: Recipe = { ...chahan(), id: 11 };
+        return { ok: true, status: 200, json: async () => created };
+      }
+      if (url.endsWith("/api/v1/kitchen/recipes/11/meta") && method === "PUT") {
+        return { ok: true, status: 200, json: async () => chahan() };
+      }
+      throw new Error("unexpected fetch: " + url);
+    }) as unknown as typeof fetch;
+
+    const user = userEvent.setup();
+    const { container } = render(
+      <MemoryRouter initialEntries={["/new"]}>
+        <ToastProvider>
+          <RecipesRouter />
+        </ToastProvider>
+      </MemoryRouter>
+    );
+
+    await user.type(screen.getByPlaceholderText("レシピの URL"), "https://oceans-nadia.com/user/1/recipe/2");
+    await user.click(screen.getByRole("button", { name: "取り込む" }));
+
+    await waitFor(() => expect((screen.getByLabelText("題名") as HTMLInputElement).value).toBe("取り込んだレシピ（Nadia）"));
+    // 完成画像の URL 欄に下書きの値がそのまま入り、その場でプレビューされる
+    // （`alt=""` の装飾画像なので querySelector で見る）。
+    expect((screen.getByLabelText("完成画像の URL") as HTMLInputElement).value).toBe(draftHeroImage);
+    expect((container.querySelector(".hero-image-preview") as HTMLImageElement).src).toBe(draftHeroImage);
+    // 登録時にも栄養5つが小さく出て、下書きの値が前もって入っている。
+    expect((screen.getByLabelText("kcal") as HTMLInputElement).value).toBe("685");
+    expect((screen.getByLabelText("たんぱく質(g)") as HTMLInputElement).value).toBe("20.5");
+    expect(screen.getByText("栄養の出どころ: 出典の表示値")).toBeTruthy();
+
+    await user.click(screen.getByRole("button", { name: "登録" }));
+
+    await waitFor(() =>
+      expect(calls.some((c) => c.url.endsWith("/api/v1/kitchen/recipes") && (c.init?.method || "").toUpperCase() === "POST")).toBe(true)
+    );
+    const postCall = calls.find((c) => c.url.endsWith("/api/v1/kitchen/recipes") && (c.init?.method || "").toUpperCase() === "POST");
+    const body = JSON.parse(String(postCall?.init?.body));
+    expect(body.hero_image).toBe(draftHeroImage);
+    expect(body.source_site).toBe("oceans-nadia.com");
+
+    // 登録直後に PUT .../meta で栄養（うちの値）が乗る——`nutrition_source` は "site" を
+    // 明示して、`manual` へ落ちないようにする。
+    await waitFor(() =>
+      expect(calls.some((c) => c.url.endsWith("/api/v1/kitchen/recipes/11/meta") && (c.init?.method || "").toUpperCase() === "PUT")).toBe(
+        true
+      )
+    );
+    const metaCall = calls.find((c) => c.url.endsWith("/api/v1/kitchen/recipes/11/meta") && (c.init?.method || "").toUpperCase() === "PUT");
+    const metaBody = JSON.parse(String(metaCall?.init?.body));
+    expect(metaBody.kcal).toBe(685);
+    expect(metaBody.protein_g).toBe(20.5);
+    expect(metaBody.fat_g).toBe(35.2);
+    expect(metaBody.carb_g).toBe(66.5);
+    expect(metaBody.salt_g).toBe(2.8);
+    expect(metaBody.nutrition_source).toBe("site");
   });
 });
 
@@ -615,6 +732,85 @@ describe("kitchen recipes — 表示（ADR-015 D4）", () => {
     const stepCard = screen.getByText("しょうがを刻む。").closest(".step-card") as HTMLElement;
     await userEvent.setup().click(within(stepCard).getByRole("button", { name: "tips" }));
     expect(within(stepCard).getByText("みじん切りで香りが立つ")).toBeTruthy();
+  });
+
+  it("表示ページの頭に hero_image がそのまま描かれる", async () => {
+    const recipe = { ...chahan(), hero_image: "https://picsum.photos/seed/chahan-detail-real/480/360" };
+    globalThis.fetch = vi.fn().mockImplementation(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/api/v1/kitchen/recipes/1")) {
+        return { ok: true, status: 200, json: async () => recipe };
+      }
+      throw new Error("unexpected fetch: " + url);
+    }) as unknown as typeof fetch;
+
+    const { container } = render(
+      <MemoryRouter initialEntries={["/1"]}>
+        <ToastProvider>
+          <RecipesRouter />
+        </ToastProvider>
+      </MemoryRouter>
+    );
+
+    await waitFor(() => expect(screen.getAllByText("パラパラ炒飯").length).toBeGreaterThan(0));
+    const hero = container.querySelector(".recipe-hero-head img") as HTMLImageElement;
+    expect(hero.src).toBe("https://picsum.photos/seed/chahan-detail-real/480/360");
+    expect(container.querySelector(".recipe-hero-head.no-image")).toBeNull();
+  });
+
+  it("材料の表は qty と unit が別々の列に来ても崩れない", async () => {
+    const recipe = {
+      ...chahan(),
+      ingredients: [
+        { name: "塩", qty: "小さじ", unit: "1/2", prep: "", group: "" },
+        { name: "しょうゆ", qty: "大さじ", unit: "1", prep: "", group: "" },
+      ],
+    };
+    globalThis.fetch = vi.fn().mockImplementation(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/api/v1/kitchen/recipes/1")) {
+        return { ok: true, status: 200, json: async () => recipe };
+      }
+      throw new Error("unexpected fetch: " + url);
+    }) as unknown as typeof fetch;
+
+    render(
+      <MemoryRouter initialEntries={["/1"]}>
+        <ToastProvider>
+          <RecipesRouter />
+        </ToastProvider>
+      </MemoryRouter>
+    );
+
+    await waitFor(() => expect(screen.getByText("塩")).toBeTruthy());
+    const saltRow = screen.getByText("塩").closest("tr") as HTMLElement;
+    const saltCells = within(saltRow).getAllByRole("cell");
+    expect(saltCells.map((c) => c.textContent)).toEqual(["塩", "小さじ", "1/2", ""]);
+
+    const soySauceRow = screen.getByText("しょうゆ").closest("tr") as HTMLElement;
+    const soySauceCells = within(soySauceRow).getAllByRole("cell");
+    expect(soySauceCells.map((c) => c.textContent)).toEqual(["しょうゆ", "大さじ", "1", ""]);
+  });
+
+  it("出典サイトの表示値から取った栄養は「出典の表示値」と出る", async () => {
+    const recipe = { ...chahan(), meta: { ...chahan().meta, kcal: 685, nutrition_source: "site" as const } };
+    globalThis.fetch = vi.fn().mockImplementation(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/api/v1/kitchen/recipes/1")) {
+        return { ok: true, status: 200, json: async () => recipe };
+      }
+      throw new Error("unexpected fetch: " + url);
+    }) as unknown as typeof fetch;
+
+    render(
+      <MemoryRouter initialEntries={["/1"]}>
+        <ToastProvider>
+          <RecipesRouter />
+        </ToastProvider>
+      </MemoryRouter>
+    );
+
+    await waitFor(() => expect(screen.getByText("栄養の出どころ: 出典の表示値")).toBeTruthy());
   });
 });
 
@@ -756,6 +952,6 @@ describe("kitchen recipes — 編集とうちの値（ADR-015 D1・D4・§6 D9�
 
     await waitFor(() => expect((screen.getByLabelText("kcal") as HTMLInputElement).value).toBe("600"));
     expect((screen.getByLabelText("たんぱく質(g)") as HTMLInputElement).value).toBe("25");
-    expect(screen.getByText("栄養の出どころ: 推定")).toBeTruthy();
+    expect(screen.getByText("栄養の出どころ: 推定（Claude）")).toBeTruthy();
   });
 });
