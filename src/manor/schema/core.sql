@@ -14,7 +14,8 @@ CREATE TABLE IF NOT EXISTS meta (
 -- 約束——一度畳んだものを復活させない）。
 CREATE TABLE IF NOT EXISTS user (
   id          TEXT PRIMARY KEY,
-  name        TEXT NOT NULL,
+  name        TEXT NOT NULL,             -- 利用者名（識別用。切り替え・一覧に出る）
+  callname    TEXT NOT NULL DEFAULT '',  -- 呼び名（執事がどう呼ぶか。空なら name で呼ぶ。ADR-014 D1'）
   role        TEXT NOT NULL CHECK (role IN ('principal','member','butler')),
   created_at  TEXT NOT NULL,
   archived_at TEXT

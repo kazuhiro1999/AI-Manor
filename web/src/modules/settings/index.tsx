@@ -111,8 +111,11 @@ function ProfileSection() {
   );
 }
 
-/** ADR-014 D1・D3:「利用者」節。名前の変更・畳む・追加。**主人と執事は畳めない。**
- * 押す前に `confirm()` は使わず、2度押し（1度目は確認ボタンへ切り替わるだけ）で畳む。
+/** ADR-014 D1・D1'・D3:「利用者」節。**利用者名（識別用。`name`）と呼び名（執事がどう
+ * 呼ぶか。`callname`）は別欄**（主人のご指摘 2026-09-11: 「識別用のユーザー名と、どう
+ * 呼ばれたいかは分けてください」）——2つの欄をそれぞれ独立に編集できる（片方だけ保存すれば
+ * もう片方は送らない）。畳む前に `confirm()` は使わず、2度押し（1度目は確認ボタンへ
+ * 切り替わるだけ）で畳む。**主人と執事は畳めない。**
  */
 function UserRow({
   user,
@@ -124,17 +127,20 @@ function UserRow({
   onChanged: () => void;
 }) {
   const t = useT();
-  const [editing, setEditing] = useState(false);
+  const [editingName, setEditingName] = useState(false);
   const [name, setName] = useState(user.name);
+  const [editingCallname, setEditingCallname] = useState(false);
+  const [callname, setCallname] = useState(user.callname || "");
   const [confirmArchive, setConfirmArchive] = useState(false);
   const [busy, setBusy] = useState(false);
   const { show } = useToast();
   // ADR-014 D1: principal（主人）・butler（執事）は畳めない。
   const protectedRole = user.role === "principal" || user.role === "butler";
 
-  const startEdit = () => {
+  const startEditName = () => {
     setName(user.name);
-    setEditing(true);
+    setEditingCallname(false);
+    setEditingName(true);
   };
 
   const saveRename = async () => {
@@ -147,10 +153,34 @@ function UserRow({
     try {
       await api(`/users/${encodeURIComponent(user.id)}`, { method: "POST", body: { name: trimmed } });
       show(t("settings.users.renamed"), "ok", 3000);
-      setEditing(false);
+      setEditingName(false);
       onChanged();
     } catch (err) {
       show(t("settings.users.renameFailed", { reason: err instanceof ApiError ? err.message : t("common.unknown") }), "error");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const startEditCallname = () => {
+    setCallname(user.callname || "");
+    setEditingName(false);
+    setEditingCallname(true);
+  };
+
+  const saveCallname = async () => {
+    setBusy(true);
+    try {
+      // callname は空文字を許す（「呼び名は未設定・利用者名で呼ぶ」に戻す操作。D1'）。
+      await api(`/users/${encodeURIComponent(user.id)}`, { method: "POST", body: { callname: callname.trim() } });
+      show(t("settings.users.callnameSaved"), "ok", 3000);
+      setEditingCallname(false);
+      onChanged();
+    } catch (err) {
+      show(
+        t("settings.users.callnameSaveFailed", { reason: err instanceof ApiError ? err.message : t("common.unknown") }),
+        "error"
+      );
     } finally {
       setBusy(false);
     }
@@ -178,7 +208,7 @@ function UserRow({
   return (
     <div className="row-item" data-user-id={user.id}>
       <span className="row-id">{t(USER_ROLE_LABEL_KEY[user.role])}</span>
-      {editing ? (
+      {editingName ? (
         <>
           <input
             className="form-input"
@@ -191,7 +221,7 @@ function UserRow({
           <button className="btn btn-small btn-primary" type="button" disabled={busy} onClick={saveRename}>
             {t("common.save")}
           </button>
-          <button className="btn btn-small" type="button" disabled={busy} onClick={() => setEditing(false)}>
+          <button className="btn btn-small" type="button" disabled={busy} onClick={() => setEditingName(false)}>
             {t("common.cancel")}
           </button>
         </>
@@ -199,27 +229,59 @@ function UserRow({
         <>
           <span className="row-title">{user.name}</span>
           {isCurrent && <span className="panel-note">{t("settings.users.current")}</span>}
-          <button className="btn btn-small" type="button" onClick={startEdit}>
+          <button className="btn btn-small" type="button" onClick={startEditName}>
             {t("common.rename")}
           </button>
-          {protectedRole ? (
-            <span className="panel-note">{t("settings.users.protectedNote")}</span>
-          ) : (
-            <button className="btn btn-small btn-danger" type="button" disabled={busy} onClick={doArchive}>
-              {confirmArchive ? t("settings.users.archiveConfirm") : t("common.archive")}
-            </button>
-          )}
         </>
+      )}
+
+      {editingCallname ? (
+        <>
+          <input
+            className="form-input"
+            style={{ flex: 1, minWidth: 160 }}
+            value={callname}
+            onChange={(e) => setCallname(e.target.value)}
+            disabled={busy}
+            placeholder={t("settings.users.callnamePlaceholder")}
+            aria-label={t("settings.users.callnameFieldAria", { name: user.name })}
+          />
+          <button className="btn btn-small btn-primary" type="button" disabled={busy} onClick={saveCallname}>
+            {t("common.save")}
+          </button>
+          <button className="btn btn-small" type="button" disabled={busy} onClick={() => setEditingCallname(false)}>
+            {t("common.cancel")}
+          </button>
+        </>
+      ) : (
+        <>
+          <span className="row-callname">
+            {t("settings.users.callnameLabel")}: {user.callname || "—"}
+          </span>
+          <button className="btn btn-small" type="button" onClick={startEditCallname}>
+            {t("settings.users.editCallnameButton")}
+          </button>
+        </>
+      )}
+
+      {protectedRole ? (
+        <span className="panel-note">{t("settings.users.protectedNote")}</span>
+      ) : (
+        <button className="btn btn-small btn-danger" type="button" disabled={busy} onClick={doArchive}>
+          {confirmArchive ? t("settings.users.archiveConfirm") : t("common.archive")}
+        </button>
       )}
     </div>
   );
 }
 
-/** 追加フォーム。名前だけ聞く——記号（id）は機械が `u2`, `u3`… と振る
- * （ADR-014 §4「聞きすぎない」）。 */
+/** 追加フォーム。**利用者名（必須）と呼び名（任意）の2欄**——記号（id）は機械が
+ * `u2`, `u3`… と振る（ADR-014 §4「聞きすぎない」）。呼び名を書かなければ送らない
+ * （空なら利用者名で呼ぶ、が既定のまま）。 */
 function UserAddForm({ onClose, onSaved }: { onClose: () => void; onSaved: () => void }) {
   const t = useT();
   const [name, setName] = useState("");
+  const [callname, setCallname] = useState("");
   const [busy, setBusy] = useState(false);
   const { show } = useToast();
 
@@ -229,9 +291,10 @@ function UserAddForm({ onClose, onSaved }: { onClose: () => void; onSaved: () =>
       show(t("settings.users.nameRequired"), "error");
       return;
     }
+    const trimmedCallname = callname.trim();
     setBusy(true);
     try {
-      await api("/users", { method: "POST", body: { name: trimmed } });
+      await api("/users", { method: "POST", body: { name: trimmed, ...(trimmedCallname ? { callname: trimmedCallname } : {}) } });
       show(t("settings.users.added"), "ok", 3000);
       onSaved();
     } catch (err) {
@@ -250,6 +313,14 @@ function UserAddForm({ onClose, onSaved }: { onClose: () => void; onSaved: () =>
         onChange={(e) => setName(e.target.value)}
         disabled={busy}
         aria-label={t("settings.users.newNameAria")}
+      />
+      <input
+        className="form-input"
+        placeholder={t("settings.users.callnamePlaceholder")}
+        value={callname}
+        onChange={(e) => setCallname(e.target.value)}
+        disabled={busy}
+        aria-label={t("settings.users.newCallnameAria")}
       />
       <button className="btn btn-small btn-primary" type="button" disabled={busy} onClick={save}>
         {t("common.add")}
@@ -277,6 +348,7 @@ function UsersSection({ currentUserId }: { currentUserId?: string }) {
         </button>
       </div>
       <p className="panel-note">{t("settings.users.hint")}</p>
+      <p className="panel-note">{t("settings.users.callnameHint")}</p>
       {error && <p className="panel-note">{t("errors.loadFailed", { reason: error })}</p>}
       <div className="rows">
         {!rows.length && <p className="panel-note">{t("common.loading")}</p>}

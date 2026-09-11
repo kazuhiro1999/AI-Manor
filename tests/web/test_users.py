@@ -66,6 +66,34 @@ def test_set_renames_user(home: Path) -> None:
     assert items["u2"]["name"] == "改名後"
 
 
+def test_add_with_callname(home: Path) -> None:
+    """ADR-014 D1'（追補）: 利用者名（`name`）と呼び名（`callname`）は別欄。"""
+    client = make_client(home)
+    res = client.post("/api/v1/users", json={"name": "山田 太郎", "id": "u2", "callname": "旦那様"})
+    assert res.status_code == 200
+    items = {u["id"]: u for u in client.get("/api/v1/users").json()["items"]}
+    assert items["u2"]["name"] == "山田 太郎"
+    assert items["u2"]["callname"] == "旦那様"
+
+
+def test_set_updates_only_the_field_given(home: Path) -> None:
+    """`name`／`callname` はどちらも任意——渡された方だけ更新する（ADR-014 D1'）。"""
+    client = make_client(home)
+    client.post("/api/v1/users", json={"name": "同居人", "id": "u2", "callname": "元の呼び名"})
+
+    res = client.post("/api/v1/users/u2", json={"callname": "新しい呼び名"})
+    assert res.status_code == 200
+    items = {u["id"]: u for u in client.get("/api/v1/users").json()["items"]}
+    assert items["u2"]["name"] == "同居人"  # name は触っていない
+    assert items["u2"]["callname"] == "新しい呼び名"
+
+    res2 = client.post("/api/v1/users/u2", json={"name": "改名後"})
+    assert res2.status_code == 200
+    items2 = {u["id"]: u for u in client.get("/api/v1/users").json()["items"]}
+    assert items2["u2"]["name"] == "改名後"
+    assert items2["u2"]["callname"] == "新しい呼び名"  # callname は触っていない
+
+
 def test_set_unknown_user_is_404(home: Path) -> None:
     client = make_client(home)
     res = client.post("/api/v1/users/unknown", json={"name": "誰か"})
@@ -132,7 +160,8 @@ def test_switch_works_even_read_only(home: Path) -> None:
 def test_meta_user_defaults_to_principal(home: Path) -> None:
     client = make_client(home)
     body = client.get("/api/v1/meta").json()
-    assert body["user"] == {"id": "master", "name": "主人", "role": "principal"}
+    # ADR-014 D1'（追補）: seed 時は name と callname が同じ値（「初期は同じでよい」）。
+    assert body["user"] == {"id": "master", "name": "主人", "callname": "主人", "role": "principal"}
     ids = {u["id"] for u in body["users"]}
     assert {"master", "butler"} <= ids
 

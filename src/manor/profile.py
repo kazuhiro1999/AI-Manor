@@ -113,12 +113,16 @@ def set_many(conn: sqlite3.Connection, values: dict[str, object]) -> None:
             " ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
             (key, value, now),
         )
-        # ADR-014 D1: 呼び名の正は `user.name` へ移った。`profile.master.callname` は
+        # ADR-014 D1'（追補。主人のご指摘）: 呼び名の正は `user.callname` へ移った
+        # （`user.name`＝利用者名は触らない——主人「識別用のユーザー名と、どう呼ばれたいかは
+        # 分けてください」）。`profile.master.callname`／`profile.butler.callname` は
         # セットアップ／プロフィール編集がそこへ写す入口になる（`user` 表は `db.init` が
-        # 種を入れているので `master` 行は必ずある。空文字は「まだ何も言っていない」と
-        # 扱い、そこでは写さない——`user.set` も空 name を拒む）。
+        # 種を入れているので `master`/`butler` 行は必ずある。空文字は「まだ何も言って
+        # いない」と扱い、そこでは写さない）。
         if key == "master.callname" and value.strip():
-            user_mod.set(conn, user_mod.PRINCIPAL_ID, name=value.strip())
+            user_mod.set(conn, user_mod.PRINCIPAL_ID, callname=value.strip())
+        if key == "butler.callname" and value.strip():
+            user_mod.set(conn, user_mod.BUTLER_ID, callname=value.strip())
 
 
 def is_setup_done(conn: sqlite3.Connection) -> bool:

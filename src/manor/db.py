@@ -165,6 +165,10 @@ def migrate_core(home: Path) -> None:
         # user.backfill_user_ids() より必ず先**（印を置く前に列が確実にある順番にする約束）。
         _add_column_if_missing(conn, "project", "user_id", "TEXT NOT NULL DEFAULT 'master'")
         _add_column_if_missing(conn, "task", "user_id", "TEXT NOT NULL DEFAULT 'master'")
+        # ADR-014 D1'（追補）: 既存 DB の user に「呼び名」列を冪等に足す。**列を足すのは
+        # user.seed_defaults() より必ず先**（新規 DB は core.sql の CREATE TABLE が
+        # 最初から持つ）。
+        _add_column_if_missing(conn, "user", "callname", "TEXT NOT NULL DEFAULT ''")
         # ADR-014 D4/D5: 秘書の予定の利用者列（NULL＝共通）。表が無ければ何もしない
         # （secretary_event と同じ判断——上の project_id と同じ理由）。
         _add_column_if_missing(conn, "secretary_event", "user_id", "TEXT")
@@ -244,6 +248,10 @@ def init(home: Path) -> list[str]:
         # user.backfill_user_ids() より必ず先**（印を置く前に列が確実にある順番にする約束）。
         _add_column_if_missing(conn, "project", "user_id", "TEXT NOT NULL DEFAULT 'master'")
         _add_column_if_missing(conn, "task", "user_id", "TEXT NOT NULL DEFAULT 'master'")
+        # ADR-014 D1'（追補）: 既存 DB の user に「呼び名」列を冪等に足す（新規 DB は
+        # core.sql の CREATE TABLE が最初から持つ）。**列を足すのは user.seed_defaults()
+        # より必ず先**。
+        _add_column_if_missing(conn, "user", "callname", "TEXT NOT NULL DEFAULT ''")
 
         # ADR-006 §2/D21: 既存 DB の HG・done task で authorized_by が未設定のものを
         # decided_by の辺から一回だけ埋める（辺→事実への写し。以後は事実だけを見る）。

@@ -42,7 +42,12 @@ def register(app: FastAPI, ctx: WebContext) -> None:
             # 秘密は持たない（id・name・role だけ）。
             viewing_id = viewing_user_id(request, conn)
             users_rows = user_mod.list_users(conn)
-            users_out = [{"id": u["id"], "name": u["name"], "role": u["role"]} for u in users_rows]
+            # ADR-014 D1'（追補）: 呼び名（callname）も併せて返す——利用者名（name）とは
+            # 別の欄（画面は topbar の chip・切り替えメニューには name を使い続ける）。
+            users_out = [
+                {"id": u["id"], "name": u["name"], "callname": u["callname"], "role": u["role"]}
+                for u in users_rows
+            ]
             current_user = next((u for u in users_out if u["id"] == viewing_id), None)
         authenticated = bool(getattr(request.state, "authenticated", ctx.auth_mode == "loopback"))
         return {

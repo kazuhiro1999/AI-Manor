@@ -813,6 +813,58 @@ describe("settings — 利用者（ADR-014 D1・D3）", () => {
     expect(JSON.parse(String(postCall?.init?.body))).toEqual({ name: "相方" });
   });
 
+  it("利用者名と呼び名は別欄——呼び名だけ変更すると POST /users/{id} へ {callname} だけを送る（ADR-014 D1'）", async () => {
+    const calls: { url: string; init?: RequestInit }[] = [];
+    const usersWithCallname: UserInfo[] = [
+      { id: "master", name: "旦那様", role: "principal" },
+      { id: "u2", name: "同居人", callname: "相方さん", role: "member" },
+      { id: "butler", name: "執事", role: "butler" },
+    ];
+    mockFetchFor({ ...emptyRuns, users: usersWithCallname, onFetch: (url, init) => calls.push({ url, init }) });
+
+    const user = userEvent.setup();
+    render(<MemoryRouter><ToastProvider>{SettingsScreen}</ToastProvider></MemoryRouter>);
+    await waitFor(() => expect(screen.getByText("利用者")).toBeTruthy());
+
+    const row = screen.getByText("同居人").closest(".row-item") as HTMLElement;
+    // 呼び名の表示行に現在値が出ている（利用者名の "同居人" とは別の欄）。
+    expect(within(row).getByText((_, el) => el?.textContent === "呼び名: 相方さん")).toBeTruthy();
+
+    await user.click(within(row).getByRole("button", { name: "呼び名を変更" }));
+    const input = within(row).getByLabelText("同居人 の呼び名") as HTMLInputElement;
+    await user.clear(input);
+    await user.type(input, "新しい呼び名");
+    await user.click(within(row).getByRole("button", { name: "保存" }));
+
+    await waitFor(() =>
+      expect(calls.some((c) => c.url.includes("/api/v1/users/u2") && (c.init?.method || "").toUpperCase() === "POST")).toBe(true)
+    );
+    const postCall = calls.find((c) => c.url.includes("/api/v1/users/u2") && (c.init?.method || "").toUpperCase() === "POST");
+    // name には触れない——callname だけを送る。
+    expect(JSON.parse(String(postCall?.init?.body))).toEqual({ callname: "新しい呼び名" });
+  });
+
+  it("追加フォームは利用者名と呼び名の2欄——呼び名も入れれば POST /users の body に含める（ADR-014 D1'）", async () => {
+    const calls: { url: string; init?: RequestInit }[] = [];
+    mockFetchFor({ ...emptyRuns, users: usersWithMember(), onFetch: (url, init) => calls.push({ url, init }) });
+
+    const user = userEvent.setup();
+    render(<MemoryRouter><ToastProvider>{SettingsScreen}</ToastProvider></MemoryRouter>);
+    await waitFor(() => expect(screen.getByText("利用者")).toBeTruthy());
+
+    const panel = screen.getByText("利用者").closest("section") as HTMLElement;
+    await user.click(within(panel).getByRole("button", { name: "+ 利用者を追加" }));
+    await user.type(screen.getByLabelText("新しい利用者の名前"), "山田 花子");
+    await user.type(screen.getByLabelText("新しい利用者の呼び名"), "お嬢様");
+    await user.click(within(panel).getByRole("button", { name: "追加" }));
+
+    await waitFor(() =>
+      expect(calls.some((c) => c.url.endsWith("/api/v1/users") && (c.init?.method || "").toUpperCase() === "POST")).toBe(true)
+    );
+    const postCall = calls.find((c) => c.url.endsWith("/api/v1/users") && (c.init?.method || "").toUpperCase() === "POST");
+    expect(JSON.parse(String(postCall?.init?.body))).toEqual({ name: "山田 花子", callname: "お嬢様" });
+  });
+
   it("主人・執事には畳むボタンが出ない（ADR-014 D1）", async () => {
     mockFetchFor({ ...emptyRuns, users: usersWithMember() });
 

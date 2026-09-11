@@ -1,7 +1,8 @@
 """`users`（ADR-014 D1・D3。「利用者」の一覧・追加・改名・畳む・切り替え）。
 
 **認証ではない。** `GET /api/v1/users` は「誰の机を見るか」の選択肢を返すだけで、
-秘密は持たない（名前と記号だけ——`GET /api/v1/meta` の `users` と同じ形）。
+秘密は持たない（利用者名・呼び名・記号だけ——`GET /api/v1/meta` の `users` と同じ形。
+ADR-014 D1'）。
 切り替え（`POST /api/v1/users/switch`）は cookie `manor_user` を置くだけなので、
 `--read-only` でも通す（見る利用者を変えるのは DB への書き込みではない）。
 """
@@ -28,10 +29,15 @@ class UserAddRequest(BaseModel):
     name: str = Field(..., min_length=1)
     #: 省略すれば `u2`, `u3`… と機械が振る（ADR-014 §4「聞きすぎない」）。
     id: str | None = None
+    #: 呼び名（ADR-014 D1'）。任意——省略・空文字は「利用者名で呼ぶ」。
+    callname: str = ""
 
 
 class UserSetRequest(BaseModel):
-    name: str = Field(..., min_length=1)
+    #: `name`（利用者名）・`callname`（呼び名）はどちらも任意——渡された方だけ更新する
+    #: （ADR-014 D1'）。
+    name: str | None = None
+    callname: str | None = None
 
 
 class UserSwitchRequest(BaseModel):
@@ -49,7 +55,7 @@ def register(app: FastAPI, ctx: WebContext) -> None:
         require_writable(ctx)
         with open_conn(ctx) as conn:
             try:
-                user_id = user_mod.add(conn, body.name, user_id=body.id)
+                user_id = user_mod.add(conn, body.name, user_id=body.id, callname=body.callname)
             except ManorError as exc:
                 conn.rollback()
                 raise manor_error_to_http(exc)
@@ -87,7 +93,7 @@ def register(app: FastAPI, ctx: WebContext) -> None:
         require_writable(ctx)
         with open_conn(ctx) as conn:
             try:
-                result_id = user_mod.set(conn, user_id, name=body.name)
+                result_id = user_mod.set(conn, user_id, name=body.name, callname=body.callname)
             except ManorError as exc:
                 conn.rollback()
                 raise manor_error_to_http(exc)

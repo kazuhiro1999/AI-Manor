@@ -56,6 +56,13 @@ def test_seed_defaults_default_names_without_profile(conn) -> None:
     assert rows["butler"]["name"] == "執事"
 
 
+def test_seed_defaults_callname_starts_equal_to_name(conn) -> None:
+    """ADR-014 D1'（追補）: 種の name と callname は初期は同じ値でよい。"""
+    rows = {r["id"]: r for r in user_mod.list_users(conn, include_archived=True)}
+    assert rows["master"]["callname"] == rows["master"]["name"] == "主人"
+    assert rows["butler"]["callname"] == rows["butler"]["name"] == "執事"
+
+
 def test_init_twice_stays_two_rows(home_path: Path) -> None:
     db_mod.init(home_path)
     db_mod.init(home_path)
@@ -154,6 +161,54 @@ def test_set_renames(conn) -> None:
     user_id = user_mod.add(conn, "同居人")
     user_mod.set(conn, user_id, name="改名後")
     assert user_mod.get(conn, user_id)["name"] == "改名後"
+
+
+# --- 利用者名（name）と呼び名（callname）は別（ADR-014 D1'追補） --------------------------
+
+
+def test_add_with_callname_sets_both_fields(conn) -> None:
+    user_id = user_mod.add(conn, "山田 太郎", callname="旦那様")
+    row = user_mod.get(conn, user_id)
+    assert row["name"] == "山田 太郎"
+    assert row["callname"] == "旦那様"
+
+
+def test_add_without_callname_defaults_to_empty(conn) -> None:
+    user_id = user_mod.add(conn, "同居人")
+    assert user_mod.get(conn, user_id)["callname"] == ""
+
+
+def test_set_callname_does_not_touch_name(conn) -> None:
+    user_id = user_mod.add(conn, "同居人", callname="元の呼び名")
+    user_mod.set(conn, user_id, callname="新しい呼び名")
+    row = user_mod.get(conn, user_id)
+    assert row["name"] == "同居人"  # name は触っていない
+    assert row["callname"] == "新しい呼び名"
+
+
+def test_set_name_does_not_touch_callname(conn) -> None:
+    user_id = user_mod.add(conn, "同居人", callname="呼び名")
+    user_mod.set(conn, user_id, name="改名後")
+    row = user_mod.get(conn, user_id)
+    assert row["name"] == "改名後"
+    assert row["callname"] == "呼び名"  # callname は触っていない
+
+
+def test_set_callname_to_empty_string_clears_it(conn) -> None:
+    """`callname` は空文字を許す——「呼び名は未設定・利用者名で呼ぶ」に戻す操作（`name` とは違う）。"""
+    user_id = user_mod.add(conn, "同居人", callname="呼び名")
+    user_mod.set(conn, user_id, callname="")
+    assert user_mod.get(conn, user_id)["callname"] == ""
+
+
+def test_display_callname_falls_back_to_name_when_empty(conn) -> None:
+    user_id = user_mod.add(conn, "同居人")
+    row = user_mod.get(conn, user_id)
+    assert user_mod.display_callname(row) == "同居人"
+
+    user_mod.set(conn, user_id, callname="呼び名")
+    row2 = user_mod.get(conn, user_id)
+    assert user_mod.display_callname(row2) == "呼び名"
 
 
 def test_set_unknown_user_raises(conn) -> None:
@@ -374,6 +429,27 @@ def test_cli_user_add_set_archive_flow(home_path: Path, capsys: pytest.CaptureFi
     assert cli.main(["user", "list", "--all", "--json"]) == 0
     all_rows = json.loads(capsys.readouterr().out)
     assert user_id in [r["id"] for r in all_rows]
+
+
+def test_cli_user_add_and_set_with_callname(home_path: Path, capsys: pytest.CaptureFixture) -> None:
+    assert cli.main(["init"]) == 0
+    capsys.readouterr()
+
+    assert cli.main(["user", "add", "山田 太郎", "--id", "partner", "--callname", "旦那様", "--json"]) == 0
+    capsys.readouterr()
+
+    assert cli.main(["user", "list", "--json"]) == 0
+    rows = {r["id"]: r for r in json.loads(capsys.readouterr().out)}
+    assert rows["partner"]["name"] == "山田 太郎"
+    assert rows["partner"]["callname"] == "旦那様"
+
+    assert cli.main(["user", "set", "partner", "--callname", "若様", "--json"]) == 0
+    capsys.readouterr()
+
+    assert cli.main(["user", "list", "--json"]) == 0
+    rows2 = {r["id"]: r for r in json.loads(capsys.readouterr().out)}
+    assert rows2["partner"]["name"] == "山田 太郎"  # name は触っていない
+    assert rows2["partner"]["callname"] == "若様"
 
 
 def test_cli_user_archive_butler_is_exit_2(home_path: Path, capsys: pytest.CaptureFixture) -> None:

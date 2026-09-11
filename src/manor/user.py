@@ -64,13 +64,18 @@ def seed_defaults(conn: sqlite3.Connection) -> None:
     now = util.now()
     master_name = _profile_name(conn, "master.callname", "主人")
     butler_name = _profile_name(conn, "butler.callname", "執事")
+    # ADR-014 D1'（追補）: 種の name と callname は初期は同じ値でよい（主人があとで
+    # `name`（利用者名）を本名に変え、`callname`（呼び名）はそのまま、という使い方を
+    # 想定する）。
     conn.execute(
-        "INSERT INTO user (id, name, role, created_at, archived_at) VALUES (?, ?, 'principal', ?, NULL)",
-        (PRINCIPAL_ID, master_name, now),
+        "INSERT INTO user (id, name, callname, role, created_at, archived_at)"
+        " VALUES (?, ?, ?, 'principal', ?, NULL)",
+        (PRINCIPAL_ID, master_name, master_name, now),
     )
     conn.execute(
-        "INSERT INTO user (id, name, role, created_at, archived_at) VALUES (?, ?, 'butler', ?, NULL)",
-        (BUTLER_ID, butler_name, now),
+        "INSERT INTO user (id, name, callname, role, created_at, archived_at)"
+        " VALUES (?, ?, ?, 'butler', ?, NULL)",
+        (BUTLER_ID, butler_name, butler_name, now),
     )
 
 
@@ -192,10 +197,14 @@ def add(
     *,
     user_id: str | None = None,
     role: str = "member",
+    callname: str = "",
 ) -> str:
     """利用者を1人足す。`role` は `member` しか作れない（`principal`/`butler` は種でしか
     作らない。ADR-014 D1）。`user_id` を省略すれば `u2`, `u3`… と機械が振る
     （ADR-014 §4「聞きすぎない」）。
+
+    `name` は利用者名（識別用）、`callname` は呼び名（執事がどう呼ぶか。ADR-014 D1'）。
+    `callname` は省略可——空なら `name` で呼ぶ（`display_callname` 参照）。
     """
     name = (name or "").strip()
     if not name:
@@ -232,21 +241,38 @@ def add(
 
     now = util.now()
     conn.execute(
-        "INSERT INTO user (id, name, role, created_at, archived_at) VALUES (?, ?, 'member', ?, NULL)",
-        (resolved_id, name, now),
+        "INSERT INTO user (id, name, callname, role, created_at, archived_at)"
+        " VALUES (?, ?, ?, 'member', ?, NULL)",
+        (resolved_id, name, (callname or "").strip(), now),
     )
     return resolved_id
 
 
-def set(conn: sqlite3.Connection, user_id: str, *, name: str | None = None) -> str:
-    """名前を書き換える（記号 `id` は変わらない）。"""
+def set(
+    conn: sqlite3.Connection, user_id: str, *, name: str | None = None, callname: str | None = None
+) -> str:
+    """利用者名（`name`）・呼び名（`callname`）を書き換える（記号 `id` は変わらない。
+    ADR-014 D1'）。それぞれ独立——渡された方だけ更新する。`name` は空文字を拒む
+    （識別用の名前が消えるのは困る）が、`callname` は空文字を許す（「呼び名は未設定・
+    利用者名で呼ぶ」に戻す操作として正当）。
+    """
     _row(conn, user_id)
     if name is not None:
         name = name.strip()
         if not name:
             raise ManorError("name が空です", code=2, key="error.user.name_empty")
         conn.execute("UPDATE user SET name = ? WHERE id = ?", (name, user_id))
+    if callname is not None:
+        conn.execute("UPDATE user SET callname = ? WHERE id = ?", (callname.strip(), user_id))
     return user_id
+
+
+def display_callname(row: object) -> str:
+    """執事がその人をどう呼ぶか（ADR-014 D1'）。`callname` が空なら `name` で呼ぶ。
+    `row` は `dict`／`sqlite3.Row` のどちらでもよい（`["callname"]`/`["name"]` で読む）。
+    """
+    callname = str(row["callname"] or "").strip()  # type: ignore[index]
+    return callname or str(row["name"])  # type: ignore[index]
 
 
 def archive(conn: sqlite3.Connection, user_id: str) -> str:
@@ -329,20 +355,27 @@ def cmd_user_list(conn: sqlite3.Connection, home, args: argparse.Namespace) -> o
     for r in rows:
         archived = i18n.t("user.archived_tag") if r["archived_at"] else ""
         lines.append(
-            i18n.t("user.list.line", id=r["id"], name=r["name"], role=r["role"], archived=archived)
+            i18n.t(
+                "user.list.line",
+                id=r["id"],
+                name=r["name"],
+                callname=display_callname(r),
+                role=r["role"],
+                archived=archived,
+            )
         )
     return "\n".join(lines)
 
 
 def cmd_user_add(conn: sqlite3.Connection, home, args: argparse.Namespace) -> object:
-    user_id = add(conn, args.name, user_id=args.id)
+    user_id = add(conn, args.name, user_id=args.id, callname=args.callname or "")
     if args.json:
         return {"id": user_id}
     return i18n.t("common.created", id=user_id)
 
 
 def cmd_user_set(conn: sqlite3.Connection, home, args: argparse.Namespace) -> object:
-    user_id = set(conn, args.id, name=args.name)
+    user_id = set(conn, args.id, name=args.name, callname=args.callname)
     if args.json:
         return {"id": user_id}
     return i18n.t("common.updated", id=user_id)
@@ -368,6 +401,7 @@ def register(subparsers: "argparse._SubParsersAction") -> None:
     p = user_sub.add_parser("add")
     p.add_argument("name")
     p.add_argument("--id", help=i18n.t("cli.user.add.id.help"))
+    p.add_argument("--callname", help=i18n.t("cli.user.add.callname.help"))
     p.add_argument("--json", action="store_true")
     p.add_argument("--no-render", action="store_true")
     p.set_defaults(func=cmd_user_add, is_write=True)
@@ -375,6 +409,7 @@ def register(subparsers: "argparse._SubParsersAction") -> None:
     p = user_sub.add_parser("set")
     p.add_argument("id")
     p.add_argument("--name")
+    p.add_argument("--callname", help=i18n.t("cli.user.set.callname.help"))
     p.add_argument("--json", action="store_true")
     p.add_argument("--no-render", action="store_true")
     p.set_defaults(func=cmd_user_set, is_write=True)

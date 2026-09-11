@@ -15,6 +15,7 @@ from manor import policy
 from manor import profile as profile_mod
 from manor import project as project_mod
 from manor import task as task_mod
+from manor import user as user_mod
 from manor.errors import ManorError
 
 # --- 語彙 ---------------------------------------------------------------------------
@@ -34,6 +35,25 @@ def test_set_many_roundtrip(conn) -> None:
     data = profile_mod.get_all(conn)
     assert data["master.callname"] == "旦那様"
     assert data["butler.callname"] == "セバスチャン"
+
+
+def test_set_many_master_callname_writes_user_callname_not_name(conn) -> None:
+    """ADR-014 D1'（追補。主人の指摘）: `master.callname` の写し先は `user.master.callname`
+    ——`user.master.name`（利用者名）は触らない。
+    """
+    before_name = user_mod.get(conn, user_mod.PRINCIPAL_ID)["name"]
+    profile_mod.set_many(conn, {"master.callname": "旦那様"})
+    row = user_mod.get(conn, user_mod.PRINCIPAL_ID)
+    assert row["callname"] == "旦那様"
+    assert row["name"] == before_name  # name は変わらない
+
+
+def test_set_many_butler_callname_writes_user_callname_not_name(conn) -> None:
+    before_name = user_mod.get(conn, user_mod.BUTLER_ID)["name"]
+    profile_mod.set_many(conn, {"butler.callname": "セバスチャン"})
+    row = user_mod.get(conn, user_mod.BUTLER_ID)
+    assert row["callname"] == "セバスチャン"
+    assert row["name"] == before_name  # name は変わらない
 
 
 def test_set_many_rejects_unknown_key(conn) -> None:

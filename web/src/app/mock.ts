@@ -585,14 +585,16 @@ const profileStore: Record<string, string> = setupDone
     }
   : { "butler.callname": "執事" };
 
-/* ---------- users（ADR-014 D1・D3。来月からの同棲に備えた利用者の切り替え） ---------- */
+/* ---------- users（ADR-014 D1・D1'・D3。来月からの同棲に備えた利用者の切り替え） ---------- */
 interface MockUser extends UserInfo {
   archived_at: string | null;
 }
+// ADR-014 D1'（追補）: 利用者名（`name`。識別用）と呼び名（`callname`。執事がどう呼ぶか）
+// は別欄——主人「呼び名は主人でいいが、選択時のユーザー名には名前を入れたい」。
 const users: MockUser[] = [
-  { id: "master", name: "旦那様", role: "principal", archived_at: null },
-  { id: "u2", name: "同居人", role: "member", archived_at: null },
-  { id: "butler", name: "執事", role: "butler", archived_at: null },
+  { id: "master", name: "山田 太郎", callname: "旦那様", role: "principal", archived_at: null },
+  { id: "u2", name: "同居人", callname: "", role: "member", archived_at: null },
+  { id: "butler", name: "執事", callname: "執事", role: "butler", archived_at: null },
 ];
 let userSeq = 2;
 // cookie `manor_user` の合成版（ブラウザの実 Cookie は使わない。mock はこの変数だけで足りる）。
@@ -606,7 +608,7 @@ function currentUserInfo(): UserInfo {
   const found = activeUsers().find((u) => u.id === viewingUserId);
   const fallback = activeUsers().find((u) => u.role === "principal") || activeUsers()[0];
   const u = found || fallback;
-  return { id: u.id, name: u.name, role: u.role };
+  return { id: u.id, name: u.name, callname: u.callname, role: u.role };
 }
 
 /* ---------- state ---------- */
@@ -761,9 +763,10 @@ export async function mockApi<T>(path: string, options: ApiOptions = {}): Promis
       home_name: "mock-home",
       setup_done: setupDone,
       language: manorLanguage,
-      // ADR-014 D3: 見ている利用者と、切り替え先の選択肢（畳んでいないもの）。
+      // ADR-014 D3・D1'（追補）: 見ている利用者と、切り替え先の選択肢（畳んでいないもの）。
+      // callname（呼び名）も併せて返す——利用者名（name）とは別の欄。
       user: currentUserInfo(),
-      users: activeUsers().map((u) => ({ id: u.id, name: u.name, role: u.role })),
+      users: activeUsers().map((u) => ({ id: u.id, name: u.name, callname: u.callname, role: u.role })),
     };
     return meta as unknown as T;
   }
@@ -792,6 +795,7 @@ export async function mockApi<T>(path: string, options: ApiOptions = {}): Promis
   if (path === "/users" && method === "POST") {
     const name = String(body.name || "").trim();
     if (!name) badRequest("name が空です");
+    const callname = String(body.callname || "").trim();
     let id = String(body.id || "").trim();
     if (id) {
       if (!/^[a-z][a-z0-9_-]{0,31}$/.test(id)) badRequest(`id の形式が不正です: ${id}`);
@@ -802,7 +806,7 @@ export async function mockApi<T>(path: string, options: ApiOptions = {}): Promis
         id = `u${userSeq}`;
       } while (users.some((u) => u.id === id));
     }
-    users.push({ id, name, role: "member", archived_at: null });
+    users.push({ id, name, callname, role: "member", archived_at: null });
     return { id } as unknown as T;
   }
   // `/users/switch` は `/users/{id}` より前に見る（後にすると "switch" が id として食われる）。
@@ -825,9 +829,15 @@ export async function mockApi<T>(path: string, options: ApiOptions = {}): Promis
     const id = decodeURIComponent(path.slice("/users/".length));
     const u = users.find((x) => x.id === id);
     if (!u) notFound(`user が見つかりません: ${id}`);
-    const name = String(body.name || "").trim();
-    if (!name) badRequest("name が空です");
-    u.name = name;
+    // ADR-014 D1'（追補）: name（利用者名）・callname（呼び名）はどちらも任意——渡された方だけ更新する。
+    if (body.name !== undefined) {
+      const name = String(body.name || "").trim();
+      if (!name) badRequest("name が空です");
+      u.name = name;
+    }
+    if (body.callname !== undefined) {
+      u.callname = String(body.callname || "").trim();
+    }
     return { id } as unknown as T;
   }
 

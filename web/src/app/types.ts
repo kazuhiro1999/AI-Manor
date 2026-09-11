@@ -242,6 +242,10 @@ export type UserRole = "principal" | "member" | "butler";
 export interface UserInfo {
   id: string;
   name: string;
+  // ADR-014 D1'（追補）: 呼び名（執事がその人をどう呼ぶか）。利用者名（`name`。識別用）
+  // とは別。空文字は「呼び名は未設定・利用者名で呼ぶ」。バックエンドがまだ返さない間は
+  // undefined になりうる。
+  callname?: string;
   role: UserRole;
 }
 
