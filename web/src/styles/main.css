@@ -513,3 +513,17 @@ table.grid td.col-wide, table.grid th.col-wide { min-width: 220px; }
 .night-review.is-warn { border-left-color: var(--danger, #c0392b); }
 .night-review-list { margin: 6px 0 0; padding-left: 1.2em; }
 .night-review-list li { margin: 2px 0; }
+
+/* ---------- kitchen: レシピ帳（ADR-015 D4） ---------- */
+.recipe-hero { display: block; width: 100%; max-height: 260px; object-fit: cover; border-radius: var(--radius); margin-bottom: 10px; }
+.recipe-hero-placeholder { background: var(--bg-panel-2); border: 1px dashed var(--border); min-height: 90px; }
+.recipe-hero-thumb {
+  width: 40px; height: 40px; flex: 0 0 auto; object-fit: cover; border-radius: 6px; background: var(--bg-panel-2);
+}
+.step-image { display: block; max-width: 100%; border-radius: 7px; margin-bottom: 6px; }
+.step-num {
+  display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px;
+  border-radius: 999px; background: var(--accent); color: #201800; font-weight: 700; font-size: 11px; flex: 0 0 auto;
+}
+.char-count { font-size: 11px; color: var(--text-faint); }
+.char-count-over { color: var(--danger); font-weight: 700; }

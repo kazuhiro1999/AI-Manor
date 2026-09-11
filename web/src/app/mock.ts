@@ -32,6 +32,10 @@ import type {
   NightStatus,
   PantryItem,
   Project,
+  Recipe,
+  RecipeBody,
+  RecipeImportResult,
+  RecipeListItem,
   RunRow,
   RunsData,
   RunStatsData,
@@ -182,6 +186,78 @@ const shopping: ShoppingItem[] = [
 let mealSeq = 2;
 const meals: Meal[] = [{ id: 1, date: TODAY, slot: "dinner", dish: "肉じゃが", ingredients: "じゃがいも,牛肉", planned: false }];
 const taste = [{ key: "苦手", value: "パクチー" }];
+
+/* ---------- kitchen: レシピ帳（ADR-015 §3。見本1件目は tests/fixtures/chahan.recipe.json と
+ * 同じ内容——主人がよく作る炒飯。2件目は合成の唐揚げで、favorite/タグ/未調理の対照に使う） ---------- */
+let recipeSeq = 2;
+// 「畳む」（archive）は消さない（ADR-015 §2 `archive`）。一覧からは外れるが
+// `GET /recipes/{id}` はそのまま返る——本物の `chef_recipe.archived_at` と同じ役目を
+// この Set が肩代わりする（契約 JSON 自体に archived_at は乗らないため）。
+const archivedRecipeIds = new Set<number>();
+const recipes: Recipe[] = [
+  {
+    id: 1,
+    title: "パラパラ炒飯（基本）",
+    source_url: "https://oceans-nadia.com/user/253470/recipe/440737",
+    source_site: "oceans-nadia.com",
+    hero_image: "",
+    servings: 2,
+    total_minutes: 10,
+    ingredients: [
+      { name: "ご飯", qty: "300", unit: "g", prep: "温かいものでも冷やご飯でも", group: "主材料" },
+      { name: "豚バラ薄切り肉", qty: "50", unit: "g", prep: "粗みじん切り", group: "主材料" },
+      { name: "長ねぎ", qty: "20", unit: "cm", prep: "粗みじん切り", group: "主材料" },
+      { name: "卵", qty: "3", unit: "個", prep: "割りほぐす", group: "主材料" },
+      { name: "しょうが", qty: "5", unit: "g", prep: "みじん切り", group: "主材料" },
+      { name: "しょうゆ", qty: "小さじ1", unit: "", prep: "", group: "仕上げ" },
+    ],
+    tools: ["フライパン", "木べら", "ボウル"],
+    phases: [
+      { id: "prep", title: "下ごしらえ" },
+      { id: "cook", title: "炒める" },
+      { id: "finish", title: "仕上げ" },
+    ],
+    steps: [
+      { index: 1, phase: "prep", title: "豚肉を刻む", instruction: "豚バラを粗みじん切りにし、塩ひとつまみをふる。", image: null, ingredients_used: ["豚バラ薄切り肉"], timer_sec: null, completion: "manual", tips: ["ベーコンでも可"] },
+      { index: 2, phase: "cook", title: "卵とご飯を入れる", instruction: "強めの中火。油の上に卵液を流し、ご飯をのせて全体を混ぜる。", image: null, ingredients_used: ["卵", "ご飯"], timer_sec: null, completion: "manual", tips: ["パラパラのコツ: 油を多めに"] },
+      { index: 3, phase: "finish", title: "味を調える", instruction: "しょうゆを縁から回し入れてザッと炒め、火を止める。", image: null, ingredients_used: ["しょうゆ"], timer_sec: null, completion: "manual", tips: [] },
+    ],
+    meta: {
+      kcal: 620, protein_g: 22, fat_g: 24, carb_g: 78, salt_g: 2.4,
+      nutrition_source: "estimated", tags: ["中華", "時短", "米"], rating: 5,
+      memo: "うちは油少なめでも十分パラパラになる。", favorite: true, times_cooked: 6,
+      last_cooked_at: daysFromToday(-2),
+    },
+  },
+  {
+    id: 2,
+    title: "鶏の唐揚げ",
+    source_url: "",
+    source_site: "",
+    hero_image: "",
+    servings: 3,
+    total_minutes: 30,
+    ingredients: [
+      { name: "鶏もも肉", qty: "400", unit: "g", prep: "一口大に切る", group: "主材料" },
+      { name: "しょうゆ", qty: "大さじ1", unit: "", prep: "", group: "下味" },
+      { name: "片栗粉", qty: "大さじ4", unit: "", prep: "", group: "衣" },
+    ],
+    tools: ["揚げ鍋", "バット"],
+    phases: [
+      { id: "prep", title: "下味" },
+      { id: "fry", title: "揚げる" },
+    ],
+    steps: [
+      { index: 1, phase: "prep", title: "下味をつける", instruction: "鶏肉をしょうゆなどに15分漬け込む。", image: null, ingredients_used: ["鶏もも肉", "しょうゆ"], timer_sec: 900, completion: "manual", tips: [] },
+      { index: 2, phase: "fry", title: "衣をつけて揚げる", instruction: "片栗粉をまぶし、170度の油で揚げる。", image: null, ingredients_used: ["片栗粉"], timer_sec: 240, completion: "manual", tips: ["二度揚げでカリッと"] },
+    ],
+    meta: {
+      kcal: null, protein_g: null, fat_g: null, carb_g: null, salt_g: null,
+      nutrition_source: "", tags: ["揚げ物"], rating: null, memo: "", favorite: false,
+      times_cooked: 0, last_cooked_at: null,
+    },
+  },
+];
 
 /* ---------- house ---------- */
 let choreSeq = 2;
@@ -730,6 +806,45 @@ function findTask(id: string): Task {
   return t;
 }
 
+// ADR-015: `recipes.validate()` を手元で真似た簡易版（見本データの整合を保つだけなので、
+// 本物の `chef/recipes.py` ほど厳密ではない。上限文字数と phases/steps の必須だけ検算する）。
+function findRecipe(id: number): Recipe {
+  const r = recipes.find((x) => x.id === id);
+  if (!r) notFound(`レシピが見つかりません: ${id}`);
+  return r;
+}
+
+function validateRecipeBody(body: RecipeBody): RecipeBody {
+  const title = String(body.title || "").trim();
+  if (!title) badRequest("title が必須です");
+  const phases = Array.isArray(body.phases) ? body.phases : [];
+  if (!phases.length) badRequest("phases が必須です（最低1つ）");
+  const phaseIds = new Set(phases.map((p) => p.id));
+  const steps = Array.isArray(body.steps) ? body.steps : [];
+  if (!steps.length) badRequest("steps が必須です（最低1つ）");
+  steps.forEach((s, i) => {
+    const stitle = String(s.title || "").trim();
+    if (!stitle) badRequest(`steps[${i}].title が必須です`);
+    if (stitle.length > 12) badRequest(`steps[${i}].title は12文字以内にしてください（${stitle.length}文字）: ${stitle}`);
+    const instruction = String(s.instruction || "").trim();
+    if (!instruction) badRequest(`steps[${i}].instruction が必須です`);
+    if (instruction.length > 60) badRequest(`steps[${i}].instruction は60文字以内にしてください（${instruction.length}文字）: ${instruction}`);
+    if (!phaseIds.has(s.phase)) badRequest(`steps[${i}].phase が phases に無い id を指しています: ${s.phase}`);
+  });
+  return {
+    title,
+    source_url: String(body.source_url || ""),
+    source_site: String(body.source_site || ""),
+    hero_image: String(body.hero_image || ""),
+    servings: body.servings == null || (body.servings as unknown) === "" ? null : Number(body.servings),
+    total_minutes: body.total_minutes == null || (body.total_minutes as unknown) === "" ? null : Number(body.total_minutes),
+    ingredients: Array.isArray(body.ingredients) ? body.ingredients : [],
+    tools: Array.isArray(body.tools) ? body.tools : [],
+    phases,
+    steps: steps.map((s, i) => ({ ...s, index: i + 1 })),
+  };
+}
+
 export async function mockApi<T>(path: string, options: ApiOptions = {}): Promise<T> {
   const method = options.method || "GET";
   const body = (options.body || {}) as Record<string, unknown>;
@@ -1037,6 +1152,113 @@ export async function mockApi<T>(path: string, options: ApiOptions = {}): Promis
     if (!meal.dish.trim()) badRequest("dish が必要です");
     meals.unshift(meal);
     return meal as unknown as T;
+  }
+
+  // ---------- kitchen: レシピ帳（ADR-015 D3・D4） ----------
+  // `import`/`estimate-nutrition` は R2（Python 担当が並行で作る口）だが、画面を作り切る
+  // ため合成の応答を用意する（ADR-015 §3 の契約 JSON どおりの下書き・固定の推定値）。
+  if (path === "/kitchen/recipes/import" && method === "POST") {
+    const url = String(body.url || "").trim();
+    if (!url) badRequest("url が必須です");
+    let site = "";
+    try {
+      site = new URL(url).hostname;
+    } catch {
+      badRequest(`url が不正です: ${url}`);
+    }
+    const draft: RecipeBody = {
+      title: "取り込んだレシピ（下書き）",
+      source_url: url,
+      source_site: site,
+      hero_image: "",
+      servings: 2,
+      total_minutes: 15,
+      ingredients: [{ name: "材料1", qty: "1", unit: "個", prep: "", group: "" }],
+      tools: [],
+      phases: [
+        { id: "prep", title: "下ごしらえ" },
+        { id: "cook", title: "作る" },
+      ],
+      steps: [
+        { index: 1, phase: "prep", title: "下ごしらえをする", instruction: "材料を切る。", image: null, ingredients_used: [], timer_sec: null, completion: "manual", tips: [] },
+        // ADR-015 D2の3「上限超えは2回目もそのまま返して画面で直させる」の合成例
+        // ——見出しが13文字（上限12）。warnings と赤い残り字数の両方を合成データで試せる。
+        { index: 2, phase: "cook", title: "調味料を合わせて炒める", instruction: "強火で香りが立つまで炒め合わせる。", image: null, ingredients_used: [], timer_sec: null, completion: "manual", tips: [] },
+      ],
+    };
+    const result: RecipeImportResult = {
+      recipe: draft,
+      warnings: ["工程2の見出しが13文字です（上限12文字）"],
+    };
+    return result as unknown as T;
+  }
+  if (path.match(/^\/kitchen\/recipes\/\d+\/estimate-nutrition$/) && method === "POST") {
+    const id = Number(path.split("/")[3]);
+    const r = findRecipe(id);
+    // ADR-015 D2の5: 押したときだけ推定し、`nutrition_source='estimated'` で入れる
+    // （＝この口自体が「うちの値」へ書き込む。下書きを返すだけの import とは違う）。
+    r.meta.kcal = 550;
+    r.meta.protein_g = 20;
+    r.meta.fat_g = 18;
+    r.meta.carb_g = 65;
+    r.meta.salt_g = 2.1;
+    r.meta.nutrition_source = "estimated";
+    return { meta: r.meta } as unknown as T;
+  }
+  if (path.startsWith("/kitchen/recipes") && method === "GET" && !path.match(/^\/kitchen\/recipes\/\d+$/)) {
+    const params = new URLSearchParams(path.split("?")[1] || "");
+    const q = params.get("q");
+    const tag = params.get("tag");
+    const favoriteParam = params.get("favorite");
+    const items: RecipeListItem[] = recipes
+      .filter((r) => !archivedRecipeIds.has(r.id))
+      .filter((r) => !q || r.title.toLowerCase().includes(q.toLowerCase()))
+      .filter((r) => !tag || r.meta.tags.includes(tag))
+      .filter((r) => favoriteParam == null || r.meta.favorite === (favoriteParam === "1" || favoriteParam === "true"))
+      .map((r) => ({ id: r.id, title: r.title, hero_image: r.hero_image, total_minutes: r.total_minutes, tags: r.meta.tags, favorite: r.meta.favorite, times_cooked: r.meta.times_cooked }))
+      .sort((a, b) => b.id - a.id);
+    return items as unknown as T;
+  }
+  if (path.match(/^\/kitchen\/recipes\/\d+$/) && method === "GET") {
+    const id = Number(path.split("/")[3]);
+    return findRecipe(id) as unknown as T;
+  }
+  if (path === "/kitchen/recipes" && method === "POST") {
+    const v = validateRecipeBody(body as unknown as RecipeBody);
+    recipeSeq += 1;
+    const recipe: Recipe = {
+      id: recipeSeq,
+      ...v,
+      meta: { kcal: null, protein_g: null, fat_g: null, carb_g: null, salt_g: null, nutrition_source: "", tags: [], rating: null, memo: "", favorite: false, times_cooked: 0, last_cooked_at: null },
+    };
+    recipes.push(recipe);
+    return recipe as unknown as T;
+  }
+  if (path.match(/^\/kitchen\/recipes\/\d+$/) && method === "PUT") {
+    const id = Number(path.split("/")[3]);
+    const r = findRecipe(id);
+    const v = validateRecipeBody(body as unknown as RecipeBody);
+    Object.assign(r, v);
+    return r as unknown as T;
+  }
+  if (path.match(/^\/kitchen\/recipes\/\d+\/meta$/) && method === "PUT") {
+    const id = Number(path.split("/")[3]);
+    const r = findRecipe(id);
+    const numericGiven = ["kcal", "protein_g", "fat_g", "carb_g", "salt_g"].some((k) => body[k] !== undefined);
+    if (numericGiven && body.nutrition_source === undefined) r.meta.nutrition_source = "manual";
+    for (const k of ["kcal", "protein_g", "fat_g", "carb_g", "salt_g", "nutrition_source", "memo"] as const) {
+      if (body[k] !== undefined) (r.meta as unknown as Record<string, unknown>)[k] = body[k];
+    }
+    if (body.rating !== undefined) r.meta.rating = body.rating as number | null;
+    if (body.tags !== undefined) r.meta.tags = (body.tags as string[]) || [];
+    if (body.favorite !== undefined) r.meta.favorite = !!body.favorite;
+    return r as unknown as T;
+  }
+  if (path.match(/^\/kitchen\/recipes\/\d+\/archive$/) && method === "POST") {
+    const id = Number(path.split("/")[3]);
+    findRecipe(id);
+    archivedRecipeIds.add(id);
+    return { id } as unknown as T;
   }
 
   // ---------- house ----------

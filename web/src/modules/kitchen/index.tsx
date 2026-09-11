@@ -1,11 +1,77 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import type { ModuleDefinition } from "../../app/module";
 import { usePolling } from "../../app/polling";
 import { api, ApiError } from "../../app/api";
-import type { KitchenData } from "../../app/types";
+import type { KitchenData, Recipe, RecipeListItem } from "../../app/types";
 import { useToast } from "../../components/Toast";
 import { ScreenHeader } from "../../components/ScreenHeader";
 import { formatDay, useT, type TranslationKey } from "../../app/i18n";
+import { RecipesRouter } from "./RecipesRouter";
+import { compareByRecentCooked, fetchRecipesWithDetails } from "./recipeShared";
+
+/** 台所トップの「レシピ帳」入口カード（ADR-015 D4「台所のトップには入口と直近3件だけ」）。
+ * last_cooked_at 降順・無ければ新しい順の3件——一覧 API に無い last_cooked_at を補うため
+ * 詳細もあわせて読む（`recipeShared.fetchRecipesWithDetails`）。5秒ポーリングの対象には
+ * せず、マウント時に一度だけ読む（レシピの更新頻度は在庫・買い物ほど高くない）。 */
+function RecentRecipesCard() {
+  const t = useT();
+  const [items, setItems] = useState<RecipeListItem[] | null>(null);
+  const [details, setDetails] = useState<Record<number, Recipe>>({});
+  const [available, setAvailable] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetchRecipesWithDetails()
+      .then((res) => {
+        if (cancelled) return;
+        setItems(res.items);
+        setDetails(res.details);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setAvailable(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const recentThree = items ? [...items].sort((a, b) => compareByRecentCooked(a, b, details)).slice(0, 3) : [];
+
+  return (
+    <section className="panel">
+      <div className="panel-head">
+        <h2>{t("kitchen.recipes.entryHeading")}</h2>
+        <Link className="btn btn-primary btn-small" to="/kitchen/recipes">
+          {t("kitchen.recipes.entryButton")}
+        </Link>
+      </div>
+      <p className="panel-note">{t("kitchen.recipes.entryDescription")}</p>
+      {available && items && (
+        <>
+          <h3 style={{ fontSize: 12.5 }}>{t("kitchen.recipes.recentHeading")}</h3>
+          {!recentThree.length && <p className="panel-note">{t("kitchen.recipes.recentEmpty")}</p>}
+          <div className="rows">
+            {recentThree.map((it) => (
+              <Link className="row-item" to={`/kitchen/recipes/${it.id}`} key={it.id}>
+                <span className="row-title">{it.title}</span>
+                <span className="row-id">
+                  {details[it.id]?.meta.last_cooked_at ? formatDay(details[it.id].meta.last_cooked_at, t) : t("kitchen.recipes.notCookedYet")}
+                </span>
+              </Link>
+            ))}
+          </div>
+          {items.length > 3 && (
+            <p className="panel-note">
+              <Link to="/kitchen/recipes">{t("kitchen.recipes.viewAll")}</Link>
+            </p>
+          )}
+        </>
+      )}
+    </section>
+  );
+}
 
 const MEAL_SLOT_KEY: Record<string, TranslationKey> = {
   breakfast: "mealSlot.breakfast",
@@ -135,6 +201,7 @@ function KitchenScreen() {
   return (
     <div className="view" id="view-kitchen">
       <ScreenHeader title={title} description={description} />
+      <RecentRecipesCard />
       <section className="panel panel-primary">
         <div className="panel-head">
           <h2>{t("kitchen.pantry.heading")}</h2>
@@ -303,5 +370,9 @@ export const kitchenModule: ModuleDefinition = {
   description: "kitchen.description",
   icon: "🍳",
   order: 5,
-  routes: [{ index: true, element: <KitchenScreen /> }],
+  routes: [
+    { index: true, element: <KitchenScreen /> },
+    // ADR-015 D4: レシピ帳はページ遷移で分ける（台所のトップに詰め込まない）。
+    { path: "recipes/*", element: <RecipesRouter /> },
+  ],
 };

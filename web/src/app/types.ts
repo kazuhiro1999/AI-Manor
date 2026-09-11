@@ -320,6 +320,92 @@ export interface KitchenData {
   taste?: TastePref[];
 }
 
+/* ---------- kitchen: レシピ帳（ADR-015 §3・D3・D4） ---------- */
+
+export interface RecipeIngredient {
+  name: string;
+  qty: string;
+  unit: string;
+  prep: string;
+  group: string;
+}
+
+export interface RecipePhase {
+  id: string;
+  title: string;
+}
+
+export type StepCompletion = "manual" | "auto" | "confirm";
+
+export interface RecipeStep {
+  index: number;
+  phase: string; // RecipePhase.id への参照
+  title: string; // ≤12文字（ADR-015 §3）
+  instruction: string; // ≤60文字
+  image: string | null;
+  ingredients_used: string[];
+  timer_sec: number | null;
+  completion: StepCompletion;
+  tips: string[];
+}
+
+// `chef_recipe_meta`（ADR-015 D1「うちの値」）。
+export interface RecipeMeta {
+  kcal: number | null;
+  protein_g: number | null;
+  fat_g: number | null;
+  carb_g: number | null;
+  salt_g: number | null;
+  nutrition_source: "" | "estimated" | "manual";
+  tags: string[];
+  rating: number | null;
+  memo: string;
+  favorite: boolean;
+  times_cooked: number;
+  last_cooked_at: string | null;
+}
+
+// `GET/POST/PUT /api/v1/kitchen/recipes*` の契約 JSON（ADR-015 §3）。
+export interface Recipe {
+  id: number;
+  title: string;
+  source_url: string;
+  source_site: string;
+  hero_image: string;
+  servings: number | null;
+  total_minutes: number | null;
+  ingredients: RecipeIngredient[];
+  tools: string[];
+  phases: RecipePhase[];
+  steps: RecipeStep[];
+  meta: RecipeMeta;
+}
+
+// `recipes.validate()` が受ける形（`id`・`meta` を持たない。登録・本体更新の送信 body）。
+export type RecipeBody = Omit<Recipe, "id" | "meta">;
+
+// `GET /api/v1/kitchen/recipes` の一覧行（ADR-015 D3。title・hero・分・タグ・favorite・
+// 作った回数だけ）。「直近3件」の並び替えに使う last_cooked_at は一覧APIに無いため、
+// 画面側で詳細（`GET /recipes/{id}`）をあわせて読み、meta.last_cooked_at で補う
+// （kitchen/recipeShared.ts の `fetchRecipesWithDetails` 参照）。
+export interface RecipeListItem {
+  id: number;
+  title: string;
+  hero_image: string;
+  total_minutes: number | null;
+  tags: string[];
+  favorite: boolean;
+  times_cooked: number;
+}
+
+// `POST /api/v1/kitchen/recipes/import` の返り（R2。ADR-015 D2の4「保存せずに下書きを
+// 返す」）。`recipe` は `RecipeBody` と同じ形（`claude -p` の構造化結果を検算前のまま返す
+// ことがあるため、上限超えの可能性がある値も含めて緩めに受ける）。
+export interface RecipeImportResult {
+  recipe: RecipeBody;
+  warnings: string[];
+}
+
 /* ---------- house ---------- */
 
 export interface HouseRow {
