@@ -264,6 +264,17 @@ def set(
         conn.execute("UPDATE user SET name = ? WHERE id = ?", (name, user_id))
     if callname is not None:
         conn.execute("UPDATE user SET callname = ? WHERE id = ?", (callname.strip(), user_id))
+        # 2026-09-11 主人「プロフィールの呼び名と同じ意味なら統合を」: 呼び名の正はここ。
+        # `profile.master.callname` / `profile.butler.callname` は起動時の注入や Slack の
+        # 便が読む古い置き場なので、**ここから写して同じ値に保つ**（profile.set_many は
+        # 逆向きにここへ写す。循環を避けるため profile を import せず、表へ直接書く）。
+        key = {PRINCIPAL_ID: "master.callname", BUTLER_ID: "butler.callname"}.get(user_id)
+        if key and callname.strip():
+            conn.execute(
+                "INSERT INTO profile (key, value, updated_at) VALUES (?, ?, ?)"
+                " ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
+                (key, callname.strip(), util.now()),
+            )
     return user_id
 
 

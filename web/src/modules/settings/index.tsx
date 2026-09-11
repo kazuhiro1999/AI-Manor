@@ -35,16 +35,12 @@ function ProfileSection() {
   const { data: setupInfo, error, reload } = usePolling<SetupInfo>("/setup", 5000, ref as React.RefObject<HTMLElement>);
   const { show } = useToast();
 
-  const [callname, setCallname] = useState("");
-  const [butlerName, setButlerName] = useState("");
+  // 呼び名（主人・執事）はここには無い——「利用者」節の呼び名と同じ意味だったので、
+  // そちらへ統合した（主人の指摘 2026-09-11。真実は user.callname）。
   const [selectedPurposes, setSelectedPurposes] = useState<string[]>([]);
 
   useEffect(() => {
     if (setupInfo && !isEditing()) {
-      setCallname(setupInfo.profile["master.callname"] || "");
-      // 執事の呼び名が未設定のときの初期表示だけは言語に合わせる（D12: 担当の名前は訳す）。
-      // 主人が実際に書き込んだ呼び名（②のデータ）はここに来ないので触らない。
-      setButlerName(setupInfo.profile["butler.callname"] || t("agent.butler"));
       setSelectedPurposes(parsePurposeIds(setupInfo.profile["purposes"]));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -58,7 +54,7 @@ function ProfileSection() {
     try {
       await api("/setup/profile", {
         method: "PUT",
-        body: { callname, butler_name: butlerName, purposes: selectedPurposes },
+        body: { purposes: selectedPurposes },
       });
       show(t("settings.profile.saved"), "ok", 3000);
       reload();
@@ -74,14 +70,9 @@ function ProfileSection() {
       </div>
       {error && <p className="panel-note">{t("errors.loadFailed", { reason: error })}</p>}
       <div className="form-grid">
-        <div className="form-row">
-          <label htmlFor="profile-callname">{t("settings.profile.callname")}</label>
-          <input id="profile-callname" className="form-input" value={callname} onChange={(e) => setCallname(e.target.value)} />
-        </div>
-        <div className="form-row">
-          <label htmlFor="profile-butler-name">{t("settings.profile.butlerName")}</label>
-          <input id="profile-butler-name" className="form-input" value={butlerName} onChange={(e) => setButlerName(e.target.value)} />
-        </div>
+        <p className="panel-note">
+          {t("settings.profile.callnameMoved")} <a href="#settings-users">{t("settings.profile.callnameMovedLink")}</a>
+        </p>
         <div className="form-row">
           <label>{t("settings.profile.purposes")}</label>
           <div className="setup-chips">
