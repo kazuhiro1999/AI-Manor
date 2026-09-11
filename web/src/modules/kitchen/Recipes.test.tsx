@@ -1,14 +1,19 @@
-/* manor web — レシピ帳の画面試験（ADR-015 D4）。他の module 試験と同じ流儀:
+/* manor web — レシピ帳の画面試験（ADR-015 D4・§6 追補）。他の module 試験と同じ流儀:
  * `globalThis.fetch` を直に差し替え、`api.ts` の実装（`realApi`）をそのまま通す
- * （`mock.ts` は `?mock=1` の手動確認用——試験は POST/PUT の body を厳密に検算したいので
+ * （`mock.ts` は `?mock=1` の手動確認用——試験は POST/PUT/GET の中身を厳密に検算したいので
  * ここではフェッチを直接見る。settings/Settings.test.tsx・tasks/Plan.test.tsx と同じ）。
+ *
+ * §6 で一覧の絞り・並びがサーバ側の契約になった（`GET /kitchen/recipes` がクエリを見て
+ * `{items}` を返す）ので、ここの fetch モックも簡易フィルタを持つ——本物の
+ * `chef/recipes.py` の検算そのものではなく、画面がクエリを正しく組み立て、返ってきた
+ * `items` を正しく描画するかを見るためのもの。
  */
 import { describe, expect, it, vi, afterEach } from "vitest";
 import { render, cleanup, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { RecipesRouter } from "./RecipesRouter";
-import type { Recipe, RecipeListItem, RecipeMeta } from "../../app/types";
+import type { Recipe, RecipeFacets, RecipeMeta } from "../../app/types";
 import { ToastProvider } from "../../components/Toast";
 
 function baseMeta(overrides: Partial<RecipeMeta> = {}): RecipeMeta {
@@ -25,6 +30,9 @@ function baseMeta(overrides: Partial<RecipeMeta> = {}): RecipeMeta {
     favorite: false,
     times_cooked: 0,
     last_cooked_at: null,
+    category: "",
+    main_ingredient: "",
+    cuisine: "",
     ...overrides,
   };
 }
@@ -68,7 +76,7 @@ function chahan(): Recipe {
         tips: [],
       },
     ],
-    meta: baseMeta({ favorite: true, tags: ["中華"], times_cooked: 3, last_cooked_at: "2026-09-08" }),
+    meta: baseMeta({ favorite: true, tags: ["中華"], times_cooked: 3, last_cooked_at: "2026-09-08", category: "ご飯もの", main_ingredient: "肉", cuisine: "中華" }),
   };
 }
 
@@ -97,33 +105,162 @@ function karaage(): Recipe {
         tips: [],
       },
     ],
-    meta: baseMeta({ favorite: false, tags: ["揚げ物"], times_cooked: 0, last_cooked_at: null }),
+    meta: baseMeta({ favorite: false, tags: ["揚げ物"], times_cooked: 0, last_cooked_at: null, category: "主菜", main_ingredient: "肉", cuisine: "和食" }),
   };
 }
 
-function toListItem(r: Recipe): RecipeListItem {
-  return { id: r.id, title: r.title, hero_image: r.hero_image, total_minutes: r.total_minutes, tags: r.meta.tags, favorite: r.meta.favorite, times_cooked: r.meta.times_cooked };
+interface ListItemLike {
+  id: number;
+  title: string;
+  hero_image: string;
+  total_minutes: number | null;
+  servings: number | null;
+  tags: string[];
+  favorite: boolean;
+  times_cooked: number;
+  last_cooked_at: string | null;
+  kcal: number | null;
+  category: string;
+  main_ingredient: string;
+  cuisine: string;
+  updated_at: string;
 }
 
-describe("kitchen recipes — 一覧（ADR-015 D4）", () => {
+function toListItem(r: Recipe): ListItemLike {
+  return {
+    id: r.id,
+    title: r.title,
+    hero_image: r.hero_image,
+    total_minutes: r.total_minutes,
+    servings: r.servings,
+    tags: r.meta.tags,
+    favorite: r.meta.favorite,
+    times_cooked: r.meta.times_cooked,
+    last_cooked_at: r.meta.last_cooked_at,
+    kcal: r.meta.kcal,
+    category: r.meta.category,
+    main_ingredient: r.meta.main_ingredient,
+    cuisine: r.meta.cuisine,
+    updated_at: "2026-09-01T00:00:00.000Z",
+  };
+}
+
+function countFacet(values: string[]): { value: string; count: number }[] {
+  const counts = new Map<string, number>();
+  for (const v of values) {
+    if (!v) continue;
+    counts.set(v, (counts.get(v) || 0) + 1);
+  }
+  return Array.from(counts.entries()).map(([value, count]) => ({ value, count }));
+}
+
+function facetsOf(recipes: Recipe[]): RecipeFacets {
+  return {
+    category: countFacet(recipes.map((r) => r.meta.category)),
+    main_ingredient: countFacet(recipes.map((r) => r.meta.main_ingredient)),
+    cuisine: countFacet(recipes.map((r) => r.meta.cuisine)),
+    tags: countFacet(recipes.flatMap((r) => r.meta.tags)),
+  };
+}
+
+/** §6 D9: 一覧 API はクエリで絞る契約になった。試験用の簡易フィルタ
+ * ——`chef/recipes.py` の検算そのものではなく、画面がクエリを正しく組み立て、
+ * 返ってきた `items` を正しく描画するかだけを見る。 */
+function filterRecipes(recipes: Recipe[], qs: string): ListItemLike[] {
+  const params = new URLSearchParams(qs);
+  const q = (params.get("q") || "").toLowerCase();
+  const tag = params.get("tag");
+  const favoriteParam = params.get("favorite");
+  const category = params.get("category");
+  const mainIngredient = params.get("main_ingredient");
+  const cuisine = params.get("cuisine");
+  return recipes
+    .filter((r) => !q || r.title.toLowerCase().includes(q) || r.ingredients.some((ing) => ing.name.toLowerCase().includes(q)))
+    .filter((r) => !tag || r.meta.tags.includes(tag))
+    .filter((r) => favoriteParam == null || r.meta.favorite === (favoriteParam === "1" || favoriteParam === "true"))
+    .filter((r) => !category || r.meta.category === category)
+    .filter((r) => !mainIngredient || r.meta.main_ingredient === mainIngredient)
+    .filter((r) => !cuisine || r.meta.cuisine === cuisine)
+    .map(toListItem);
+}
+
+/** よく使う一覧・facets のフェッチ応答をまとめて差し込む。 */
+function mockListAndFacets(recipes: Recipe[], extra?: (url: string, init?: RequestInit) => Response | null) {
+  globalThis.fetch = vi.fn().mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input);
+    if (extra) {
+      const res = extra(url, init);
+      if (res) return res;
+    }
+    if (url.includes("/api/v1/kitchen/recipes/facets")) {
+      return { ok: true, status: 200, json: async () => facetsOf(recipes) };
+    }
+    const detailMatch = url.match(/\/api\/v1\/kitchen\/recipes\/(\d+)$/);
+    if (detailMatch) {
+      const found = recipes.find((r) => r.id === Number(detailMatch[1]));
+      return { ok: true, status: 200, json: async () => found };
+    }
+    if (url.includes("/api/v1/kitchen/recipes")) {
+      const qs = url.split("?")[1] || "";
+      return { ok: true, status: 200, json: async () => ({ items: filterRecipes(recipes, qs) }) };
+    }
+    throw new Error("unexpected fetch: " + url);
+  }) as unknown as typeof fetch;
+}
+
+describe("kitchen recipes — 一覧（ADR-015 D4・§6 D4'・D9）", () => {
   afterEach(() => {
     cleanup();
   });
 
+  it("絞りが無いときは分類ごとの見出し＋横スクロールの列になる", async () => {
+    const recipes = [chahan(), karaage()];
+    mockListAndFacets(recipes);
+
+    const { container } = render(
+      <MemoryRouter initialEntries={["/"]}>
+        <ToastProvider>
+          <RecipesRouter />
+        </ToastProvider>
+      </MemoryRouter>
+    );
+
+    await waitFor(() => expect(screen.getByText("パラパラ炒飯")).toBeTruthy());
+    expect(screen.getByText("鶏の唐揚げ")).toBeTruthy();
+
+    // 分類の見出し（chahan=ご飯もの、karaage=主菜）が2つ、横スクロールの列も2つ出る。
+    expect(screen.getByText("ご飯もの")).toBeTruthy();
+    expect(screen.getByText("主菜")).toBeTruthy();
+    expect(container.querySelectorAll(".recipe-category-scroll").length).toBe(2);
+    expect(container.querySelector(".recipe-grid")).toBeNull();
+  });
+
+  it("分類の chip で絞ると一覧が1つのグリッドになり、絞った分類だけが残る", async () => {
+    const recipes = [chahan(), karaage()];
+    mockListAndFacets(recipes);
+
+    const { container } = render(
+      <MemoryRouter initialEntries={["/"]}>
+        <ToastProvider>
+          <RecipesRouter />
+        </ToastProvider>
+      </MemoryRouter>
+    );
+
+    await waitFor(() => expect(screen.getByText("パラパラ炒飯")).toBeTruthy());
+
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "主菜（1）" }));
+
+    await waitFor(() => expect(screen.queryByText("パラパラ炒飯")).toBeNull());
+    expect(screen.getByText("鶏の唐揚げ")).toBeTruthy();
+    expect(container.querySelector(".recipe-grid")).toBeTruthy();
+    expect(container.querySelector(".recipe-category-scroll")).toBeNull();
+  });
+
   it("検索欄は題名だけでなく材料名にも一致し、タグの chip で絞り込める", async () => {
     const recipes = [chahan(), karaage()];
-    globalThis.fetch = vi.fn().mockImplementation(async (input: RequestInfo | URL) => {
-      const url = String(input);
-      if (url.endsWith("/api/v1/kitchen/recipes")) {
-        return { ok: true, status: 200, json: async () => recipes.map(toListItem) };
-      }
-      const m = url.match(/\/api\/v1\/kitchen\/recipes\/(\d+)$/);
-      if (m) {
-        const found = recipes.find((r) => r.id === Number(m[1]));
-        return { ok: true, status: 200, json: async () => found };
-      }
-      throw new Error("unexpected fetch: " + url);
-    }) as unknown as typeof fetch;
+    mockListAndFacets(recipes);
 
     const user = userEvent.setup();
     render(
@@ -147,18 +284,18 @@ describe("kitchen recipes — 一覧（ADR-015 D4）", () => {
     await waitFor(() => expect(screen.getByText("鶏の唐揚げ")).toBeTruthy());
 
     // タグ「揚げ物」を押すと唐揚げだけになる。
-    await user.click(screen.getByRole("button", { name: "揚げ物" }));
+    await user.click(screen.getByRole("button", { name: "揚げ物（1）" }));
     await waitFor(() => expect(screen.queryByText("パラパラ炒飯")).toBeNull());
     expect(screen.getByText("鶏の唐揚げ")).toBeTruthy();
   });
 });
 
-describe("kitchen recipes — 登録（ADR-015 D2・D4）", () => {
+describe("kitchen recipes — 登録・取り込み（ADR-015 D2・D4・§6 D7）", () => {
   afterEach(() => {
     cleanup();
   });
 
-  it("「取り込む」で下書きがフォームへ流れ込み、warnings の帯と13文字見出しの残り字数（赤）が出る", async () => {
+  it("「取り込む」は mode:auto で呼ばれ、返った method の文言が出る", async () => {
     const calls: { url: string; init?: RequestInit }[] = [];
     globalThis.fetch = vi.fn().mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
@@ -189,6 +326,7 @@ describe("kitchen recipes — 登録（ADR-015 D2・D4）", () => {
               },
             ],
           },
+          method: "adapter:nadia",
           warnings: ["工程1の見出しが13文字です（上限12文字）"],
         };
         return { ok: true, status: 200, json: async () => draft };
@@ -210,15 +348,132 @@ describe("kitchen recipes — 登録（ADR-015 D2・D4）", () => {
 
     await waitFor(() => expect((screen.getByLabelText("題名") as HTMLInputElement).value).toBe("取り込んだレシピ"));
     expect(screen.getByText("工程1の見出しが13文字です（上限12文字）")).toBeTruthy();
+    // §6 D7: Nadia の形式で読み取ったことが1行で出る。
+    expect(screen.getByText("Nadia の形式で読み取りました")).toBeTruthy();
 
     const titleInput = screen.getByLabelText("見出し") as HTMLInputElement;
     expect(titleInput.value.length).toBe(13);
     const overNote = titleInput.closest(".form-row") as HTMLElement;
     expect(within(overNote).getByText("1文字超過").className).toContain("char-count-over");
 
-    expect(calls.some((c) => c.url.endsWith("/api/v1/kitchen/recipes/import") && (c.init?.method || "").toUpperCase() === "POST")).toBe(
-      true
+    const importCall = calls.find((c) => c.url.endsWith("/api/v1/kitchen/recipes/import"));
+    expect((importCall?.init?.method || "").toUpperCase()).toBe("POST");
+    const importBody = JSON.parse(String(importCall?.init?.body));
+    expect(importBody.mode).toBe("auto");
+  });
+
+  it("汎用の抽出で warnings が多いとき、Claude を勧める一文が出る", async () => {
+    globalThis.fetch = vi.fn().mockImplementation(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/api/v1/kitchen/recipes/import")) {
+        const draft = {
+          recipe: {
+            title: "取り込んだレシピ（薄い）",
+            source_url: "https://unknown-site.example/x",
+            source_site: "unknown-site.example",
+            hero_image: "",
+            servings: null,
+            total_minutes: null,
+            ingredients: [],
+            tools: [],
+            phases: [{ id: "prep", title: "下ごしらえ" }],
+            steps: [{ index: 1, phase: "prep", title: "見出し", instruction: "本文。", image: null, ingredients_used: [], timer_sec: null, completion: "manual", tips: [] }],
+          },
+          method: "generic",
+          warnings: ["完成画像が見つかりません", "材料の分量を読み取れていません"],
+        };
+        return { ok: true, status: 200, json: async () => draft };
+      }
+      throw new Error("unexpected fetch: " + url);
+    }) as unknown as typeof fetch;
+
+    const user = userEvent.setup();
+    render(
+      <MemoryRouter initialEntries={["/new"]}>
+        <ToastProvider>
+          <RecipesRouter />
+        </ToastProvider>
+      </MemoryRouter>
     );
+
+    await user.type(screen.getByPlaceholderText("レシピの URL"), "https://unknown-site.example/x");
+    await user.click(screen.getByRole("button", { name: "取り込む" }));
+
+    await waitFor(() => expect(screen.getByText("汎用の解析で読み取りました（見出し・箇条書きの推定）")).toBeTruthy());
+    expect(screen.getByText("Claude で整えることを勧めます")).toBeTruthy();
+  });
+
+  it("「Claude で整える」は /refine を呼び、返った下書きでフォームを置き換える", async () => {
+    const calls: { url: string; init?: RequestInit }[] = [];
+    globalThis.fetch = vi.fn().mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      calls.push({ url, init });
+      if (url.endsWith("/api/v1/kitchen/recipes/import")) {
+        const draft = {
+          recipe: {
+            title: "取り込んだレシピ",
+            source_url: "https://example.com/x",
+            source_site: "example.com",
+            hero_image: "",
+            servings: 2,
+            total_minutes: 15,
+            ingredients: [],
+            tools: [],
+            phases: [{ id: "prep", title: "下ごしらえ" }],
+            steps: [
+              {
+                index: 1,
+                phase: "prep",
+                title: "調味料を合わせる長い見出し", // 13文字
+                instruction: "よく混ぜる。",
+                image: null,
+                ingredients_used: [],
+                timer_sec: null,
+                completion: "manual",
+                tips: [],
+              },
+            ],
+          },
+          method: "generic",
+          warnings: ["工程1の見出しが13文字です（上限12文字）"],
+        };
+        return { ok: true, status: 200, json: async () => draft };
+      }
+      if (url.endsWith("/api/v1/kitchen/recipes/refine")) {
+        const sent = JSON.parse(String(init?.body));
+        const refined = {
+          recipe: {
+            ...sent.recipe,
+            steps: sent.recipe.steps.map((s: { title: string }) => ({ ...s, title: s.title.slice(0, 12) })),
+          },
+          method: "claude",
+          warnings: [],
+        };
+        return { ok: true, status: 200, json: async () => refined };
+      }
+      throw new Error("unexpected fetch: " + url);
+    }) as unknown as typeof fetch;
+
+    const user = userEvent.setup();
+    render(
+      <MemoryRouter initialEntries={["/new"]}>
+        <ToastProvider>
+          <RecipesRouter />
+        </ToastProvider>
+      </MemoryRouter>
+    );
+
+    await user.type(screen.getByPlaceholderText("レシピの URL"), "https://example.com/x");
+    await user.click(screen.getByRole("button", { name: "取り込む" }));
+    await waitFor(() => expect((screen.getByLabelText("見出し") as HTMLInputElement).value.length).toBe(13));
+
+    await user.click(screen.getByRole("button", { name: "Claude で整える" }));
+
+    await waitFor(() => expect((screen.getByLabelText("見出し") as HTMLInputElement).value).toBe("調味料を合わせる長い見出".slice(0, 12)));
+
+    const refineCall = calls.find((c) => c.url.endsWith("/api/v1/kitchen/recipes/refine"));
+    expect((refineCall?.init?.method || "").toUpperCase()).toBe("POST");
+    expect(screen.getByText("Claude で抽出しました")).toBeTruthy();
   });
 
   it("「手で書く」を押すと取り込んだ下書きを消して空のフォームへ戻す", async () => {
@@ -238,6 +493,7 @@ describe("kitchen recipes — 登録（ADR-015 D2・D4）", () => {
             phases: [{ id: "prep", title: "下ごしらえ" }],
             steps: [{ index: 1, phase: "prep", title: "見出し", instruction: "本文。", image: null, ingredients_used: [], timer_sec: null, completion: "manual", tips: [] }],
           },
+          method: "jsonld",
           warnings: [],
         };
         return { ok: true, status: 200, json: async () => draft };
@@ -349,6 +605,11 @@ describe("kitchen recipes — 表示（ADR-015 D4）", () => {
     expect(screen.getByText("しょうがを刻む。")).toBeTruthy();
     expect(screen.getByText("強火で香りが立つまで炒める。")).toBeTruthy();
 
+    // §6 D4': 分類3軸の chip が出る（cuisine=中華 はタグにも同じ文字列があるため件数で見る）。
+    expect(screen.getByText("ご飯もの")).toBeTruthy();
+    expect(screen.getByText("肉")).toBeTruthy();
+    expect(screen.getAllByText("中華").length).toBeGreaterThan(0);
+
     // tips は最初は畳まれている。
     expect(screen.queryByText("みじん切りで香りが立つ")).toBeNull();
     const stepCard = screen.getByText("しょうがを刻む。").closest(".step-card") as HTMLElement;
@@ -357,7 +618,7 @@ describe("kitchen recipes — 表示（ADR-015 D4）", () => {
   });
 });
 
-describe("kitchen recipes — 編集とうちの値（ADR-015 D1・D4）", () => {
+describe("kitchen recipes — 編集とうちの値（ADR-015 D1・D4・§6 D9）", () => {
   afterEach(() => {
     cleanup();
   });
@@ -415,6 +676,55 @@ describe("kitchen recipes — 編集とうちの値（ADR-015 D1・D4）", () =>
     expect(body.tags).toEqual(["中華", "定番"]);
     expect(body.rating).toBe(4);
     expect(body.favorite).toBe(true);
+  });
+
+  it("分類3軸を選ぶと PUT .../meta の body に category/main_ingredient/cuisine が乗る", async () => {
+    const calls: { url: string; init?: RequestInit }[] = [];
+    const recipe = karaage(); // 分類3軸が初期値ありの見本
+    globalThis.fetch = vi.fn().mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = (init?.method || "GET").toUpperCase();
+      calls.push({ url, init });
+      if (url.endsWith("/api/v1/kitchen/recipes/2") && method === "GET") {
+        return { ok: true, status: 200, json: async () => recipe };
+      }
+      if (url.endsWith("/api/v1/kitchen/recipes/2/meta") && method === "PUT") {
+        return { ok: true, status: 200, json: async () => recipe };
+      }
+      throw new Error("unexpected fetch: " + url);
+    }) as unknown as typeof fetch;
+
+    const user = userEvent.setup();
+    render(
+      <MemoryRouter initialEntries={["/2/edit"]}>
+        <ToastProvider>
+          <RecipesRouter />
+        </ToastProvider>
+      </MemoryRouter>
+    );
+
+    await waitFor(() => expect(screen.getByText("うちの値")).toBeTruthy());
+
+    // 初期値（karaage: 主菜／肉／和食）が select に反映されている。
+    expect((screen.getByLabelText("分類") as HTMLSelectElement).value).toBe("主菜");
+    expect((screen.getByLabelText("主な材料") as HTMLSelectElement).value).toBe("肉");
+    expect((screen.getByLabelText("ジャンル") as HTMLSelectElement).value).toBe("和食");
+
+    await userEvent.selectOptions(screen.getByLabelText("ジャンル"), "エスニック");
+
+    const metaPanel = screen.getByText("うちの値").closest("section") as HTMLElement;
+    await user.click(within(metaPanel).getByRole("button", { name: "保存" }));
+
+    await waitFor(() =>
+      expect(calls.some((c) => c.url.endsWith("/api/v1/kitchen/recipes/2/meta") && (c.init?.method || "").toUpperCase() === "PUT")).toBe(
+        true
+      )
+    );
+    const putCall = calls.find((c) => c.url.endsWith("/api/v1/kitchen/recipes/2/meta") && (c.init?.method || "").toUpperCase() === "PUT");
+    const body = JSON.parse(String(putCall?.init?.body));
+    expect(body.category).toBe("主菜");
+    expect(body.main_ingredient).toBe("肉");
+    expect(body.cuisine).toBe("エスニック");
   });
 
   it("「栄養を推定」を押すと POST .../estimate-nutrition の返り値で栄養欄が埋まる", async () => {

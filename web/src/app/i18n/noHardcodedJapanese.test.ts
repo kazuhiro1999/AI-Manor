@@ -26,6 +26,11 @@ import { describe, expect, it } from "vitest";
  *   - `modules/imports/index.tsx`: CSV 列名対応表の既定値（`date=日付,amount=金額,...`）。
  *     画面の文言ではなく、実際に読みに行く CSV の列名という機能上のデフォルト値
  *     （ファイル内のコメントに詳細）。
+ *   - `modules/kitchen/recipeShared.ts`: `CATEGORY_OPTIONS`/`MAIN_INGREDIENT_OPTIONS`/
+ *     `CUISINE_OPTIONS`（ADR-015 §6 D9「分類の3軸」）。`staff/chef/lexicon.toml` が
+ *     唯一の出どころの固定語彙——バックエンドへ送る値そのもの（`category=主菜` 等）で、
+ *     house/tasks-Running と同じ「実データとの照合・語彙そのもの」の理由。ロケールを
+ *     分けて訳すと API の値と食い違うため触らない。
  *
  * 行単位の許可（LINE_ALLOWLIST）: Provider の外で hook を呼んだときの不変条件エラー
  * （`throw new Error(...)`）と、`#root` が無いという起動時の致命的エラー。どちらも
@@ -49,6 +54,7 @@ const ALLOWLIST = new Set<string>([
   "modules/house/index.tsx",
   "modules/tasks/Running.tsx",
   "modules/imports/index.tsx",
+  "modules/kitchen/recipeShared.ts",
 ]);
 
 // 行単位の許可: Provider の外で hook を呼んだときの不変条件エラー（throw new Error(...)）と、

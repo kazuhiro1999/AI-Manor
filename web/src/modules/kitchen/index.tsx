@@ -3,30 +3,29 @@ import { Link } from "react-router-dom";
 import type { ModuleDefinition } from "../../app/module";
 import { usePolling } from "../../app/polling";
 import { api, ApiError } from "../../app/api";
-import type { KitchenData, Recipe, RecipeListItem } from "../../app/types";
+import type { KitchenData, RecipeListItem } from "../../app/types";
 import { useToast } from "../../components/Toast";
 import { ScreenHeader } from "../../components/ScreenHeader";
 import { formatDay, useT, type TranslationKey } from "../../app/i18n";
 import { RecipesRouter } from "./RecipesRouter";
-import { compareByRecentCooked, fetchRecipesWithDetails } from "./recipeShared";
+import { fetchRecipeList } from "./recipeShared";
 
 /** 台所トップの「レシピ帳」入口カード（ADR-015 D4「台所のトップには入口と直近3件だけ」）。
- * last_cooked_at 降順・無ければ新しい順の3件——一覧 API に無い last_cooked_at を補うため
- * 詳細もあわせて読む（`recipeShared.fetchRecipesWithDetails`）。5秒ポーリングの対象には
- * せず、マウント時に一度だけ読む（レシピの更新頻度は在庫・買い物ほど高くない）。 */
+ * `sort=cooked`（最近作った順。§6 D9）を一覧 API に直接投げる——一覧の応答自体に
+ * last_cooked_at が乗るようになったので、旧版のような detail の並行取得はもう要らない
+ * （`recipeShared.fetchRecipeList`）。5秒ポーリングの対象にはせず、マウント時に一度だけ読む
+ * （レシピの更新頻度は在庫・買い物ほど高くない）。 */
 function RecentRecipesCard() {
   const t = useT();
   const [items, setItems] = useState<RecipeListItem[] | null>(null);
-  const [details, setDetails] = useState<Record<number, Recipe>>({});
   const [available, setAvailable] = useState(true);
 
   useEffect(() => {
     let cancelled = false;
-    fetchRecipesWithDetails()
+    fetchRecipeList({ sort: "cooked" })
       .then((res) => {
         if (cancelled) return;
-        setItems(res.items);
-        setDetails(res.details);
+        setItems(res);
       })
       .catch(() => {
         if (cancelled) return;
@@ -37,7 +36,7 @@ function RecentRecipesCard() {
     };
   }, []);
 
-  const recentThree = items ? [...items].sort((a, b) => compareByRecentCooked(a, b, details)).slice(0, 3) : [];
+  const recentThree = items ? items.slice(0, 3) : [];
 
   return (
     <section className="panel">
@@ -57,7 +56,7 @@ function RecentRecipesCard() {
               <Link className="row-item" to={`/kitchen/recipes/${it.id}`} key={it.id}>
                 <span className="row-title">{it.title}</span>
                 <span className="row-id">
-                  {details[it.id]?.meta.last_cooked_at ? formatDay(details[it.id].meta.last_cooked_at, t) : t("kitchen.recipes.notCookedYet")}
+                  {it.last_cooked_at ? formatDay(it.last_cooked_at, t) : t("kitchen.recipes.notCookedYet")}
                 </span>
               </Link>
             ))}

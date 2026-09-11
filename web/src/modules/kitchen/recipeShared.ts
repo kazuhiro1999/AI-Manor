@@ -1,10 +1,19 @@
-/* manor web — レシピ帳の共有の定数・変換（ADR-015 §3・D4）。
- * フォーム⇄契約 JSON（RecipeBody）の往復と、一覧・台所トップの「直近3件」に使う
- * detail 併読（一覧 API に無い last_cooked_at を補う）をここに集約する
+/* manor web — レシピ帳の共有の定数・変換（ADR-015 §3・D4・§6）。
+ * フォーム⇄契約 JSON（RecipeBody）の往復、一覧の絞り込み（§6 D9。サーバ側で
+ * q/tag/favorite/category/main_ingredient/cuisine/sort を検算する契約になったので、
+ * 画面はクエリを組み立てて投げるだけ——旧版のように detail を並行取得して手元で
+ * 絞り込む必要はもう無い）、分類3軸の語彙、取り込み method の文言化をここに集約する
  * ——画面（RecipeList・RecipeForm・RecipeEditPage・kitchen/index.tsx）どうしで書き写さない。
  */
 import { api } from "../../app/api";
-import type { Recipe, RecipeBody, RecipeIngredient, RecipeListItem, StepCompletion } from "../../app/types";
+import type { TranslationKey } from "../../app/i18n";
+import type { RecipeBody, RecipeFacets, RecipeIngredient, RecipeListItem, StepCompletion } from "../../app/types";
+
+// §6 D9「語彙は固定」（`staff/chef/lexicon.toml` が唯一の出どころ。ここは画面の select・
+// 一覧の絞り込みチップに使う写し）。
+export const CATEGORY_OPTIONS = ["主菜", "副菜", "汁物", "ご飯もの", "麺", "デザート", "その他"] as const;
+export const MAIN_INGREDIENT_OPTIONS = ["肉", "魚介", "卵", "野菜", "豆腐・大豆", "きのこ", "その他"] as const;
+export const CUISINE_OPTIONS = ["和食", "洋食", "中華", "韓国", "エスニック", "その他"] as const;
 
 // 契約 §3 の上限（`chef/recipes.py` の `_TITLE_MAX`/`_INSTRUCTION_MAX` と同じ値）。
 export const STEP_TITLE_MAX = 12;
@@ -175,40 +184,56 @@ export function formValueToRecipeBody(form: RecipeFormValue): RecipeBody {
   };
 }
 
-/** ADR-015 D4「直近3件（last_cooked_at 降順、無ければ新しい順）」。一覧 API
- * （`GET /kitchen/recipes`）には last_cooked_at が乗らないため、各レシピの詳細
- * （`GET /recipes/{id}`）もあわせて読んで補う。個人のレシピ帳（数百件規模を想定しない）
- * なので、まとめて並行取得しても軽い——一覧の検索（題名・材料名）にもこの detail を使う。 */
-export async function fetchRecipesWithDetails(): Promise<{ items: RecipeListItem[]; details: Record<number, Recipe> }> {
-  const items = await api<RecipeListItem[]>("/kitchen/recipes");
-  const details: Record<number, Recipe> = {};
-  await Promise.all(
-    items.map(async (item) => {
-      try {
-        details[item.id] = await api<Recipe>(`/kitchen/recipes/${item.id}`);
-      } catch {
-        // 一覧に出ている以上ほぼ起きないが、通信の乱れで1件だけ取れなくても他は諦めない
-        // （検索・並び替えはその1件だけ detail 無しの扱いにフォールバックする）。
-      }
-    })
-  );
-  return { items, details };
+export type RecipeSortMode = "recent" | "cooked" | "title";
+
+// 一覧の絞り（§6 D9「複数軸の同時絞り込み」）。すべて任意——空・null は「絞らない」。
+export interface RecipeListFilters {
+  q?: string;
+  tag?: string | null;
+  favorite?: boolean;
+  category?: string | null;
+  main_ingredient?: string | null;
+  cuisine?: string | null;
+  sort?: RecipeSortMode;
 }
 
-/** 「最近作った順」の比較子。無ければ最も古い扱い（=一覧の並び=新しい順の末尾）にする。 */
-export function compareByRecentCooked(a: RecipeListItem, b: RecipeListItem, details: Record<number, Recipe>): number {
-  const la = details[a.id]?.meta.last_cooked_at || "";
-  const lb = details[b.id]?.meta.last_cooked_at || "";
-  if (la === lb) return 0;
-  return lb.localeCompare(la);
+function buildRecipeListQuery(filters: RecipeListFilters): string {
+  const params = new URLSearchParams();
+  if (filters.q && filters.q.trim()) params.set("q", filters.q.trim());
+  if (filters.tag) params.set("tag", filters.tag);
+  if (filters.favorite) params.set("favorite", "1");
+  if (filters.category) params.set("category", filters.category);
+  if (filters.main_ingredient) params.set("main_ingredient", filters.main_ingredient);
+  if (filters.cuisine) params.set("cuisine", filters.cuisine);
+  if (filters.sort) params.set("sort", filters.sort);
+  const qs = params.toString();
+  return qs ? `?${qs}` : "";
 }
 
-/** 題名・材料名のどちらかに一致すれば true（ADR-015 D4「検索欄（題名・材料名）」）。 */
-export function recipeMatchesQuery(item: RecipeListItem, q: string, details: Record<number, Recipe>): boolean {
-  const needle = q.trim().toLowerCase();
-  if (!needle) return true;
-  if (item.title.toLowerCase().includes(needle)) return true;
-  const detail = details[item.id];
-  if (!detail) return false;
-  return detail.ingredients.some((ing) => ing.name.toLowerCase().includes(needle));
+/** 一覧の取得（§6 D9）。絞り・並びはサーバ側で検算する契約になったので、ここはクエリを
+ * 組み立てて `{items}` を剥がすだけ（旧版の detail 並行取得はもう無い）。 */
+export async function fetchRecipeList(filters: RecipeListFilters = {}): Promise<RecipeListItem[]> {
+  const res = await api<{ items: RecipeListItem[] }>(`/kitchen/recipes${buildRecipeListQuery(filters)}`);
+  return res.items;
+}
+
+/** 絞り込み chip に添える件数つきの語彙（§6 D9）。 */
+export async function fetchRecipeFacets(): Promise<RecipeFacets> {
+  return api<RecipeFacets>("/kitchen/recipes/facets");
+}
+
+const ADAPTER_SITE_LABEL: Record<string, string> = { nadia: "Nadia", cookpad: "cookpad" };
+
+/** 取り込みの返り値 `method`（§6 D7）を画面向けの1行にする。バックエンドが返す値は
+ * `jsonld` / `adapter:<site>` / `generic` / `claude` の4パターン
+ * （`adapter:` は新しいサイトアダプタが増えても壊れないよう接頭辞で判定する）。 */
+export function describeImportMethod(method: string, t: (key: TranslationKey, params?: Record<string, string | number>) => string): string {
+  if (method === "jsonld") return t("kitchen.recipes.methodJsonld");
+  if (method === "claude") return t("kitchen.recipes.methodClaude");
+  if (method === "generic") return t("kitchen.recipes.methodGeneric");
+  if (method.startsWith("adapter:")) {
+    const site = method.slice("adapter:".length);
+    return t("kitchen.recipes.methodAdapterGeneric", { site: ADAPTER_SITE_LABEL[site] || site });
+  }
+  return method;
 }

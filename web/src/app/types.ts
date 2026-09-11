@@ -349,7 +349,7 @@ export interface RecipeStep {
   tips: string[];
 }
 
-// `chef_recipe_meta`（ADR-015 D1「うちの値」）。
+// `chef_recipe_meta`（ADR-015 D1「うちの値」）。§6 D9: 分類の3軸（語彙は固定。空可）。
 export interface RecipeMeta {
   kcal: number | null;
   protein_g: number | null;
@@ -363,6 +363,9 @@ export interface RecipeMeta {
   favorite: boolean;
   times_cooked: number;
   last_cooked_at: string | null;
+  category: string; // 主菜/副菜/汁物/ご飯もの/麺/デザート/その他（空可）
+  main_ingredient: string; // 肉/魚介/卵/野菜/豆腐・大豆/きのこ/その他（空可）
+  cuisine: string; // 和食/洋食/中華/韓国/エスニック/その他（空可）
 }
 
 // `GET/POST/PUT /api/v1/kitchen/recipes*` の契約 JSON（ADR-015 §3）。
@@ -384,27 +387,50 @@ export interface Recipe {
 // `recipes.validate()` が受ける形（`id`・`meta` を持たない。登録・本体更新の送信 body）。
 export type RecipeBody = Omit<Recipe, "id" | "meta">;
 
-// `GET /api/v1/kitchen/recipes` の一覧行（ADR-015 D3。title・hero・分・タグ・favorite・
-// 作った回数だけ）。「直近3件」の並び替えに使う last_cooked_at は一覧APIに無いため、
-// 画面側で詳細（`GET /recipes/{id}`）をあわせて読み、meta.last_cooked_at で補う
-// （kitchen/recipeShared.ts の `fetchRecipesWithDetails` 参照）。
+// `GET /api/v1/kitchen/recipes` の一覧行（ADR-015 D3・§6 D9。一覧に絞り・並びに要る値を
+// 直接持つ——旧版は last_cooked_at 等が乗らず画面側で詳細もあわせて読んでいたが、契約が
+// 広がったので一覧APIの応答だけで完結する（`kitchen/recipeShared.ts` の `fetchRecipeList`
+// 参照。もう detail の並行取得はしない）。
 export interface RecipeListItem {
   id: number;
   title: string;
   hero_image: string;
   total_minutes: number | null;
+  servings: number | null;
   tags: string[];
   favorite: boolean;
   times_cooked: number;
+  last_cooked_at: string | null;
+  kcal: number | null;
+  category: string;
+  main_ingredient: string;
+  cuisine: string;
+  updated_at: string;
 }
 
-// `POST /api/v1/kitchen/recipes/import` の返り（R2。ADR-015 D2の4「保存せずに下書きを
-// 返す」）。`recipe` は `RecipeBody` と同じ形（`claude -p` の構造化結果を検算前のまま返す
-// ことがあるため、上限超えの可能性がある値も含めて緩めに受ける）。
+// `GET /api/v1/kitchen/recipes/facets`（§6 D9）。一覧の chip 列に添える件数つきの語彙。
+export interface RecipeFacetValue {
+  value: string;
+  count: number;
+}
+export interface RecipeFacets {
+  category: RecipeFacetValue[];
+  main_ingredient: RecipeFacetValue[];
+  cuisine: RecipeFacetValue[];
+  tags: RecipeFacetValue[];
+}
+
+// `POST /api/v1/kitchen/recipes/import`・`/refine` の返り（R2・§6 D7。ADR-015 D2の4
+// 「保存せずに下書きを返す」）。`recipe` は `RecipeBody` と同じ形（`claude -p` の構造化
+// 結果を検算前のまま返すことがあるため、上限超えの可能性がある値も含めて緩めに受ける）。
+// `method`: `jsonld` / `adapter:<site>`（例 `adapter:nadia`）/ `generic` / `claude`。
 export interface RecipeImportResult {
   recipe: RecipeBody;
+  method: string;
   warnings: string[];
 }
+
+export type RecipeImportMode = "auto" | "claude";
 
 /* ---------- house ---------- */
 

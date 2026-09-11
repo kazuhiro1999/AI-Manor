@@ -15,6 +15,37 @@ import { api, ApiError } from "../../app/api";
 import { useToast } from "../../components/Toast";
 import { useT } from "../../app/i18n";
 import type { Recipe } from "../../app/types";
+import { CATEGORY_OPTIONS, CUISINE_OPTIONS, MAIN_INGREDIENT_OPTIONS } from "./recipeShared";
+
+// §6 D9「分類の3軸」。select は3つとも同じ形（語彙＋「未設定」）なので1つの部品にまとめる。
+function AxisSelect({
+  id,
+  label,
+  options,
+  value,
+  onChange,
+}: {
+  id: string;
+  label: string;
+  options: readonly string[];
+  value: string;
+  onChange: (v: string) => void;
+}) {
+  const t = useT();
+  return (
+    <div className="form-row" style={{ maxWidth: 160 }}>
+      <label htmlFor={id}>{label}</label>
+      <select id={id} className="form-select" value={value} onChange={(e) => onChange(e.target.value)}>
+        <option value="">{t("kitchen.recipes.axisUnset")}</option>
+        {options.map((opt) => (
+          <option key={opt} value={opt}>
+            {opt}
+          </option>
+        ))}
+      </select>
+    </div>
+  );
+}
 
 interface NutritionStrings {
   kcal: string;
@@ -60,6 +91,9 @@ export function RecipeMetaForm({ recipe, onUpdated }: { recipe: Recipe; onUpdate
   const [rating, setRating] = useState(recipe.meta.rating == null ? "" : String(recipe.meta.rating));
   const [memo, setMemo] = useState(recipe.meta.memo);
   const [favorite, setFavorite] = useState(recipe.meta.favorite);
+  const [category, setCategory] = useState(recipe.meta.category);
+  const [mainIngredient, setMainIngredient] = useState(recipe.meta.main_ingredient);
+  const [cuisine, setCuisine] = useState(recipe.meta.cuisine);
   const [estimating, setEstimating] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -93,7 +127,15 @@ export function RecipeMetaForm({ recipe, onUpdated }: { recipe: Recipe; onUpdate
     setError(null);
     setBusy(true);
     try {
-      const body: Record<string, unknown> = { tags, memo, favorite, rating: rating.trim() === "" ? null : Number(rating) };
+      const body: Record<string, unknown> = {
+        tags,
+        memo,
+        favorite,
+        rating: rating.trim() === "" ? null : Number(rating),
+        category,
+        main_ingredient: mainIngredient,
+        cuisine,
+      };
       for (const { key } of NUTRITION_KEY_LABEL) {
         if (nutrition[key] !== baselineRef.current[key]) {
           body[key] = nutrition[key].trim() === "" ? null : Number(nutrition[key]);
@@ -115,6 +157,19 @@ export function RecipeMetaForm({ recipe, onUpdated }: { recipe: Recipe; onUpdate
     <section className="panel">
       <div className="panel-head">
         <h2>{t("kitchen.recipes.ourValuesHeading")}</h2>
+      </div>
+
+      {/* §6 D9: 分類の3軸（語彙つき。空可）。 */}
+      <div className="form-inline">
+        <AxisSelect id="meta-category" label={t("kitchen.recipes.categoryLabel")} options={CATEGORY_OPTIONS} value={category} onChange={setCategory} />
+        <AxisSelect
+          id="meta-main-ingredient"
+          label={t("kitchen.recipes.mainIngredientLabel")}
+          options={MAIN_INGREDIENT_OPTIONS}
+          value={mainIngredient}
+          onChange={setMainIngredient}
+        />
+        <AxisSelect id="meta-cuisine" label={t("kitchen.recipes.cuisineLabel")} options={CUISINE_OPTIONS} value={cuisine} onChange={setCuisine} />
       </div>
 
       <h3>{t("kitchen.recipes.nutritionHeading")}</h3>

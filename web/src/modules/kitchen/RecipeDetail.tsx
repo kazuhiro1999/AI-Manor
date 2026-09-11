@@ -4,7 +4,7 @@
  * 編集は `/kitchen/recipes/{id}/edit` に分ける（ADR-015 D1「本体とうちの値を分ける」を
  * 画面のページ遷移にもそのまま映す）。
  */
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { api, ApiError } from "../../app/api";
 import { useToast } from "../../components/Toast";
@@ -94,27 +94,42 @@ export function RecipeDetail() {
       <div style={{ display: "flex", gap: 16, flexWrap: "wrap", alignItems: "flex-start" }}>
         <div style={{ flex: "2 1 480px", minWidth: 0 }}>
           <section className="panel">
-            {recipe.hero_image ? (
-              <img src={recipe.hero_image} alt="" className="recipe-hero" />
-            ) : (
-              <div className="recipe-hero recipe-hero-placeholder" aria-label={t("kitchen.recipes.noPhoto")} />
-            )}
-            <div className="panel-head">
-              <h2>{recipe.title}</h2>
-              <button type="button" className="btn btn-icon" aria-label={t("kitchen.recipes.favoriteToggle")} onClick={toggleFavorite}>
-                {recipe.meta.favorite ? "★" : "☆"}
-              </button>
+            {/* §6 D4'「表示ページの頭は完成画像に題名と★を重ねる」。 */}
+            <div className={`recipe-hero-head${recipe.hero_image ? "" : " no-image"}`}>
+              {recipe.hero_image ? (
+                <img src={recipe.hero_image} alt="" loading="lazy" />
+              ) : (
+                <div className="recipe-hero-placeholder" aria-label={t("kitchen.recipes.noPhoto")} />
+              )}
+              <div className="recipe-hero-head-overlay">
+                <h2>{recipe.title}</h2>
+                <button type="button" className="btn btn-icon" aria-label={t("kitchen.recipes.favoriteToggle")} onClick={toggleFavorite}>
+                  {recipe.meta.favorite ? "★" : "☆"}
+                </button>
+              </div>
             </div>
+
+            {/* §6 D4'「kcal/人・分・作った回数の行」。 */}
+            <div className="recipe-stats-row">
+              {recipe.meta.kcal != null && <span>{t("kitchen.recipes.kcalPerServing", { n: recipe.meta.kcal })}</span>}
+              {recipe.total_minutes != null && <span>{t("format.minutes", { n: recipe.total_minutes })}</span>}
+              <span>{t("kitchen.recipes.timesCooked", { n: recipe.meta.times_cooked })}</span>
+              {recipe.servings != null && <span>{t("kitchen.recipes.detailServings", { n: recipe.servings })}</span>}
+            </div>
+
             {recipe.source_url && (
               <p className="panel-note">
                 <a href={recipe.source_url} target="_blank" rel="noreferrer">
-                  {t("kitchen.recipes.sourceLink")}
+                  {recipe.source_site || t("kitchen.recipes.sourceLink")}
                 </a>
               </p>
             )}
+
+            {/* 分類3軸（§6 D9）＋自由なタグ。 */}
             <div className="form-inline">
-              {recipe.servings != null && <span className="chip">{t("kitchen.recipes.detailServings", { n: recipe.servings })}</span>}
-              {recipe.total_minutes != null && <span className="chip">{t("format.minutes", { n: recipe.total_minutes })}</span>}
+              {recipe.meta.category && <span className="chip">{recipe.meta.category}</span>}
+              {recipe.meta.main_ingredient && <span className="chip">{recipe.meta.main_ingredient}</span>}
+              {recipe.meta.cuisine && <span className="chip">{recipe.meta.cuisine}</span>}
               {recipe.meta.tags.map((tag) => (
                 <span className="chip" key={tag}>
                   {tag}
@@ -143,19 +158,34 @@ export function RecipeDetail() {
                     <th>{t("kitchen.recipes.ingredientsTableQty")}</th>
                     <th>{t("kitchen.recipes.ingredientsTableUnit")}</th>
                     <th>{t("kitchen.recipes.ingredientsTablePrep")}</th>
-                    <th>{t("kitchen.recipes.ingredientsTableGroup")}</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {recipe.ingredients.map((ing, i) => (
-                    <tr key={i}>
-                      <td>{ing.name}</td>
-                      <td>{ing.qty}</td>
-                      <td>{ing.unit}</td>
-                      <td>{ing.prep}</td>
-                      <td>{ing.group}</td>
-                    </tr>
-                  ))}
+                  {/* §6 D4'「材料の表（グループの字下げ）」——グループが変わるたびに見出し行を
+                   * 挟み、グループつきの行は名前を字下げする（参考画面の「A」と同じ見え方）。 */}
+                  {(() => {
+                    let lastGroup: string | null = null;
+                    return recipe.ingredients.map((ing, i) => {
+                      const rows: ReactNode[] = [];
+                      if (ing.group && ing.group !== lastGroup) {
+                        rows.push(
+                          <tr className="recipe-ing-group-row" key={`g-${i}`}>
+                            <td colSpan={4}>{ing.group}</td>
+                          </tr>
+                        );
+                      }
+                      lastGroup = ing.group || null;
+                      rows.push(
+                        <tr key={i}>
+                          <td className={ing.group ? "recipe-ing-indent" : undefined}>{ing.name}</td>
+                          <td>{ing.qty}</td>
+                          <td>{ing.unit}</td>
+                          <td>{ing.prep}</td>
+                        </tr>
+                      );
+                      return rows;
+                    });
+                  })()}
                 </tbody>
               </table>
             </div>

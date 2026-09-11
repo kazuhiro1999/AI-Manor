@@ -34,6 +34,8 @@ import type {
   Project,
   Recipe,
   RecipeBody,
+  RecipeFacets,
+  RecipeFacetValue,
   RecipeImportResult,
   RecipeListItem,
   RunRow,
@@ -187,9 +189,10 @@ let mealSeq = 2;
 const meals: Meal[] = [{ id: 1, date: TODAY, slot: "dinner", dish: "肉じゃが", ingredients: "じゃがいも,牛肉", planned: false }];
 const taste = [{ key: "苦手", value: "パクチー" }];
 
-/* ---------- kitchen: レシピ帳（ADR-015 §3。見本1件目は tests/fixtures/chahan.recipe.json と
- * 同じ内容——主人がよく作る炒飯。2件目は合成の唐揚げで、favorite/タグ/未調理の対照に使う） ---------- */
-let recipeSeq = 2;
+/* ---------- kitchen: レシピ帳（ADR-015 §3・§6 D9。見本1件目は tests/fixtures/chahan.recipe.json
+ * と同じ内容——主人がよく作る炒飯。以降は分類3軸（category/main_ingredient/cuisine）が
+ * ばらけるように合成した4件——一覧の絞り込み chip・分類ごとの列（D4'）を試せるようにした） ---------- */
+let recipeSeq = 5;
 // 「畳む」（archive）は消さない（ADR-015 §2 `archive`）。一覧からは外れるが
 // `GET /recipes/{id}` はそのまま返る——本物の `chef_recipe.archived_at` と同じ役目を
 // この Set が肩代わりする（契約 JSON 自体に archived_at は乗らないため）。
@@ -200,7 +203,7 @@ const recipes: Recipe[] = [
     title: "パラパラ炒飯（基本）",
     source_url: "https://oceans-nadia.com/user/253470/recipe/440737",
     source_site: "oceans-nadia.com",
-    hero_image: "",
+    hero_image: "https://picsum.photos/seed/chahan/480/360",
     servings: 2,
     total_minutes: 10,
     ingredients: [
@@ -227,6 +230,7 @@ const recipes: Recipe[] = [
       nutrition_source: "estimated", tags: ["中華", "時短", "米"], rating: 5,
       memo: "うちは油少なめでも十分パラパラになる。", favorite: true, times_cooked: 6,
       last_cooked_at: daysFromToday(-2),
+      category: "ご飯もの", main_ingredient: "肉", cuisine: "中華",
     },
   },
   {
@@ -234,7 +238,7 @@ const recipes: Recipe[] = [
     title: "鶏の唐揚げ",
     source_url: "",
     source_site: "",
-    hero_image: "",
+    hero_image: "https://picsum.photos/seed/karaage/480/360",
     servings: 3,
     total_minutes: 30,
     ingredients: [
@@ -255,9 +259,164 @@ const recipes: Recipe[] = [
       kcal: null, protein_g: null, fat_g: null, carb_g: null, salt_g: null,
       nutrition_source: "", tags: ["揚げ物"], rating: null, memo: "", favorite: false,
       times_cooked: 0, last_cooked_at: null,
+      category: "主菜", main_ingredient: "肉", cuisine: "和食",
+    },
+  },
+  {
+    id: 3,
+    title: "きんぴらごぼう",
+    source_url: "",
+    source_site: "",
+    hero_image: "https://picsum.photos/seed/kinpira/480/360",
+    servings: 4,
+    total_minutes: 15,
+    ingredients: [
+      { name: "ごぼう", qty: "1", unit: "本", prep: "ささがき", group: "主材料" },
+      { name: "にんじん", qty: "1/2", unit: "本", prep: "細切り", group: "主材料" },
+      { name: "ごま油", qty: "小さじ2", unit: "", prep: "", group: "" },
+      { name: "しょうゆ", qty: "大さじ1", unit: "", prep: "", group: "調味料" },
+      { name: "みりん", qty: "大さじ1", unit: "", prep: "", group: "調味料" },
+    ],
+    tools: ["フライパン"],
+    phases: [
+      { id: "prep", title: "下ごしらえ" },
+      { id: "cook", title: "炒め煮" },
+    ],
+    steps: [
+      { index: 1, phase: "prep", title: "野菜を切る", instruction: "ごぼうはささがき、にんじんは細切りにする。", image: null, ingredients_used: ["ごぼう", "にんじん"], timer_sec: null, completion: "manual", tips: [] },
+      { index: 2, phase: "cook", title: "炒めて煮る", instruction: "ごま油で炒め、調味料を加えて汁気が無くなるまで煮る。", image: null, ingredients_used: ["ごま油", "しょうゆ", "みりん"], timer_sec: 300, completion: "manual", tips: ["水にさらすとアクが抜ける"] },
+    ],
+    meta: {
+      kcal: 95, protein_g: 2, fat_g: 4, carb_g: 12, salt_g: 1.1,
+      nutrition_source: "estimated", tags: ["常備菜"], rating: 4, memo: "", favorite: true,
+      times_cooked: 2, last_cooked_at: daysFromToday(-9),
+      category: "副菜", main_ingredient: "野菜", cuisine: "和食",
+    },
+  },
+  {
+    id: 4,
+    title: "豆腐とわかめのみそ汁",
+    source_url: "https://cookpad.com/recipe/1234567",
+    source_site: "cookpad.com",
+    hero_image: "https://picsum.photos/seed/miso/480/360",
+    servings: 2,
+    total_minutes: 10,
+    ingredients: [
+      { name: "絹ごし豆腐", qty: "150", unit: "g", prep: "さいの目切り", group: "主材料" },
+      { name: "乾燥わかめ", qty: "大さじ1", unit: "", prep: "水で戻す", group: "主材料" },
+      { name: "だし汁", qty: "400", unit: "ml", prep: "", group: "" },
+      { name: "みそ", qty: "大さじ2", unit: "", prep: "", group: "調味料" },
+    ],
+    tools: ["鍋"],
+    phases: [{ id: "cook", title: "煮る" }],
+    steps: [
+      { index: 1, phase: "cook", title: "具を煮てみそを溶く", instruction: "だし汁を温め、豆腐とわかめを入れてみそを溶き入れる。", image: null, ingredients_used: ["絹ごし豆腐", "乾燥わかめ", "だし汁", "みそ"], timer_sec: null, completion: "manual", tips: [] },
+    ],
+    meta: {
+      kcal: 60, protein_g: 5, fat_g: 2, carb_g: 4, salt_g: 1.8,
+      nutrition_source: "estimated", tags: [], rating: null, memo: "", favorite: false,
+      times_cooked: 4, last_cooked_at: daysFromToday(-1),
+      category: "汁物", main_ingredient: "豆腐・大豆", cuisine: "和食",
+    },
+  },
+  {
+    id: 5,
+    title: "ナポリタン",
+    source_url: "",
+    source_site: "",
+    hero_image: "",
+    servings: 2,
+    total_minutes: 20,
+    ingredients: [
+      { name: "スパゲッティ", qty: "200", unit: "g", prep: "", group: "主材料" },
+      { name: "ウインナー", qty: "4", unit: "本", prep: "斜め切り", group: "主材料" },
+      { name: "玉ねぎ", qty: "1/2", unit: "個", prep: "薄切り", group: "主材料" },
+      { name: "ピーマン", qty: "1", unit: "個", prep: "細切り", group: "主材料" },
+      { name: "ケチャップ", qty: "大さじ4", unit: "", prep: "", group: "調味料" },
+    ],
+    tools: ["フライパン", "鍋"],
+    phases: [
+      { id: "boil", title: "ゆでる" },
+      { id: "fry", title: "炒め合わせる" },
+    ],
+    steps: [
+      { index: 1, phase: "boil", title: "麺をゆでる", instruction: "表示時間どおりにスパゲッティをゆでる。", image: null, ingredients_used: ["スパゲッティ"], timer_sec: null, completion: "manual", tips: [] },
+      { index: 2, phase: "fry", title: "具と炒め合わせる", instruction: "具材を炒め、麺とケチャップを加えて絡める。", image: null, ingredients_used: ["ウインナー", "玉ねぎ", "ピーマン", "ケチャップ"], timer_sec: null, completion: "manual", tips: ["ケチャップは先に煮詰めると酸味が飛ぶ"] },
+    ],
+    meta: {
+      kcal: null, protein_g: null, fat_g: null, carb_g: null, salt_g: null,
+      nutrition_source: "", tags: ["麺"], rating: null, memo: "", favorite: false,
+      times_cooked: 0, last_cooked_at: null,
+      category: "麺", main_ingredient: "その他", cuisine: "洋食",
     },
   },
 ];
+
+// 一覧の並び「新しい順」（`sort=recent`）に使う更新日時。作成・本体更新のたびに今へ差し替える
+// （契約 JSON 自体には updated_at が乗らないため、この Map が `chef_recipe.updated_at` の
+// 役目を肩代わりする）。見本データは古いほうから新しいほうへ差をつけておく。
+const recipeUpdatedAt = new Map<number, string>([
+  [1, daysFromToday(-30)],
+  [2, daysFromToday(-20)],
+  [3, daysFromToday(-10)],
+  [4, daysFromToday(-3)],
+  [5, daysFromToday(-1)],
+]);
+function touchRecipeUpdatedAt(id: number): void {
+  recipeUpdatedAt.set(id, new Date().toISOString());
+}
+
+function recipeToListItem(r: Recipe): RecipeListItem {
+  return {
+    id: r.id,
+    title: r.title,
+    hero_image: r.hero_image,
+    total_minutes: r.total_minutes,
+    servings: r.servings,
+    tags: r.meta.tags,
+    favorite: r.meta.favorite,
+    times_cooked: r.meta.times_cooked,
+    last_cooked_at: r.meta.last_cooked_at,
+    kcal: r.meta.kcal,
+    category: r.meta.category,
+    main_ingredient: r.meta.main_ingredient,
+    cuisine: r.meta.cuisine,
+    updated_at: recipeUpdatedAt.get(r.id) || daysFromToday(0),
+  };
+}
+
+function sortRecipeItems(items: RecipeListItem[], sort: string): RecipeListItem[] {
+  const sorted = [...items];
+  if (sort === "title") {
+    sorted.sort((a, b) => a.title.localeCompare(b.title, "ja"));
+  } else if (sort === "cooked") {
+    sorted.sort((a, b) => (b.last_cooked_at || "").localeCompare(a.last_cooked_at || ""));
+  } else {
+    sorted.sort((a, b) => b.updated_at.localeCompare(a.updated_at));
+  }
+  return sorted;
+}
+
+function countFacet(values: string[]): RecipeFacetValue[] {
+  const counts = new Map<string, number>();
+  for (const v of values) {
+    if (!v) continue;
+    counts.set(v, (counts.get(v) || 0) + 1);
+  }
+  return Array.from(counts.entries())
+    .map(([value, count]) => ({ value, count }))
+    .sort((a, b) => b.count - a.count || a.value.localeCompare(b.value, "ja"));
+}
+
+function computeRecipeFacets(): RecipeFacets {
+  const active = recipes.filter((r) => !archivedRecipeIds.has(r.id));
+  return {
+    category: countFacet(active.map((r) => r.meta.category)),
+    main_ingredient: countFacet(active.map((r) => r.meta.main_ingredient)),
+    cuisine: countFacet(active.map((r) => r.meta.cuisine)),
+    tags: countFacet(active.flatMap((r) => r.meta.tags)),
+  };
+}
 
 /* ---------- house ---------- */
 let choreSeq = 2;
@@ -1154,11 +1313,15 @@ export async function mockApi<T>(path: string, options: ApiOptions = {}): Promis
     return meal as unknown as T;
   }
 
-  // ---------- kitchen: レシピ帳（ADR-015 D3・D4） ----------
-  // `import`/`estimate-nutrition` は R2（Python 担当が並行で作る口）だが、画面を作り切る
-  // ため合成の応答を用意する（ADR-015 §3 の契約 JSON どおりの下書き・固定の推定値）。
+  // ---------- kitchen: レシピ帳（ADR-015 D3・D4・§6） ----------
+  // `import`/`refine`/`estimate-nutrition` は R2・§6 D7（Python 担当が並行で作る口）だが、
+  // 画面を作り切るため合成の応答を用意する（ADR-015 §3 の契約 JSON どおりの下書き・
+  // 固定の推定値）。§6 D7「自動抽出を先に」: `mode` 省略時＝`auto` は URL のホスト名から
+  // jsonld/アダプタ/汎用を作り分け、`mode:"claude"` は上限内に整った下書きを返す
+  // （実際の `claude -p` は呼ばない——遅さを再現する意味は無い）。
   if (path === "/kitchen/recipes/import" && method === "POST") {
     const url = String(body.url || "").trim();
+    const mode = String(body.mode || "auto");
     if (!url) badRequest("url が必須です");
     let site = "";
     try {
@@ -1166,6 +1329,104 @@ export async function mockApi<T>(path: string, options: ApiOptions = {}): Promis
     } catch {
       badRequest(`url が不正です: ${url}`);
     }
+
+    const baseIngredients = [{ name: "材料1", qty: "1", unit: "個", prep: "", group: "" }];
+    const basePhases = [
+      { id: "prep", title: "下ごしらえ" },
+      { id: "cook", title: "作る" },
+    ];
+
+    if (mode === "claude") {
+      // §6 D7の3「Claude で最初から抽出」: 上限に整えた見出しで返す（遅いが安定という
+      // 前提を、画面側では「待たされない」形で表現する——mock なので待たせない）。
+      const draft: RecipeBody = {
+        title: "取り込んだレシピ（Claude 抽出）",
+        source_url: url,
+        source_site: site,
+        hero_image: "https://picsum.photos/seed/claude-import/480/360",
+        servings: 2,
+        total_minutes: 15,
+        ingredients: baseIngredients,
+        tools: [],
+        phases: basePhases,
+        steps: [
+          { index: 1, phase: "prep", title: "下ごしらえ", instruction: "材料を切る。", image: null, ingredients_used: [], timer_sec: null, completion: "manual", tips: [] },
+          { index: 2, phase: "cook", title: "炒め合わせる", instruction: "強火で香りが立つまで炒め合わせる。", image: null, ingredients_used: [], timer_sec: null, completion: "manual", tips: [] },
+        ],
+      };
+      const result: RecipeImportResult = { recipe: draft, method: "claude", warnings: [] };
+      return result as unknown as T;
+    }
+
+    // mode: "auto"（既定。§6 D7の1）。
+    if (site.includes("nadia")) {
+      // §6 D8「完成画像が取れなかった理由を warnings に1行」の合成例
+      // ——Nadia は工程の写真は取れても完成画像が取れないことがあった（主人の実測）。
+      const draft: RecipeBody = {
+        title: "取り込んだレシピ（Nadia）",
+        source_url: url,
+        source_site: site,
+        hero_image: "",
+        servings: 2,
+        total_minutes: 15,
+        ingredients: baseIngredients,
+        tools: [],
+        phases: basePhases,
+        steps: [
+          { index: 1, phase: "prep", title: "下ごしらえをする", instruction: "材料を切る。", image: "https://picsum.photos/seed/nadia-step1/320/240", ingredients_used: [], timer_sec: null, completion: "manual", tips: [] },
+          { index: 2, phase: "cook", title: "調味料を合わせて炒める", instruction: "強火で香りが立つまで炒め合わせる。", image: "https://picsum.photos/seed/nadia-step2/320/240", ingredients_used: [], timer_sec: null, completion: "manual", tips: [] },
+        ],
+      };
+      const result: RecipeImportResult = {
+        recipe: draft,
+        method: "adapter:nadia",
+        warnings: ["完成画像が見つかりません（工程の写真は取得できました）", "工程2の見出しが13文字です（上限12文字）"],
+      };
+      return result as unknown as T;
+    }
+    if (site.includes("cookpad")) {
+      const draft: RecipeBody = {
+        title: "取り込んだレシピ（cookpad）",
+        source_url: url,
+        source_site: site,
+        hero_image: "https://picsum.photos/seed/cookpad-hero/480/360",
+        servings: 2,
+        total_minutes: 15,
+        ingredients: baseIngredients,
+        tools: [],
+        phases: basePhases,
+        steps: [
+          { index: 1, phase: "prep", title: "下ごしらえをする", instruction: "材料を切る。", image: null, ingredients_used: [], timer_sec: null, completion: "manual", tips: [] },
+          { index: 2, phase: "cook", title: "炒める", instruction: "強火で炒め合わせる。", image: null, ingredients_used: [], timer_sec: null, completion: "manual", tips: [] },
+        ],
+      };
+      const result: RecipeImportResult = { recipe: draft, method: "adapter:cookpad", warnings: [] };
+      return result as unknown as T;
+    }
+    if (site.includes("json")) {
+      // JSON-LD の `Recipe` が取れた前提の合成例（§6 D7の1の①）。
+      const draft: RecipeBody = {
+        title: "取り込んだレシピ（構造化データ）",
+        source_url: url,
+        source_site: site,
+        hero_image: "https://picsum.photos/seed/jsonld-hero/480/360",
+        servings: 2,
+        total_minutes: 15,
+        ingredients: baseIngredients,
+        tools: [],
+        phases: basePhases,
+        steps: [
+          { index: 1, phase: "prep", title: "下ごしらえ", instruction: "材料を切る。", image: null, ingredients_used: [], timer_sec: null, completion: "manual", tips: [] },
+          { index: 2, phase: "cook", title: "作る", instruction: "工程どおりに作る。", image: null, ingredients_used: [], timer_sec: null, completion: "manual", tips: [] },
+        ],
+      };
+      const result: RecipeImportResult = { recipe: draft, method: "jsonld", warnings: [] };
+      return result as unknown as T;
+    }
+    // ③どちらも無ければ汎用（見出し・<ol>/<li> の推定）。§6 D7「サイト別の抽出は
+    // 壊れる前提——汎用も薄ければ Claude を勧める帯を出す」を試せるよう、warnings を多めに
+    // 合成する（画面側は generic かつ warnings が多いときに「Claude で整えることを
+    // 勧めます」の一文を出す）。
     const draft: RecipeBody = {
       title: "取り込んだレシピ（下書き）",
       source_url: url,
@@ -1173,12 +1434,9 @@ export async function mockApi<T>(path: string, options: ApiOptions = {}): Promis
       hero_image: "",
       servings: 2,
       total_minutes: 15,
-      ingredients: [{ name: "材料1", qty: "1", unit: "個", prep: "", group: "" }],
+      ingredients: baseIngredients,
       tools: [],
-      phases: [
-        { id: "prep", title: "下ごしらえ" },
-        { id: "cook", title: "作る" },
-      ],
+      phases: basePhases,
       steps: [
         { index: 1, phase: "prep", title: "下ごしらえをする", instruction: "材料を切る。", image: null, ingredients_used: [], timer_sec: null, completion: "manual", tips: [] },
         // ADR-015 D2の3「上限超えは2回目もそのまま返して画面で直させる」の合成例
@@ -1188,8 +1446,24 @@ export async function mockApi<T>(path: string, options: ApiOptions = {}): Promis
     };
     const result: RecipeImportResult = {
       recipe: draft,
-      warnings: ["工程2の見出しが13文字です（上限12文字）"],
+      method: "generic",
+      warnings: ["工程2の見出しが13文字です（上限12文字）", "完成画像が見つかりません", "材料の分量を読み取れていません"],
     };
+    return result as unknown as T;
+  }
+  if (path === "/kitchen/recipes/refine" && method === "POST") {
+    // §6 D7の2「Claude で整える」: 自動抽出の下書きを渡し、1動作1工程・≤12/≤60 に整える
+    // （本文全部を渡すより短く速い、という前提。mock は機械的に切り詰めて代わりにする）。
+    const input = (body.recipe || {}) as RecipeBody;
+    const refined: RecipeBody = {
+      ...input,
+      steps: (input.steps || []).map((s) => ({
+        ...s,
+        title: s.title.length > 12 ? s.title.slice(0, 12) : s.title,
+        instruction: s.instruction.length > 60 ? s.instruction.slice(0, 60) : s.instruction,
+      })),
+    };
+    const result: RecipeImportResult = { recipe: refined, method: "claude", warnings: [] };
     return result as unknown as T;
   }
   if (path.match(/^\/kitchen\/recipes\/\d+\/estimate-nutrition$/) && method === "POST") {
@@ -1205,19 +1479,28 @@ export async function mockApi<T>(path: string, options: ApiOptions = {}): Promis
     r.meta.nutrition_source = "estimated";
     return { meta: r.meta } as unknown as T;
   }
+  if (path === "/kitchen/recipes/facets" && method === "GET") {
+    return computeRecipeFacets() as unknown as T;
+  }
   if (path.startsWith("/kitchen/recipes") && method === "GET" && !path.match(/^\/kitchen\/recipes\/\d+$/)) {
     const params = new URLSearchParams(path.split("?")[1] || "");
-    const q = params.get("q");
+    const q = (params.get("q") || "").toLowerCase();
     const tag = params.get("tag");
     const favoriteParam = params.get("favorite");
+    const category = params.get("category");
+    const mainIngredient = params.get("main_ingredient");
+    const cuisine = params.get("cuisine");
+    const sort = params.get("sort") || "recent";
     const items: RecipeListItem[] = recipes
       .filter((r) => !archivedRecipeIds.has(r.id))
-      .filter((r) => !q || r.title.toLowerCase().includes(q.toLowerCase()))
+      .filter((r) => !q || r.title.toLowerCase().includes(q) || r.ingredients.some((ing) => ing.name.toLowerCase().includes(q)))
       .filter((r) => !tag || r.meta.tags.includes(tag))
       .filter((r) => favoriteParam == null || r.meta.favorite === (favoriteParam === "1" || favoriteParam === "true"))
-      .map((r) => ({ id: r.id, title: r.title, hero_image: r.hero_image, total_minutes: r.total_minutes, tags: r.meta.tags, favorite: r.meta.favorite, times_cooked: r.meta.times_cooked }))
-      .sort((a, b) => b.id - a.id);
-    return items as unknown as T;
+      .filter((r) => !category || r.meta.category === category)
+      .filter((r) => !mainIngredient || r.meta.main_ingredient === mainIngredient)
+      .filter((r) => !cuisine || r.meta.cuisine === cuisine)
+      .map(recipeToListItem);
+    return { items: sortRecipeItems(items, sort) } as unknown as T;
   }
   if (path.match(/^\/kitchen\/recipes\/\d+$/) && method === "GET") {
     const id = Number(path.split("/")[3]);
@@ -1229,9 +1512,15 @@ export async function mockApi<T>(path: string, options: ApiOptions = {}): Promis
     const recipe: Recipe = {
       id: recipeSeq,
       ...v,
-      meta: { kcal: null, protein_g: null, fat_g: null, carb_g: null, salt_g: null, nutrition_source: "", tags: [], rating: null, memo: "", favorite: false, times_cooked: 0, last_cooked_at: null },
+      meta: {
+        kcal: null, protein_g: null, fat_g: null, carb_g: null, salt_g: null,
+        nutrition_source: "", tags: [], rating: null, memo: "", favorite: false,
+        times_cooked: 0, last_cooked_at: null,
+        category: "", main_ingredient: "", cuisine: "",
+      },
     };
     recipes.push(recipe);
+    touchRecipeUpdatedAt(recipe.id);
     return recipe as unknown as T;
   }
   if (path.match(/^\/kitchen\/recipes\/\d+$/) && method === "PUT") {
@@ -1239,6 +1528,7 @@ export async function mockApi<T>(path: string, options: ApiOptions = {}): Promis
     const r = findRecipe(id);
     const v = validateRecipeBody(body as unknown as RecipeBody);
     Object.assign(r, v);
+    touchRecipeUpdatedAt(id);
     return r as unknown as T;
   }
   if (path.match(/^\/kitchen\/recipes\/\d+\/meta$/) && method === "PUT") {
@@ -1252,6 +1542,11 @@ export async function mockApi<T>(path: string, options: ApiOptions = {}): Promis
     if (body.rating !== undefined) r.meta.rating = body.rating as number | null;
     if (body.tags !== undefined) r.meta.tags = (body.tags as string[]) || [];
     if (body.favorite !== undefined) r.meta.favorite = !!body.favorite;
+    // §6 D9: 分類3軸は手で直せる（常に渡された値で置き換える——栄養と違い partial の
+    // 気遣いは要らない。select は常に何かの値を持つ欄なので「触っていない」判定が無い）。
+    if (body.category !== undefined) r.meta.category = String(body.category || "");
+    if (body.main_ingredient !== undefined) r.meta.main_ingredient = String(body.main_ingredient || "");
+    if (body.cuisine !== undefined) r.meta.cuisine = String(body.cuisine || "");
     return r as unknown as T;
   }
   if (path.match(/^\/kitchen\/recipes\/\d+\/archive$/) && method === "POST") {
