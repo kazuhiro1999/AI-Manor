@@ -8,12 +8,13 @@ core のパターン（`src/manor/cli.py`）に合わせ、各コマンドは
 
 from __future__ import annotations
 
+import json
 import sqlite3
 
 from manor import i18n, util
 from manor.errors import ManorError
 
-from . import ops
+from . import ops, recipes
 
 VALID_SLOTS: tuple[str, ...] = ("breakfast", "lunch", "dinner", "snack")
 VALID_AISLES: tuple[str, ...] = ("野菜", "肉魚", "乳卵", "主食", "調味料", "その他")
@@ -402,6 +403,123 @@ def cmd_taste_set(conn, home, args) -> object:
     return i18n.t("chef.taste.set.done", taste_key=args.key)
 
 
+# --- recipe（レシピ帳。ADR-015 D5） ------------------------------------------------
+
+
+def _require_chef_recipe_table(conn: sqlite3.Connection) -> None:
+    """`chef_recipe` が無い home（このリポジトリ更新前に導入された既存 home）向け。
+
+    core の `migrate_core` は部下のスキーマに触れない約束（`db.py` の docstring 参照）
+    なので、`manor init` を再実行するまで表が無いことがある——`ManorError(code=2)` で
+    「未導入なので `manor init` を」と案内する（`_require_pantry_not_empty` と同じ流儀）。
+    """
+    row = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'chef_recipe'"
+    ).fetchone()
+    if row is None:
+        raise ManorError(
+            "料理長のレシピ帳が未導入です。`manor init` を実行してください",
+            code=2,
+            key="error.chef.recipe_table_missing",
+        )
+
+
+def cmd_recipe_list(conn, home, args) -> object:
+    _require_chef_recipe_table(conn)
+    rows = recipes.list_recipes(
+        conn, q=args.q, tag=args.tag, favorite=args.favorite, include_archived=args.archived
+    )
+    if args.json:
+        return rows
+    if not rows:
+        return i18n.t("chef.recipe.list.empty")
+    return "\n".join(
+        i18n.t(
+            "chef.recipe.list.line",
+            id=r["id"],
+            title=r["title"],
+            total_minutes=(
+                r["total_minutes"] if r["total_minutes"] is not None else i18n.t("chef.common.unknown")
+            ),
+            tags=", ".join(r["tags"]),  # type: ignore[arg-type]
+            favorite=i18n.t("chef.recipe.favorite_mark") if r["favorite"] else "",
+        )
+        for r in rows
+    )
+
+
+def cmd_recipe_show(conn, home, args) -> object:
+    _require_chef_recipe_table(conn)
+    result = recipes.get(conn, args.id)
+    if args.json:
+        return result
+    lines = [i18n.t("chef.recipe.show.header", id=result["id"], title=result["title"])]
+    lines.append(i18n.t("chef.recipe.show.steps_count", count=len(result["steps"])))  # type: ignore[arg-type]
+    if result["meta"]["favorite"]:  # type: ignore[index]
+        lines.append(i18n.t("chef.recipe.show.favorite"))
+    return "\n".join(lines)
+
+
+def cmd_recipe_add(conn, home, args) -> object:
+    _require_chef_recipe_table(conn)
+    try:
+        with open(args.file, encoding="utf-8") as f:
+            data = json.load(f)
+    except FileNotFoundError as exc:
+        raise ManorError(
+            f"ファイルが見つかりません: {args.file}",
+            code=2,
+            key="error.chef.recipe_file_not_found",
+            params={"path": args.file},
+        ) from exc
+    except json.JSONDecodeError as exc:
+        raise ManorError(
+            f"JSON として読めません: {args.file}（{exc}）",
+            code=2,
+            key="error.chef.recipe_file_invalid_json",
+            params={"path": args.file, "exc": str(exc)},
+        ) from exc
+    recipe_id = recipes.add(conn, data)
+    if args.json:
+        return {"id": recipe_id}
+    return i18n.t("chef.recipe.add.done", id=recipe_id)
+
+
+def cmd_recipe_set(conn, home, args) -> object:
+    _require_chef_recipe_table(conn)
+    kwargs: dict[str, object] = {}
+    if args.kcal is not None:
+        kwargs["kcal"] = args.kcal
+    if args.protein is not None:
+        kwargs["protein_g"] = args.protein
+    if args.fat is not None:
+        kwargs["fat_g"] = args.fat
+    if args.carb is not None:
+        kwargs["carb_g"] = args.carb
+    if args.salt is not None:
+        kwargs["salt_g"] = args.salt
+    if args.tags is not None:
+        kwargs["tags"] = _split_csv(args.tags)
+    if args.rating is not None:
+        kwargs["rating"] = args.rating
+    if args.memo is not None:
+        kwargs["memo"] = args.memo
+    if args.favorite is not None:
+        kwargs["favorite"] = args.favorite
+    result = recipes.set_meta(conn, args.id, **kwargs)
+    if args.json:
+        return result
+    return i18n.t("chef.recipe.set.done", id=args.id)
+
+
+def cmd_recipe_archive(conn, home, args) -> object:
+    _require_chef_recipe_table(conn)
+    recipes.archive(conn, args.id)
+    if args.json:
+        return {"id": args.id, "archived": True}
+    return i18n.t("chef.recipe.archive.done", id=args.id)
+
+
 # --- パーサ組み立て -----------------------------------------------------------------
 
 
@@ -519,3 +637,53 @@ def register(subparsers) -> None:
     p.add_argument("--json", action="store_true")
     p.add_argument("--no-render", action="store_true")
     p.set_defaults(func=cmd_taste_set, is_write=True)
+
+    # --- recipe（ADR-015 D5） ---
+    recipe_p = chef_sub.add_parser("recipe", help=i18n.t("cli.chef.recipe.help"))
+    recipe_sub = recipe_p.add_subparsers(dest="recipe_verb")
+
+    p = recipe_sub.add_parser("list")
+    p.add_argument("--q")
+    p.add_argument("--tag")
+    fav_group = p.add_mutually_exclusive_group()
+    fav_group.add_argument("--favorite", dest="favorite", action="store_true")
+    fav_group.add_argument("--no-favorite", dest="favorite", action="store_false")
+    p.set_defaults(favorite=None)
+    p.add_argument("--archived", action="store_true")
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=cmd_recipe_list, is_write=False)
+
+    p = recipe_sub.add_parser("show")
+    p.add_argument("id", type=int)
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=cmd_recipe_show, is_write=False)
+
+    p = recipe_sub.add_parser("add")
+    p.add_argument("--file", required=True)
+    p.add_argument("--json", action="store_true")
+    p.add_argument("--no-render", action="store_true")
+    p.set_defaults(func=cmd_recipe_add, is_write=True)
+
+    p = recipe_sub.add_parser("set")
+    p.add_argument("id", type=int)
+    p.add_argument("--kcal", type=float)
+    p.add_argument("--protein", type=float)
+    p.add_argument("--fat", type=float)
+    p.add_argument("--carb", type=float)
+    p.add_argument("--salt", type=float)
+    p.add_argument("--tags")
+    p.add_argument("--rating", type=int)
+    p.add_argument("--memo")
+    fav_group2 = p.add_mutually_exclusive_group()
+    fav_group2.add_argument("--favorite", dest="favorite", action="store_true")
+    fav_group2.add_argument("--no-favorite", dest="favorite", action="store_false")
+    p.set_defaults(favorite=None)
+    p.add_argument("--json", action="store_true")
+    p.add_argument("--no-render", action="store_true")
+    p.set_defaults(func=cmd_recipe_set, is_write=True)
+
+    p = recipe_sub.add_parser("archive")
+    p.add_argument("id", type=int)
+    p.add_argument("--json", action="store_true")
+    p.add_argument("--no-render", action="store_true")
+    p.set_defaults(func=cmd_recipe_archive, is_write=True)

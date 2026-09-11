@@ -170,7 +170,11 @@ def test_all_chef_tables_are_prefixed(home: Path) -> None:
         }
     finally:
         conn.close()
-    assert tables == {"chef_pantry", "chef_meal", "chef_shopping", "chef_taste"}
+    assert tables == {
+        "chef_pantry", "chef_meal", "chef_shopping", "chef_taste",
+        # ADR-015 D1: レシピ帳（本体2表＋調理の記録2表）。
+        "chef_recipe", "chef_recipe_meta", "chef_cook_session", "chef_cook_event",
+    }
 
 
 def test_manor_check_does_not_flag_c9_for_chef(home: Path) -> None:

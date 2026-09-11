@@ -1,0 +1,121 @@
+{
+  "id": "R1",
+  "title": "パラパラ炒飯（基本）",
+  "source_url": "https://oceans-nadia.com/user/253470/recipe/440737",
+  "hero_image": null,
+  "servings": 2,
+  "total_minutes": 10,
+  "ingredients": [
+    {"name": "ご飯", "qty": "300", "unit": "g", "prep": "温かいものでも冷やご飯でも", "group": "主材料"},
+    {"name": "豚バラ薄切り肉", "qty": "50", "unit": "g", "prep": "粗みじん切り", "group": "主材料"},
+    {"name": "長ねぎ", "qty": "20", "unit": "cm", "prep": "粗みじん切り", "group": "主材料"},
+    {"name": "卵", "qty": "3", "unit": "個", "prep": "割りほぐす", "group": "主材料"},
+    {"name": "しょうが", "qty": "5", "unit": "g", "prep": "みじん切り", "group": "主材料"},
+    {"name": "サラダ油", "qty": "大さじ2と1/2", "unit": "", "prep": "", "group": "主材料"},
+    {"name": "鶏ガラスープの素", "qty": "小さじ1", "unit": "", "prep": "", "group": "A"},
+    {"name": "塩", "qty": "小さじ1/2", "unit": "", "prep": "", "group": "A"},
+    {"name": "にんにくチューブ", "qty": "小さじ1/2", "unit": "", "prep": "無くても可", "group": "A"},
+    {"name": "粗挽き黒胡椒", "qty": "小さじ1/4", "unit": "", "prep": "好みで加減", "group": "A"},
+    {"name": "砂糖", "qty": "ふたつまみ", "unit": "", "prep": "", "group": "A"},
+    {"name": "しょうゆ", "qty": "小さじ1", "unit": "", "prep": "", "group": "仕上げ"},
+    {"name": "ごま油", "qty": "2〜3", "unit": "滴", "prep": "香り油", "group": "仕上げ"}
+  ],
+  "tools": ["フライパン", "木べら", "ボウル"],
+  "phases": [
+    {"id": "prep", "title": "下ごしらえ"},
+    {"id": "cook", "title": "炒める"},
+    {"id": "finish", "title": "仕上げ"}
+  ],
+  "steps": [
+    {
+      "index": 1, "phase": "prep",
+      "title": "豚肉を刻む",
+      "instruction": "豚バラを粗みじん切りにし、塩ひとつまみをふる。",
+      "image": null,
+      "ingredients_used": ["豚バラ薄切り肉"],
+      "timer_sec": null,
+      "completion": "manual",
+      "tips": ["ベーコンでも可。その場合は塩を小さじ1/4に減らす", "かまぼこ・カニかまでも可"]
+    },
+    {
+      "index": 2, "phase": "prep",
+      "title": "ねぎとしょうがを刻む",
+      "instruction": "長ねぎは粗みじん切り、しょうがはみじん切りにする。",
+      "image": null,
+      "ingredients_used": ["長ねぎ", "しょうが"],
+      "timer_sec": null,
+      "completion": "manual",
+      "tips": []
+    },
+    {
+      "index": 3, "phase": "prep",
+      "title": "卵を溶く",
+      "instruction": "卵3個を割りほぐす。",
+      "image": null,
+      "ingredients_used": ["卵"],
+      "timer_sec": null,
+      "completion": "manual",
+      "tips": []
+    },
+    {
+      "index": 4, "phase": "cook",
+      "title": "肉とねぎを焼く",
+      "instruction": "油はひかず、豚肉と長ねぎの半量を強めの中火で焼く。",
+      "image": null,
+      "ingredients_used": ["豚バラ薄切り肉", "長ねぎ"],
+      "timer_sec": null,
+      "completion": "manual",
+      "tips": []
+    },
+    {
+      "index": 5, "phase": "cook",
+      "title": "香りを出す",
+      "instruction": "ねぎに焦げ目がついたら弱めの中火。具を端に寄せ、油としょうがを入れて傾けて炒める。",
+      "image": null,
+      "ingredients_used": ["サラダ油", "しょうが"],
+      "timer_sec": null,
+      "completion": "manual",
+      "tips": ["香りが立つまで火を通す"]
+    },
+    {
+      "index": 6, "phase": "cook",
+      "title": "卵とご飯を入れる",
+      "instruction": "強めの中火。油の上に卵液を流し、ご飯をのせて木べらで全体を混ぜる。",
+      "image": null,
+      "ingredients_used": ["卵", "ご飯"],
+      "timer_sec": null,
+      "completion": "manual",
+      "tips": ["パラパラのコツ: 油を多めに、熱した油に卵を流し、すぐご飯を入れて炒める"]
+    },
+    {
+      "index": 7, "phase": "cook",
+      "title": "調味料Aを入れる",
+      "instruction": "Aを加え、パラッとするまで炒め合わせる。",
+      "image": null,
+      "ingredients_used": ["鶏ガラスープの素", "塩", "にんにくチューブ", "粗挽き黒胡椒", "砂糖"],
+      "timer_sec": null,
+      "completion": "manual",
+      "tips": []
+    },
+    {
+      "index": 8, "phase": "finish",
+      "title": "ねぎとしょうゆ",
+      "instruction": "残りのねぎを加え、しょうゆを縁から回し入れてザッと炒め、火を止める。",
+      "image": null,
+      "ingredients_used": ["長ねぎ", "しょうゆ"],
+      "timer_sec": null,
+      "completion": "manual",
+      "tips": []
+    },
+    {
+      "index": 9, "phase": "finish",
+      "title": "味を調える",
+      "instruction": "必要なら塩少々で調え、ごま油をたらして混ぜる。",
+      "image": null,
+      "ingredients_used": ["ごま油"],
+      "timer_sec": null,
+      "completion": "manual",
+      "tips": ["冷蔵で翌日まで。1食ずつ包んで冷凍なら約3週間"]
+    }
+  ]
+}

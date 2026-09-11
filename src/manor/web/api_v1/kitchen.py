@@ -4,17 +4,35 @@
 
 from __future__ import annotations
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from ...board import api_staff as board_staff
 from ...errors import ManorError
-from .._common import WebContext, commit_and_render, manor_error_to_http, ns, open_conn, require_writable, table_exists
+from .._common import (
+    WebContext,
+    commit_and_render,
+    manor_error_to_http,
+    ns,
+    open_conn,
+    require_writable,
+    table_exists,
+    viewing_user_id,
+)
 
 
 def _require_chef(conn) -> None:
     if not table_exists(conn, "chef_pantry"):
         raise HTTPException(status_code=404, detail="料理長（chef）が導入されていません")
+
+
+def _require_chef_recipes(conn) -> None:
+    """ADR-015: `chef_recipe` が無い home（更新前に chef を導入した既存 home）向け。
+    `manor init` を再実行するまで表が無いことがある——500 ではなく 404 で案内する
+    （`_require_chef`/`_require_secretary` と同じ流儀）。
+    """
+    if not table_exists(conn, "chef_recipe"):
+        raise HTTPException(status_code=404, detail="料理長のレシピ帳が未導入です")
 
 
 class PantryAddRequest(BaseModel):
@@ -46,6 +64,34 @@ class MealLogRequest(BaseModel):
     dish: str
     ingredients: str = ""
     planned: bool = False
+
+
+class RecipeMetaRequest(BaseModel):
+    """うちの値の部分更新（ADR-015 D3）。`exclude_unset=True` で「渡した欄だけ」を
+    `recipes.set_meta` の kwargs へそのまま渡す——欄ごとに Optional にしているのは
+    「渡さない」と「null で消す」を区別するためで、`model_dump(exclude_unset=True)`
+    が実際に body に含まれていたキーだけを拾う。
+    """
+
+    kcal: float | None = None
+    protein_g: float | None = None
+    fat_g: float | None = None
+    carb_g: float | None = None
+    salt_g: float | None = None
+    nutrition_source: str | None = None
+    tags: list[str] | None = None
+    rating: int | None = None
+    memo: str | None = None
+    favorite: bool | None = None
+
+
+class CookSessionStartRequest(BaseModel):
+    recipe_id: int
+
+
+class CookSessionEventRequest(BaseModel):
+    type: str = Field(..., min_length=1)
+    step: int | None = None
 
 
 def register(app: FastAPI, ctx: WebContext) -> None:
@@ -158,3 +204,146 @@ def register(app: FastAPI, ctx: WebContext) -> None:
                 raise manor_error_to_http(exc)
             commit_and_render(conn, ctx)
             return result  # type: ignore[return-value]
+
+    # --- recipes（ADR-015 D3。`import`/`estimate-nutrition` は R2 なのでここには無い） ---
+
+    @app.get("/api/v1/kitchen/recipes")
+    def recipes_list(
+        q: str | None = None, tag: str | None = None, favorite: bool | None = None
+    ) -> list[dict[str, object]]:
+        from ...staff.chef import recipes as chef_recipes
+
+        with open_conn(ctx) as conn:
+            _require_chef_recipes(conn)
+            return chef_recipes.list_recipes(conn, q=q, tag=tag, favorite=favorite)
+
+    @app.get("/api/v1/kitchen/recipes/{recipe_id}")
+    def recipe_get(recipe_id: int) -> dict[str, object]:
+        from ...staff.chef import recipes as chef_recipes
+
+        with open_conn(ctx) as conn:
+            _require_chef_recipes(conn)
+            try:
+                return chef_recipes.get(conn, recipe_id)
+            except ManorError as exc:
+                raise manor_error_to_http(exc)
+
+    @app.post("/api/v1/kitchen/recipes")
+    def recipe_add(body: dict) -> dict[str, object]:
+        require_writable(ctx)
+        from ...staff.chef import recipes as chef_recipes
+
+        with open_conn(ctx) as conn:
+            _require_chef_recipes(conn)
+            try:
+                recipe_id = chef_recipes.add(conn, body)
+            except ManorError as exc:
+                conn.rollback()
+                raise manor_error_to_http(exc)
+            result = chef_recipes.get(conn, recipe_id)
+            commit_and_render(conn, ctx)
+            return result
+
+    @app.put("/api/v1/kitchen/recipes/{recipe_id}")
+    def recipe_update(recipe_id: int, body: dict) -> dict[str, object]:
+        require_writable(ctx)
+        from ...staff.chef import recipes as chef_recipes
+
+        with open_conn(ctx) as conn:
+            _require_chef_recipes(conn)
+            try:
+                result = chef_recipes.update(conn, recipe_id, body)
+            except ManorError as exc:
+                conn.rollback()
+                raise manor_error_to_http(exc)
+            commit_and_render(conn, ctx)
+            return result
+
+    @app.put("/api/v1/kitchen/recipes/{recipe_id}/meta")
+    def recipe_set_meta(recipe_id: int, body: RecipeMetaRequest) -> dict[str, object]:
+        require_writable(ctx)
+        from ...staff.chef import recipes as chef_recipes
+
+        with open_conn(ctx) as conn:
+            _require_chef_recipes(conn)
+            fields = body.model_dump(exclude_unset=True)
+            try:
+                result = chef_recipes.set_meta(conn, recipe_id, **fields)
+            except ManorError as exc:
+                conn.rollback()
+                raise manor_error_to_http(exc)
+            commit_and_render(conn, ctx)
+            return result
+
+    @app.post("/api/v1/kitchen/recipes/{recipe_id}/archive")
+    def recipe_archive(recipe_id: int) -> dict[str, object]:
+        require_writable(ctx)
+        from ...staff.chef import recipes as chef_recipes
+
+        with open_conn(ctx) as conn:
+            _require_chef_recipes(conn)
+            try:
+                result = chef_recipes.archive(conn, recipe_id)
+            except ManorError as exc:
+                conn.rollback()
+                raise manor_error_to_http(exc)
+            commit_and_render(conn, ctx)
+            return result
+
+    # --- cook-sessions（ADR-015 D3） ---
+
+    @app.post("/api/v1/kitchen/cook-sessions")
+    def cook_session_start(request: Request, body: CookSessionStartRequest) -> dict[str, object]:
+        require_writable(ctx)
+        from ...staff.chef import recipes as chef_recipes
+
+        with open_conn(ctx) as conn:
+            _require_chef_recipes(conn)
+            uid = viewing_user_id(request, conn)
+            try:
+                result = chef_recipes.start_session(conn, body.recipe_id, user_id=uid)
+            except ManorError as exc:
+                conn.rollback()
+                raise manor_error_to_http(exc)
+            commit_and_render(conn, ctx)
+            return result
+
+    @app.get("/api/v1/kitchen/cook-sessions/current")
+    def cook_session_current(request: Request) -> dict[str, object]:
+        from ...staff.chef import recipes as chef_recipes
+
+        with open_conn(ctx) as conn:
+            _require_chef_recipes(conn)
+            uid = viewing_user_id(request, conn)
+            result = chef_recipes.current_session(conn, user_id=uid)
+            return result if result is not None else {"id": None, "recipe_id": None, "current": None}
+
+    @app.post("/api/v1/kitchen/cook-sessions/{session_id}/events")
+    def cook_session_event(session_id: int, body: CookSessionEventRequest) -> dict[str, object]:
+        require_writable(ctx)
+        from ...staff.chef import recipes as chef_recipes
+
+        with open_conn(ctx) as conn:
+            _require_chef_recipes(conn)
+            try:
+                result = chef_recipes.apply_event(conn, session_id, body.type, step=body.step)
+            except ManorError as exc:
+                conn.rollback()
+                raise manor_error_to_http(exc)
+            commit_and_render(conn, ctx)
+            return result
+
+    @app.post("/api/v1/kitchen/cook-sessions/{session_id}/end")
+    def cook_session_end(session_id: int) -> dict[str, object]:
+        require_writable(ctx)
+        from ...staff.chef import recipes as chef_recipes
+
+        with open_conn(ctx) as conn:
+            _require_chef_recipes(conn)
+            try:
+                result = chef_recipes.end_session(conn, session_id)
+            except ManorError as exc:
+                conn.rollback()
+                raise manor_error_to_http(exc)
+            commit_and_render(conn, ctx)
+            return result

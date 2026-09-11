@@ -26,3 +26,44 @@ CREATE TABLE IF NOT EXISTS chef_shopping (
 
 CREATE TABLE IF NOT EXISTS chef_taste (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at TEXT NOT NULL);
 -- key: allergies / dislikes / likes / household_size / cook_minutes / equipment / notes
+
+-- レシピ帳（ADR-015 D1）。本体（body）とうちの値（meta）を分ける——本体を取り込み直しで
+-- 差し替えても、栄養価・タグ・評価・メモは残る。
+CREATE TABLE IF NOT EXISTS chef_recipe (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  title        TEXT NOT NULL,
+  source_url   TEXT NOT NULL DEFAULT '',   -- 出典。空＝手入力
+  source_site  TEXT NOT NULL DEFAULT '',   -- 出典のホスト名（表示用）
+  hero_image   TEXT NOT NULL DEFAULT '',   -- 出典の画像 URL。保存しない（直リンク）
+  servings     INTEGER,
+  total_minutes INTEGER,
+  body         TEXT NOT NULL,              -- 契約 JSON（ADR-015 §3）の ingredients/tools/phases/steps
+  created_at   TEXT NOT NULL, updated_at TEXT NOT NULL, archived_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS chef_recipe_meta (   -- うちの値。手で直したものは自動で上書きしない
+  recipe_id    INTEGER PRIMARY KEY REFERENCES chef_recipe(id) ON DELETE CASCADE,
+  kcal REAL, protein_g REAL, fat_g REAL, carb_g REAL, salt_g REAL,   -- 1人分
+  nutrition_source TEXT NOT NULL DEFAULT '' CHECK (nutrition_source IN ('', 'estimated', 'manual')),
+  tags         TEXT NOT NULL DEFAULT '[]', -- JSON 配列
+  rating       INTEGER,                    -- 1..5
+  memo         TEXT NOT NULL DEFAULT '',   -- 「うちは油少なめ」等
+  favorite     INTEGER NOT NULL DEFAULT 0,
+  times_cooked INTEGER NOT NULL DEFAULT 0,
+  last_cooked_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS chef_cook_session (  -- XR／画面で「作り始めた」〜「作り終えた」
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  recipe_id INTEGER NOT NULL REFERENCES chef_recipe(id),
+  user_id  TEXT NOT NULL DEFAULT 'master', -- 誰が作っているか（ADR-014）。レシピ自体は共通
+  current  INTEGER NOT NULL DEFAULT 1,     -- 今の工程（1 始まり）
+  started_at TEXT NOT NULL, ended_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS chef_cook_event (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  session_id INTEGER NOT NULL REFERENCES chef_cook_session(id) ON DELETE CASCADE,
+  at TEXT NOT NULL, type TEXT NOT NULL,    -- next | prev | timer_start | done
+  step INTEGER
+);

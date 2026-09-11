@@ -49,6 +49,11 @@ manor chef shopping list
 manor chef shopping add <item> --reason ".." [--aisle 野菜|肉魚|乳卵|主食|調味料|その他]
 manor chef shopping bought <item,item,...> [--qty ..] [--expires ..] [--place ..]
 manor chef taste show / manor chef taste set <key> "<value>"
+manor chef recipe list [--q ..] [--tag ..] [--favorite/--no-favorite] [--archived]
+manor chef recipe show <id>
+manor chef recipe add --file <recipe.json>                   契約 JSON（ADR-015 §3）を検算して登録
+manor chef recipe set <id> [--kcal ..] [--tags a,b] [--rating 1-5] [--memo ..] [--favorite/--no-favorite]
+manor chef recipe archive <id>
 ```
 
 **`pantry expiring` と `pantry missing` は在庫が丸ごと空だと終了コード2を返します。**
