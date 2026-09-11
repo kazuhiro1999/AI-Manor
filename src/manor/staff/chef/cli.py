@@ -14,7 +14,7 @@ import sqlite3
 from manor import i18n, util
 from manor.errors import ManorError
 
-from . import ops, recipes
+from . import ops, recipe_import, recipes
 
 VALID_SLOTS: tuple[str, ...] = ("breakfast", "lunch", "dinner", "snack")
 VALID_AISLES: tuple[str, ...] = ("野菜", "肉魚", "乳卵", "主食", "調味料", "その他")
@@ -520,6 +520,46 @@ def cmd_recipe_archive(conn, home, args) -> object:
     return i18n.t("chef.recipe.archive.done", id=args.id)
 
 
+def cmd_recipe_import(conn, home, args) -> object:
+    """ADR-015 R2。既定は**下書きを JSON で出す**（`--save` が無ければ登録しない）。"""
+    _require_chef_recipe_table(conn)
+    result = recipe_import.import_from_url(args.url)
+    if not result.get("ok"):
+        raise ManorError(
+            f"レシピの取り込みに失敗しました: {result.get('reason', '')}",
+            key="error.chef.recipe_import_failed",
+            params={"reason": result.get("reason", "")},
+        )
+    recipe = result["recipe"]
+    warnings = result.get("warnings") or []
+    if args.save:
+        recipe_id = recipes.add(conn, recipe)
+        if args.json:
+            return {"id": recipe_id, "warnings": warnings}
+        return i18n.t("chef.recipe.import.saved", id=recipe_id)
+    # 保存しないときは下書きをそのまま返す（`_emit_result` が文字列以外は JSON で
+    # 出す——ADR-015 D2「編集できる下書き」は構造化データそのものなので、
+    # 1行の人間向け文にする意味が薄い。`--json` の有無を問わない）。
+    return {"recipe": recipe, "warnings": warnings}
+
+
+def cmd_recipe_estimate(conn, home, args) -> object:
+    """ADR-015 D2 手順5。押したときだけ推定し、`nutrition_source='estimated'` で保存する。"""
+    _require_chef_recipe_table(conn)
+    recipe = recipes.get(conn, args.id)
+    result = recipe_import.estimate_nutrition(recipe)
+    if not result.get("ok"):
+        raise ManorError(
+            f"栄養価の推定に失敗しました: {result.get('reason', '')}",
+            key="error.chef.recipe_estimate_failed",
+            params={"reason": result.get("reason", "")},
+        )
+    updated = recipes.set_meta(conn, args.id, nutrition_source="estimated", **result["nutrition"])
+    if args.json:
+        return updated
+    return i18n.t("chef.recipe.estimate.done", id=args.id)
+
+
 # --- パーサ組み立て -----------------------------------------------------------------
 
 
@@ -687,3 +727,17 @@ def register(subparsers) -> None:
     p.add_argument("--json", action="store_true")
     p.add_argument("--no-render", action="store_true")
     p.set_defaults(func=cmd_recipe_archive, is_write=True)
+
+    # --- recipe import/estimate（ADR-015 R2） ---
+    p = recipe_sub.add_parser("import")
+    p.add_argument("url")
+    p.add_argument("--save", action="store_true")
+    p.add_argument("--json", action="store_true")
+    p.add_argument("--no-render", action="store_true")
+    p.set_defaults(func=cmd_recipe_import, is_write=True)
+
+    p = recipe_sub.add_parser("estimate")
+    p.add_argument("id", type=int)
+    p.add_argument("--json", action="store_true")
+    p.add_argument("--no-render", action="store_true")
+    p.set_defaults(func=cmd_recipe_estimate, is_write=True)

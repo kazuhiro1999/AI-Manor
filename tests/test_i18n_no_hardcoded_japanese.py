@@ -315,6 +315,28 @@ LINE_ALLOWLIST: set[str] = {
     # 読み取るための正規表現。ランナー側の出力形式そのものであって manor の文言では
     # ない。
     "gate.py:91",
+    # [データ] staff/chef/recipe_import.py（ADR-015 R2・2026-09-12）: `claude -p` へ渡す
+    # 構造化・栄養推定の指示文面そのもの（`STRUCTURE_PROMPT_TEMPLATE`/`STRUCTURE_RETRY_
+    # SUFFIX`/`NUTRITION_PROMPT_TEMPLATE`。端末には出ない。calendar.py の
+    # PUSH_PROMPT_TEMPLATE/EXTRACT_PROMPT_TEMPLATE と同じ扱い）と、fetch_page/
+    # _call_claude_for_json/_length_violations の `reason` 文字列（calendar.fetch_ics の
+    # `reason` と同じ「共有の診断文字列」の扱い。CLI/Web の呼び出し側が包む文だけ訳す）。
+    # ⚠ 行番号で固定してあるので、上に行を足すとここがずれる。ずれたら
+    #   `_string_constant_offenders` に直接聞いて入れ替えること（手で数えない）。
+    "staff/chef/recipe_import.py:126", "staff/chef/recipe_import.py:128",
+    "staff/chef/recipe_import.py:130", "staff/chef/recipe_import.py:132",
+    "staff/chef/recipe_import.py:137", "staff/chef/recipe_import.py:343",
+    "staff/chef/recipe_import.py:359", "staff/chef/recipe_import.py:366",
+    "staff/chef/recipe_import.py:368", "staff/chef/recipe_import.py:370",
+    "staff/chef/recipe_import.py:375", "staff/chef/recipe_import.py:383",
+    "staff/chef/recipe_import.py:418", "staff/chef/recipe_import.py:427",
+    "staff/chef/recipe_import.py:429", "staff/chef/recipe_import.py:432",
+    "staff/chef/recipe_import.py:436", "staff/chef/recipe_import.py:448",
+    "staff/chef/recipe_import.py:456", "staff/chef/recipe_import.py:459",
+    "staff/chef/recipe_import.py:482", "staff/chef/recipe_import.py:483",
+    "staff/chef/recipe_import.py:488", "staff/chef/recipe_import.py:489",
+    "staff/chef/recipe_import.py:603", "staff/chef/recipe_import.py:627",
+    "staff/chef/recipe_import.py:629", "staff/chef/recipe_import.py:665",
 }
 
 

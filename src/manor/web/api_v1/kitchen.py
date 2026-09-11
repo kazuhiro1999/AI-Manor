@@ -85,6 +85,12 @@ class RecipeMetaRequest(BaseModel):
     favorite: bool | None = None
 
 
+class RecipeImportRequest(BaseModel):
+    """ADR-015 D2・D3。`url` を受け、**保存しない**下書きを返す。"""
+
+    url: str = Field(..., min_length=1)
+
+
 class CookSessionStartRequest(BaseModel):
     recipe_id: int
 
@@ -205,7 +211,7 @@ def register(app: FastAPI, ctx: WebContext) -> None:
             commit_and_render(conn, ctx)
             return result  # type: ignore[return-value]
 
-    # --- recipes（ADR-015 D3。`import`/`estimate-nutrition` は R2 なのでここには無い） ---
+    # --- recipes（ADR-015 D3） ---
 
     @app.get("/api/v1/kitchen/recipes")
     def recipes_list(
@@ -289,6 +295,49 @@ def register(app: FastAPI, ctx: WebContext) -> None:
                 raise manor_error_to_http(exc)
             commit_and_render(conn, ctx)
             return result
+
+    # --- recipes: 取り込み・栄養推定（ADR-015 R2。`claude -p` を呼ぶ） ---
+
+    @app.post("/api/v1/kitchen/recipes/import")
+    def recipe_import_from_url(body: RecipeImportRequest) -> dict[str, object]:
+        """**保存しない。** 下書きを返すだけ（登録は `POST /api/v1/kitchen/recipes`）。"""
+        from ...staff.chef import recipe_import as chef_recipe_import
+
+        with open_conn(ctx) as conn:
+            _require_chef_recipes(conn)
+        try:
+            result = chef_recipe_import.import_from_url(body.url)
+        except ManorError as exc:
+            raise manor_error_to_http(exc)
+        if not result.get("ok"):
+            raise HTTPException(status_code=502, detail=str(result.get("reason") or ""))
+        return {"recipe": result["recipe"], "warnings": result.get("warnings") or []}
+
+    @app.post("/api/v1/kitchen/recipes/{recipe_id}/estimate-nutrition")
+    def recipe_estimate_nutrition(recipe_id: int) -> dict[str, object]:
+        """ADR-015 D2 手順5。押したときだけ推定し `nutrition_source='estimated'` で保存する。"""
+        require_writable(ctx)
+        from ...staff.chef import recipe_import as chef_recipe_import
+        from ...staff.chef import recipes as chef_recipes
+
+        with open_conn(ctx) as conn:
+            _require_chef_recipes(conn)
+            try:
+                recipe = chef_recipes.get(conn, recipe_id)
+            except ManorError as exc:
+                raise manor_error_to_http(exc)
+            result = chef_recipe_import.estimate_nutrition(recipe)
+            if not result.get("ok"):
+                raise HTTPException(status_code=502, detail=str(result.get("reason") or ""))
+            try:
+                updated = chef_recipes.set_meta(
+                    conn, recipe_id, nutrition_source="estimated", **result["nutrition"]
+                )
+            except ManorError as exc:
+                conn.rollback()
+                raise manor_error_to_http(exc)
+            commit_and_render(conn, ctx)
+            return updated["meta"]  # type: ignore[return-value]
 
     # --- cook-sessions（ADR-015 D3） ---
 
