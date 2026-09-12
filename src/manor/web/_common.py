@@ -19,7 +19,7 @@ from .. import db as db_mod
 from .. import render as render_mod
 from .. import user as user_mod
 from ..errors import ManorError
-from .auth import RateLimiter, auth_mode_for_host
+from .auth import KeyedRateLimiter, RateLimiter, auth_mode_for_host, is_loopback
 
 COOKIE_NAME = "manor_session"
 
@@ -38,15 +38,36 @@ class WebContext:
     host: str = "127.0.0.1"
     auth_mode: str = "loopback"
     login_limiter: RateLimiter = field(default_factory=RateLimiter)
+    #: ADR-017 D4: `[web] lan_passcode_login`。**起動時に1回だけ読む**（`auth_mode` と
+    #: 同じ約束——待ち受け方に関わる設定は、途中で変わると門の判断がぶれる）。
+    lan_passcode_login: bool = False
+    #: ADR-017 D2-4: `pair/start` の送信元ごとの速度制限（1分10回）。
+    pair_limiter: KeyedRateLimiter = field(default_factory=KeyedRateLimiter)
 
     def __post_init__(self) -> None:
         self.home = Path(self.home)
 
+    @property
+    def lan_rules(self) -> bool:
+        """LAN の規則（ADR-017 D4）を効かせるか。**ループバックに待ち受けている間は効かない**
+        ——その口には LAN からそもそも届かないので、区分を分ける意味が無い。
+        `tailscale serve` 経由（127.0.0.1 待ち受け＋`require_passcode`）の既存の使い方は、
+        ここが `False` になることで丸ごと従来どおりに動く。
+        """
+        return not is_loopback(self.host)
+
 
 def make_context(home: Path, *, host: str = "127.0.0.1", read_only: bool = False) -> WebContext:
+    from . import config as web_config
     from .auth import auth_mode as _auth_mode
 
-    return WebContext(home=Path(home), read_only=read_only, host=host, auth_mode=_auth_mode(Path(home), host))
+    return WebContext(
+        home=Path(home),
+        read_only=read_only,
+        host=host,
+        auth_mode=_auth_mode(Path(home), host),
+        lan_passcode_login=web_config.get_web_section(Path(home)).get("lan_passcode_login") is True,
+    )
 
 
 @contextmanager
@@ -84,7 +105,18 @@ def manor_error_to_http(exc: ManorError, *, conflict_code: int = 400) -> HTTPExc
 def viewing_user_id(request: Request, conn: sqlite3.Connection) -> str:
     """「見ている利用者」（ADR-014 D3）。cookie `manor_user` の値が有効（存在し、畳んで
     いない）ならそれ、無い・知らない・畳んでいれば主人（`user.principal_id`）に落ちる。
+
+    **端末鍵（ADR-017 D1）で来た問い合わせは端末の利用者になる**——cookie は見ない。
+    XR は `manor_user` を持たない（持たせると「端末の持ち主」と「見ている人」が二重に
+    なり、どちらが正かが場所によって変わる）。畳まれた利用者の端末でも**その利用者の
+    ままにする**——主人へ落とすと、畳んだはずの端末が主人の机を覗くことになる。
     """
+    device = getattr(request.state, "device", None)
+    if isinstance(device, dict):
+        device_user = str(device.get("user_id") or "").strip()
+        if device_user:
+            return device_user
+
     cookie = request.cookies.get(USER_COOKIE_NAME)
     if cookie and user_mod.exists_active(conn, cookie):
         return cookie

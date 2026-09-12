@@ -163,7 +163,8 @@ def test_login_works_across_the_migration(home: Path) -> None:
     from fastapi.testclient import TestClient
 
     _put_plaintext(home)
-    client = TestClient(web_app_mod.create_app(home, host="0.0.0.0"))
+    # ADR-017 D4: 送信元を名乗る（既定の `"testclient"` は `web/net.py` が LAN と見る）。
+    client = TestClient(web_app_mod.create_app(home, host="0.0.0.0"), client=("127.0.0.1", 50000))
 
     assert client.post("/api/v1/auth/login", json={"passcode": "chigau"}).status_code == 401
     assert client.post("/api/v1/auth/login", json={"passcode": PLAIN}).status_code == 200

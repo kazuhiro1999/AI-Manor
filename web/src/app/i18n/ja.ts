@@ -1029,6 +1029,27 @@ export const ja = {
   "settings.users.archived": "畳みました",
   "settings.users.archiveFailed": (p) => `畳めませんでした: ${p.reason}`,
   "settings.users.protectedNote": "主人と執事は畳めません",
+
+  // ADR-017 D5:「端末」節（設定 → 端末）。番号を入れて利用者を選び「許可」する。
+  // **鍵はここに出ない**——受け取るのは端末だけ（ADR-017 D2-2）。
+  "settings.devices.heading": "端末",
+  "settings.devices.hint":
+    "XR（Quest）のような端末に、この家の台所の読み書きだけを許す鍵を渡します。端末に出ている6桁の番号を入れ、どの利用者として振る舞わせるかを選んで「許可」してください。",
+  "settings.devices.codePlaceholder": "6桁の番号",
+  "settings.devices.userLabel": "利用者",
+  "settings.devices.approve": "許可",
+  "settings.devices.approved": (p) => `${p.name} を許可しました。端末が鍵を受け取ります`,
+  "settings.devices.approveFailed": (p) => `許可できませんでした: ${p.reason}`,
+  "settings.devices.codeRequired": "番号を入力してください",
+  "settings.devices.userRequired": "利用者を選んでください",
+  "settings.devices.tokenNeverShownHint": "鍵は端末だけが受け取ります（この画面には出ません）。",
+  "settings.devices.empty": "（許可した端末はありません）",
+  "settings.devices.lastSeen": (p) => `最後に使用: ${p.when}`,
+  "settings.devices.neverSeen": "まだ使われていません",
+  "settings.devices.revoke": "失効",
+  "settings.devices.revokeConfirm": "もう一度押すと失効します",
+  "settings.devices.revoked": "失効させました",
+  "settings.devices.revokeFailed": (p) => `失効できませんでした: ${p.reason}`,
 } satisfies Record<string, Entry>;
 
 export type TranslationKey = keyof typeof ja;

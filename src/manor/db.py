@@ -38,6 +38,10 @@ CORE_TABLES: frozenset[str] = frozenset(
         "notion_page",
         # ADR-010 D2（タスクの種類）: 同上。node には紐づかない独立の表（`rule` と同じ流儀）。
         "task_kind",
+        # ADR-017 D1・D2（端末の鍵とペアリング）: 同上。`web_` は部下（staff）の接頭では
+        # ない——Web の認証の持ち物なので core の表として数える（C9 の検査が
+        # 「知らない表」と言わないように、ここへ明示的に加える）。
+        "web_device", "web_device_pairing",
     }
 )
 

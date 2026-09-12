@@ -3,7 +3,7 @@ import { render, cleanup, screen, waitFor, within } from "@testing-library/react
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { settingsModule } from "./index";
-import type { FaceModelEntry, Meta, RunsData, RunStatsData, SettingsData, SetupInfo, TaskKind, UserInfo } from "../../app/types";
+import type { DeviceInfo, FaceModelEntry, Meta, RunsData, RunStatsData, SettingsData, SetupInfo, TaskKind, UserInfo } from "../../app/types";
 import { ToastBanner, ToastProvider } from "../../components/Toast";
 
 const SettingsScreen = settingsModule.routes[0].element as JSX.Element;
@@ -86,6 +86,8 @@ function mockFetchFor(handlers: {
   taskKinds?: TaskKind[];
   users?: UserInfo[];
   currentUserId?: string;
+  // ADR-017 D5:「端末」節の見本（既定は1台も無い＝「（許可した端末はありません）」）。
+  devices?: DeviceInfo[];
   faceOpen?: { opened: boolean; method?: string; reason?: string };
   onFetch?: (url: string, init?: RequestInit) => void;
 }) {
@@ -157,6 +159,29 @@ function mockFetchFor(handlers: {
       }
     }
 
+    // /devices（ADR-017 D2・D5）: 許可は番号が当たったときだけ通す（実バックエンドと同じ規則）。
+    if (url.includes("/devices/pair/approve") && method === "POST") {
+      const body = init?.body ? JSON.parse(String(init.body)) : {};
+      if (String(body.code) !== "123456") {
+        return {
+          ok: false,
+          status: 404,
+          json: async () => ({ detail: "その番号のペアリングは見つかりません（間違いか、5分を過ぎています）" }),
+        };
+      }
+      // **鍵は返さない**（受け取るのは端末だけ。ADR-017 D2-2）。
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ device_id: "dev-new", name: "Quest 3", kind: "kitchenxr", user_id: body.user_id }),
+      };
+    }
+    if (url.match(/\/devices\/[^/]+$/) && method === "DELETE") {
+      const idMatch = url.match(/\/devices\/([^/]+)$/);
+      const id = idMatch ? decodeURIComponent(idMatch[1]) : "";
+      return { ok: true, status: 200, json: async () => ({ id, revoked_at: "2026-09-12T20:00:00" }) };
+    }
+
     // /users: 追加・改名・畳むは body/path の内容を映して返す（他の CRUD と同じ流儀）。
     if (url.match(/\/users\/[^/]+\/archive$/) && method === "POST") {
       const idMatch = url.match(/\/users\/([^/]+)\/archive$/);
@@ -182,6 +207,7 @@ function mockFetchFor(handlers: {
       if (url.includes("/runs/stats")) return handlers.runsStats;
       if (url.includes("/runs")) return handlers.runs;
       if (url.includes("/setup")) return baseSetupInfo();
+      if (url.includes("/devices")) return { items: handlers.devices ?? [] };
       if (url.includes("/users")) return { items: users };
       if (url.includes("/settings")) return baseSettings();
       if (url.includes("/face/models")) return faceModels;
@@ -799,7 +825,9 @@ describe("settings — 利用者（ADR-014 D1・D3）", () => {
     render(<MemoryRouter><ToastProvider>{SettingsScreen}</ToastProvider></MemoryRouter>);
     await waitFor(() => expect(screen.getByText("利用者")).toBeTruthy());
 
-    const row = screen.getByText("同居人").closest(".row-item") as HTMLElement;
+    // ⚠ 利用者名は「端末」節の利用者の選択肢（ADR-017 D5）にも出るので、
+    // 文字ではなく行の印（`data-user-id`）で引く。
+    const row = document.querySelector('[data-user-id="u2"]') as HTMLElement;
     await user.click(within(row).getByRole("button", { name: "改名" }));
     const input = within(row).getByLabelText("同居人 の名前") as HTMLInputElement;
     await user.clear(input);
@@ -826,7 +854,9 @@ describe("settings — 利用者（ADR-014 D1・D3）", () => {
     render(<MemoryRouter><ToastProvider>{SettingsScreen}</ToastProvider></MemoryRouter>);
     await waitFor(() => expect(screen.getByText("利用者")).toBeTruthy());
 
-    const row = screen.getByText("同居人").closest(".row-item") as HTMLElement;
+    // ⚠ 利用者名は「端末」節の利用者の選択肢（ADR-017 D5）にも出るので、
+    // 文字ではなく行の印（`data-user-id`）で引く。
+    const row = document.querySelector('[data-user-id="u2"]') as HTMLElement;
     // 呼び名の表示行に現在値が出ている（利用者名の "同居人" とは別の欄）。
     expect(within(row).getByText((_, el) => el?.textContent === "呼び名: 相方さん")).toBeTruthy();
 
@@ -893,7 +923,8 @@ describe("settings — 利用者（ADR-014 D1・D3）", () => {
     render(<MemoryRouter><ToastProvider>{SettingsScreen}</ToastProvider></MemoryRouter>);
     await waitFor(() => expect(screen.getByText("利用者")).toBeTruthy());
 
-    const memberRow = screen.getByText("同居人").closest(".row-item") as HTMLElement;
+    // ⚠ 利用者名は「端末」節の利用者の選択肢（ADR-017 D5）にも出るので行の印で引く。
+    const memberRow = document.querySelector('[data-user-id="u2"]') as HTMLElement;
     const archiveButton = within(memberRow).getByRole("button", { name: "アーカイブ" });
     await user.click(archiveButton);
 
@@ -907,6 +938,121 @@ describe("settings — 利用者（ADR-014 D1・D3）", () => {
     await waitFor(() =>
       expect(
         calls.some((c) => c.url.includes("/api/v1/users/u2/archive") && (c.init?.method || "").toUpperCase() === "POST")
+      ).toBe(true)
+    );
+    confirmSpy.mockRestore();
+  });
+});
+
+describe("settings — 端末（ADR-017 D5）", () => {
+  afterEach(() => {
+    cleanup();
+  });
+
+  const emptyRuns = { runsStats: { available: false, by_kind: [], total_cost_usd: 0 }, runs: { available: false, runs: [] } };
+
+  function questDevice(): DeviceInfo {
+    return {
+      id: "dev-quest3",
+      name: "Quest 3",
+      kind: "kitchenxr",
+      user_id: "master",
+      user_name: "旦那様",
+      created_at: "2026-09-10T20:15:00",
+      last_seen_at: "2026-09-12T18:40:00",
+      revoked_at: null,
+    };
+  }
+
+  it("端末が無ければ案内を出し、鍵は画面に出ないと断る", async () => {
+    mockFetchFor({ ...emptyRuns });
+
+    render(<MemoryRouter><ToastProvider>{SettingsScreen}</ToastProvider></MemoryRouter>);
+
+    await waitFor(() => expect(screen.getByText("端末")).toBeTruthy());
+    expect(screen.getByText("（許可した端末はありません）")).toBeTruthy();
+    expect(screen.getByText("鍵は端末だけが受け取ります（この画面には出ません）。")).toBeTruthy();
+  });
+
+  it("端末の一覧に名前・利用者・最後に使った日時を出す", async () => {
+    mockFetchFor({ ...emptyRuns, devices: [questDevice()] });
+
+    render(<MemoryRouter><ToastProvider>{SettingsScreen}</ToastProvider></MemoryRouter>);
+
+    await waitFor(() => expect(screen.getByText("Quest 3")).toBeTruthy());
+    const row = screen.getByText("Quest 3").closest(".row-item") as HTMLElement;
+    expect(within(row).getByText("旦那様")).toBeTruthy();
+    expect(within(row).getByText(/最後に使用:/)).toBeTruthy();
+    expect(within(row).getByRole("button", { name: "失効" })).toBeTruthy();
+  });
+
+  it("番号と利用者を選んで「許可」すると pair/approve を叩く（鍵は受け取らない）", async () => {
+    const calls: { url: string; init?: RequestInit }[] = [];
+    mockFetchFor({ ...emptyRuns, users: baseUsers(), onFetch: (url, init) => calls.push({ url, init }) });
+
+    const user = userEvent.setup();
+    render(<MemoryRouter><ToastProvider><ToastBanner />{SettingsScreen}</ToastProvider></MemoryRouter>);
+    await waitFor(() => expect(screen.getByText("端末")).toBeTruthy());
+
+    await user.type(screen.getByLabelText("6桁の番号"), "123456");
+    await user.click(screen.getByRole("button", { name: "許可" }));
+
+    await waitFor(() => {
+      const call = calls.find((c) => c.url.includes("/devices/pair/approve"));
+      expect(call).toBeTruthy();
+      expect(JSON.parse(String(call?.init?.body))).toEqual({ code: "123456", user_id: "master" });
+    });
+    // 応答に鍵は無い（「端末が鍵を受け取ります」と言うだけ）。
+    await waitFor(() => expect(screen.getByText(/端末が鍵を受け取ります/)).toBeTruthy());
+  });
+
+  it("番号の欄には数字しか入らない（貼り間違いをその場で落とす）", async () => {
+    mockFetchFor({ ...emptyRuns });
+
+    const user = userEvent.setup();
+    render(<MemoryRouter><ToastProvider>{SettingsScreen}</ToastProvider></MemoryRouter>);
+    await waitFor(() => expect(screen.getByText("端末")).toBeTruthy());
+
+    const input = screen.getByLabelText("6桁の番号") as HTMLInputElement;
+    await user.type(input, "12ab34");
+    expect(input.value).toBe("1234");
+  });
+
+  it("番号が違えばサーバの文言をそのまま出す（画面で当たり外れを判断しない）", async () => {
+    mockFetchFor({ ...emptyRuns });
+
+    const user = userEvent.setup();
+    render(<MemoryRouter><ToastProvider><ToastBanner />{SettingsScreen}</ToastProvider></MemoryRouter>);
+    await waitFor(() => expect(screen.getByText("端末")).toBeTruthy());
+
+    await user.type(screen.getByLabelText("6桁の番号"), "999999");
+    await user.click(screen.getByRole("button", { name: "許可" }));
+
+    await waitFor(() => expect(screen.getByText(/その番号のペアリングは見つかりません/)).toBeTruthy());
+  });
+
+  it("失効は2度押し（confirm は使わず、1度目はボタンの文言が変わるだけ）", async () => {
+    const calls: { url: string; init?: RequestInit }[] = [];
+    mockFetchFor({ ...emptyRuns, devices: [questDevice()], onFetch: (url, init) => calls.push({ url, init }) });
+    const confirmSpy = vi.spyOn(window, "confirm");
+
+    const user = userEvent.setup();
+    render(<MemoryRouter><ToastProvider>{SettingsScreen}</ToastProvider></MemoryRouter>);
+    await waitFor(() => expect(screen.getByText("Quest 3")).toBeTruthy());
+
+    const row = screen.getByText("Quest 3").closest(".row-item") as HTMLElement;
+    await user.click(within(row).getByRole("button", { name: "失効" }));
+
+    expect(calls.some((c) => (c.init?.method || "").toUpperCase() === "DELETE")).toBe(false);
+    expect(within(row).getByRole("button", { name: "もう一度押すと失効します" })).toBeTruthy();
+    expect(confirmSpy).not.toHaveBeenCalled();
+
+    await user.click(within(row).getByRole("button", { name: "もう一度押すと失効します" }));
+    await waitFor(() =>
+      expect(
+        calls.some(
+          (c) => c.url.includes("/api/v1/devices/dev-quest3") && (c.init?.method || "").toUpperCase() === "DELETE"
+        )
       ).toBe(true)
     );
     confirmSpy.mockRestore();

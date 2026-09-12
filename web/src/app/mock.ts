@@ -833,6 +833,32 @@ const users: MockUser[] = [
   { id: "butler", name: "執事", callname: "執事", role: "butler", archived_at: null },
 ];
 let userSeq = 2;
+
+/* ---------- devices（ADR-017 D1・D5。端末の鍵。**鍵の平文は mock でも持たない**） ---------- */
+interface MockDevice {
+  id: string;
+  name: string;
+  kind: string;
+  user_id: string;
+  created_at: string;
+  last_seen_at: string | null;
+  revoked_at: string | null;
+}
+const devices: MockDevice[] = [
+  {
+    id: "dev-quest3",
+    name: "Quest 3",
+    kind: "kitchenxr",
+    user_id: "master",
+    created_at: "2026-09-10T20:15:00",
+    last_seen_at: "2026-09-12T18:40:00",
+    revoked_at: null,
+  },
+];
+let deviceSeq = 1;
+// ペアリングの待ち行列（番号 → 名前）。mock では `pair/start` を端末が叩く場面が無いので、
+// 「画面に入れる番号」を1つだけ用意して、許可の手触りを確かめられるようにしてある。
+const mockPairings: Record<string, string> = { "123456": "Quest 3" };
 // cookie `manor_user` の合成版（ブラウザの実 Cookie は使わない。mock はこの変数だけで足りる）。
 let viewingUserId = "master";
 
@@ -1149,6 +1175,43 @@ export async function mockApi<T>(path: string, options: ApiOptions = {}): Promis
       u.callname = String(body.callname || "").trim();
     }
     return { id } as unknown as T;
+  }
+
+  // ---------- devices（ADR-017 D1・D2・D5） ----------
+  if (path === "/devices" && method === "GET") {
+    const items = devices
+      .filter((d) => !d.revoked_at)
+      .map((d) => ({ ...d, user_name: users.find((u) => u.id === d.user_id)?.name || d.user_id }));
+    return { items } as unknown as T;
+  }
+  if (path === "/devices/pair/approve" && method === "POST") {
+    const code = String(body.code || "").trim();
+    const userId = String(body.user_id || "").trim();
+    const name = mockPairings[code];
+    // 番号が当たらない限り何も起きない（実バックエンドと同じ規則。ADR-017 D2-4）。
+    if (!name) notFound("その番号のペアリングは見つかりません（間違いか、5分を過ぎています）");
+    if (!activeUsers().some((u) => u.id === userId)) notFound(`利用者が見つかりません: ${userId}`);
+    deviceSeq += 1;
+    const id = `dev-${deviceSeq}`;
+    devices.push({
+      id,
+      name,
+      kind: "kitchenxr",
+      user_id: userId,
+      created_at: new Date().toISOString(),
+      last_seen_at: null,
+      revoked_at: null,
+    });
+    delete mockPairings[code];
+    // **鍵は返さない**（受け取るのは端末だけ。ADR-017 D2-2）。
+    return { pair_id: `pair-${code}`, device_id: id, name, kind: "kitchenxr", user_id: userId } as unknown as T;
+  }
+  if (path.match(/^\/devices\/[^/]+$/) && method === "DELETE") {
+    const id = decodeURIComponent(path.slice("/devices/".length));
+    const d = devices.find((x) => x.id === id);
+    if (!d) notFound(`端末が見つかりません: ${id}`);
+    d.revoked_at = new Date().toISOString();
+    return { id, revoked_at: d.revoked_at } as unknown as T;
   }
 
   // ---------- tasks ----------

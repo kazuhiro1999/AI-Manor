@@ -14,7 +14,10 @@ from manor.web import config as web_config
 
 
 def make_client(home: Path, *, read_only: bool = False, host: str = "127.0.0.1") -> TestClient:
-    return TestClient(web_app_mod.create_app(home, host=host, read_only=read_only))
+    # ADR-017 D4: 送信元を名乗る（既定の `"testclient"` は `web/net.py` が LAN と見る）。
+    return TestClient(
+        web_app_mod.create_app(home, host=host, read_only=read_only), client=("127.0.0.1", 50000)
+    )
 
 
 def test_settings_shape_defaults(home: Path) -> None:

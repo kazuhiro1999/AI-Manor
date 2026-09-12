@@ -10,6 +10,7 @@ from __future__ import annotations
 import threading
 import time
 import webbrowser
+from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
 
@@ -21,7 +22,8 @@ from .. import branding
 from .. import util
 from ..errors import ManorError
 from . import auth as auth_mod
-from ._common import COOKIE_NAME, WebContext, make_context
+from . import net as net_mod
+from ._common import COOKIE_NAME, WebContext, make_context, open_conn
 
 #: フロントエンドのビルド成果物。**リポジトリ直下の `web/`**（`src/manor/web/` とは別物。
 #: フロント担当のプロジェクト。ADR-004 D2）。
@@ -35,7 +37,18 @@ _STARTED_AT = datetime.now()
 _NO_CACHE_HEADERS = {"Cache-Control": "no-cache, must-revalidate"}
 
 #: 認証なしで叩ける `/api/v1/...` の経路（ログイン前でも見えないと詰む）。
-_PUBLIC_API_PATHS = frozenset({"/api/v1/meta", "/api/v1/health", "/api/v1/auth/login", "/api/v1/auth/me"})
+#: ADR-017 D2 のペアリングの口（`devices/pair/*`）もここに入る——端末はまだ鍵を持って
+#: いないので認証できない。**主人が Web で「許可」しない限り何も起きない**口なので、
+#: 認証なしで開けても増える権限が無い（速度制限は handler 側）。
+_PUBLIC_API_PATHS = frozenset(
+    {
+        "/api/v1/meta",
+        "/api/v1/health",
+        "/api/v1/auth/login",
+        "/api/v1/auth/me",
+        *net_mod.PAIRING_PATHS,
+    }
+)
 
 
 def runtime_stale() -> bool:
@@ -66,19 +79,74 @@ def _is_guarded_path(path: str) -> bool:
     return path.startswith("/api/v1/") and path not in _PUBLIC_API_PATHS
 
 
+def _authenticate_device(ctx: WebContext, token: str) -> dict | None:
+    """端末鍵（ADR-017 D1）を照合し、通れば `last_seen_at` を間引いて更新する。
+
+    **門の中で DB を触る**（この middleware は非同期だが sqlite は同期）——既存の
+    `verify_session_cookie` も毎回 `home/web-secret` を読んでいるので、門が I/O を
+    するのはこの app では初めてではない。pbkdf2 の重さは `device._TokenCache` が
+    2度目以降を省く（`web/device.py` の docstring 参照）。
+    """
+    from . import device as device_mod
+
+    with open_conn(ctx) as conn:
+        row = device_mod.authenticate(conn, token)
+        if row is not None and not ctx.read_only:
+            if device_mod.touch_last_seen(conn, str(row["id"])):
+                conn.commit()
+    return row
+
+
 class _AuthMiddleware(BaseHTTPMiddleware):
-    """`/api/v1/...` と小窓（`/face`）を守る。ループバックは全部通す（D4）。それ以外は cookie を
-    検算し、未認証なら 401（`_PUBLIC_API_PATHS` は素通り）。`--read-only` の書き込み拒否は別枠
-    （`_common.require_writable`。認証と読み取り専用は別の軸）。
+    """`/api/v1/...` と小窓（`/face`）を守る門。3つの軸を**この順で**見る。
+
+    1. **端末鍵**（ADR-017 D1。`Authorization: Bearer`）。通れば `/api/v1/kitchen/*` と
+       `/api/v1/devices/me` だけ（範囲外は 403）、合わない・失効は 401
+       ——端末は 401 を見て「ペアリングし直し」を出す約束（ADR-017 D6）。
+    2. **LAN の規則**（ADR-017 D4。`web/net.py` に表がある）。ループバックに待ち受けて
+       いる間は効かない（`ctx.lan_rules`）。
+    3. **cookie**（ADR-005 D4。従来どおり）。ループバックは全部通し、それ以外は cookie を
+       検算して未認証なら 401（`_PUBLIC_API_PATHS` は素通り）。
+
+    `--read-only` の書き込み拒否は別枠（`_common.require_writable`。認証と読み取り専用は
+    別の軸）。
     """
 
     async def dispatch(self, request: Request, call_next):  # type: ignore[no-untyped-def]
+        from . import device as device_mod
+
         ctx: WebContext = request.app.state.web_ctx
+        path = request.url.path
+        zone = net_mod.classify_source(request)
+        request.state.source_zone = zone
+
+        # 1. 端末鍵（Bearer）。cookie と**並んで**受ける（ADR-017 D1）。
+        token = device_mod.bearer_token(request)
+        if token is not None:
+            device = _authenticate_device(ctx, token)
+            if device is None:
+                # 失効・知らない鍵は 401（403 ではない）。端末はこれを見て取り直す。
+                return JSONResponse({"detail": "端末の鍵が無効です"}, status_code=401)
+            request.state.device = device
+            request.state.authenticated = True
+            if not net_mod.in_device_scope(path):
+                return JSONResponse(
+                    {"detail": "この口は端末の鍵では使えません"}, status_code=403
+                )
+            return await call_next(request)
+
+        # 2. LAN の規則（D4）。
+        if ctx.lan_rules and zone == net_mod.ZONE_LAN:
+            if not net_mod.lan_allows(path, lan_passcode_login=ctx.lan_passcode_login):
+                return JSONResponse(
+                    {"detail": "この口は家庭内 LAN からは使えません"}, status_code=403
+                )
+
+        # 3. cookie（従来どおり）。
         cookie = request.cookies.get(COOKIE_NAME)
         authenticated = ctx.auth_mode == "loopback" or auth_mod.verify_session_cookie(ctx.home, cookie)
         request.state.authenticated = authenticated
 
-        path = request.url.path
         if ctx.auth_mode != "loopback" and not authenticated and _is_guarded_path(path):
             return JSONResponse({"detail": "認証が必要です"}, status_code=401)
         return await call_next(request)
@@ -114,10 +182,20 @@ def _missing_dist_page() -> HTMLResponse:
     return HTMLResponse(html, status_code=200, headers=_NO_CACHE_HEADERS)
 
 
-def create_app(home: Path, *, host: str = "127.0.0.1", read_only: bool = False) -> FastAPI:
+def create_app(
+    home: Path,
+    *,
+    host: str = "127.0.0.1",
+    read_only: bool = False,
+    port: int = 8789,
+    discovery: bool | None = None,
+) -> FastAPI:
     """FastAPI アプリを組み立てる。**ここでは起動時の認証チェック（D4 の拒否）はしない**
     ——試験が `host="0.0.0.0"` 相当で app を直接作り、認証の挙動（401→login→200）を
     見られるようにするため。拒否は `check_startup_auth`（`run_server` が呼ぶ）の役目。
+
+    `port` は探索（ADR-017 D3）が返す `base_url` の port に使うだけ（待ち受けるのは
+    uvicorn の仕事）。`discovery` は `None` で「設定に従う」、`False` で `--no-discovery`。
     """
     # 起動時に冪等な移行を当てる（`rule` 表や `import_hash` 列は後から足したもの。
     # 本番 home で `manor init` を回し忘れると `/api/v1/rules` が 500 になった——2026-09-03 実測）。
@@ -134,17 +212,44 @@ def create_app(home: Path, *, host: str = "127.0.0.1", read_only: bool = False) 
 
         passcode_mod.migrate(Path(home))
     ctx = make_context(home, host=host, read_only=read_only)
+
+    # ADR-017 D3: 探索（UDP 8791）は**アプリの寿命に合わせて**立てる（asyncio の
+    # datagram endpoint なので、uvicorn が回すループの中でしか立てられない）。
+    # ループバックの待ち受け・`[web] discovery = false`・`--no-discovery` では立てない
+    # （`discovery.enabled_for`）。立て損ねても Web は止めない。
+    from . import config as web_config
+    from . import discovery as discovery_mod
+
+    discovery_on = discovery_mod.enabled_for(
+        host,
+        config_value=web_config.get_web_section(Path(home)).get("discovery"),
+        cli_disabled=discovery is False,
+    )
+
+    @asynccontextmanager
+    async def _lifespan(_app: FastAPI):  # type: ignore[no-untyped-def]
+        handle = await discovery_mod.start(port=port, host=host) if discovery_on else None
+        _app.state.discovery = handle[1] if handle is not None else None
+        try:
+            yield
+        finally:
+            if handle is not None:
+                handle[0].close()
+
     app = FastAPI(
         title="manor-web",
         description="manor の家庭用 Web アプリ（LLM API 不使用・外部送信なし）",
+        lifespan=_lifespan,
     )
     app.state.web_ctx = ctx
+    app.state.discovery = None
     app.add_middleware(_AuthMiddleware)
 
     from . import face as face_mod
     from .api_v1 import agents as api_agents
     from .api_v1 import auth as api_auth
     from .api_v1 import dashboard as api_dashboard
+    from .api_v1 import devices as api_devices
     from .api_v1 import extensions as api_extensions
     from .api_v1 import face_models as api_face_models
     from .api_v1 import face_thumbnail as api_face_thumbnail
@@ -178,6 +283,7 @@ def create_app(home: Path, *, host: str = "127.0.0.1", read_only: bool = False) 
     api_setup.register(app, ctx)  # ADR-007 D4（初回セットアップ）
     api_extensions.register(app, ctx)  # ADR-009 D6（拡張機能）
     api_users.register(app, ctx)  # ADR-014 D1・D3（利用者の一覧・追加・改名・畳む・切り替え）
+    api_devices.register(app, ctx)  # ADR-017 D1・D2（端末の鍵とペアリング）
     api_face_models.register(app, ctx)  # ADR-008 §7 D14（姿の出し入れ API。画面から差し替え・削除）
     # 一覧に VRM を読ませないための正面画像（2026-09-09 主人のご提案）
     api_face_thumbnail.register(app, ctx)
@@ -267,12 +373,17 @@ def run_server(
     port: int = 8789,
     read_only: bool = False,
     open_browser: bool = False,
+    discovery: bool | None = None,
 ) -> None:
-    """`manor web serve` の本体。呼ぶとブロックする（board `run_server` と同じ形）。"""
+    """`manor web serve` の本体。呼ぶとブロックする（board `run_server` と同じ形）。
+
+    `discovery=False` は `--no-discovery`（ADR-017 D3）。`None` なら `[web] discovery`
+    （既定 true）に従う——どちらでも、ループバックの待ち受けでは立てない。
+    """
     import uvicorn
 
     check_startup_auth(home, host)
-    app = create_app(home, host=host, read_only=read_only)
+    app = create_app(home, host=host, read_only=read_only, port=port, discovery=discovery)
 
     if open_browser:
         url = f"http://{host}:{port}/"

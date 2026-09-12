@@ -15,7 +15,9 @@ from manor.web import config as web_config
 
 def make_client(home: Path, *, host: str = "127.0.0.1", read_only: bool = False) -> TestClient:
     app = web_app_mod.create_app(home, host=host, read_only=read_only)
-    return TestClient(app)
+    # ADR-017 D4: 送信元を名乗る。`TestClient` の既定は `"testclient"` で、`web/net.py` は
+    # それを LAN と見る（LAN の規則はここではなく `test_lan_rules.py` で検算する）。
+    return TestClient(app, client=("127.0.0.1", 50000))
 
 
 # --- meta の形 -----------------------------------------------------------------------------

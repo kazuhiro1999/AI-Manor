@@ -1027,4 +1027,24 @@ export const en: { [K in TranslationKey]: MirrorEntry<K> } = {
   "settings.users.archived": "Archived.",
   "settings.users.archiveFailed": (p) => `Couldn't archive: ${p.reason}`,
   "settings.users.protectedNote": "You and the butler can't be archived",
+
+  // ADR-017 D5: the Devices section (Settings -> Devices).
+  "settings.devices.heading": "Devices",
+  "settings.devices.hint":
+    "Give a device (such as an XR headset) a key that only unlocks this home's kitchen data. Type the 6-digit code shown on the device, pick which user it acts as, and approve it.",
+  "settings.devices.codePlaceholder": "6-digit code",
+  "settings.devices.userLabel": "User",
+  "settings.devices.approve": "Approve",
+  "settings.devices.approved": (p) => `Approved ${p.name}. The device will pick up its key.`,
+  "settings.devices.approveFailed": (p) => `Could not approve it: ${p.reason}`,
+  "settings.devices.codeRequired": "Enter the code",
+  "settings.devices.userRequired": "Pick a user",
+  "settings.devices.tokenNeverShownHint": "Only the device receives the key; it is never shown here.",
+  "settings.devices.empty": "(No devices have been approved.)",
+  "settings.devices.lastSeen": (p) => `Last used: ${p.when}`,
+  "settings.devices.neverSeen": "Not used yet",
+  "settings.devices.revoke": "Revoke",
+  "settings.devices.revokeConfirm": "Press again to revoke",
+  "settings.devices.revoked": "Revoked",
+  "settings.devices.revokeFailed": (p) => `Could not revoke it: ${p.reason}`,
 };

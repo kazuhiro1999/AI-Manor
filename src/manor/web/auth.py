@@ -120,3 +120,43 @@ class RateLimiter:
             return False
         self._attempts.append(t)
         return True
+
+
+class KeyedRateLimiter:
+    """**送信元ごと**の固定窓のレート制限（ADR-017 D2-4「`pair/start` は送信元アドレス
+    ごとに1分10回まで」）。
+
+    `RateLimiter` との違いは鍵を持つことだけ——合言葉のログインは「この manor に対して
+    1分5回」で足りるが、ペアリングの口は LAN の誰からでも叩ける（D4）ので、
+    **1台が積み上げても他の端末のペアリングを妨げない**ように送信元で分ける。
+
+    プロセス内メモリのみ（`RateLimiter` と同じ約束）。**鍵の数に上限を置く**——
+    送信元を偽った問い合わせで辞書が際限なく太らないように、窓を過ぎた鍵は
+    掃除し、それでも多すぎるときは古い鍵から捨てる（捨てられた鍵は「制限なし」に
+    戻るだけで、通す側に倒れても危険が増えないのは、この口が「主人が Web で許可
+    しない限り何も起きない」口だから）。
+    """
+
+    #: 覚えておく送信元の数の上限。
+    MAX_KEYS = 256
+
+    def __init__(self, *, max_attempts: int = 10, window_seconds: float = 60.0) -> None:
+        self.max_attempts = max_attempts
+        self.window_seconds = window_seconds
+        self._attempts: dict[str, list[float]] = {}
+
+    def allow(self, key: str, *, now: float | None = None) -> bool:
+        t = now if now is not None else time.time()
+        cutoff = t - self.window_seconds
+        for k in [k for k, v in self._attempts.items() if not any(a > cutoff for a in v)]:
+            self._attempts.pop(k, None)
+        if len(self._attempts) > self.MAX_KEYS:
+            for k in list(self._attempts)[: len(self._attempts) - self.MAX_KEYS]:
+                self._attempts.pop(k, None)
+        attempts = [a for a in self._attempts.get(key, []) if a > cutoff]
+        if len(attempts) >= self.max_attempts:
+            self._attempts[key] = attempts
+            return False
+        attempts.append(t)
+        self._attempts[key] = attempts
+        return True

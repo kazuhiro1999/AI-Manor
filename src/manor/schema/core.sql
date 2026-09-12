@@ -289,3 +289,45 @@ CREATE TABLE IF NOT EXISTS slack_intake (
   UNIQUE (channel, ts)
 );
 CREATE INDEX IF NOT EXISTS slack_intake_ts ON slack_intake(channel, ts);
+
+-- ADR-017 D1「端末ごとの鍵」。KitchenXR（Quest 3）のような**画面を持たない相手**が
+-- `/api/v1/kitchen/*` を叩くための鍵。合言葉（`web/passcode.py`）と同じ扱いで、
+-- **平文はどこにも保存しない**（`token_hash` は `pbkdf2_sha256$...`）。
+-- `user_id` は ADR-014 の利用者——端末はこの利用者として振る舞う（`viewing_user_id`）。
+-- 失効は行を消さずに `revoked_at` を入れる（誰がいつ何を持っていたかを残す。
+-- 鍵を検算する経路は `revoked_at IS NULL` だけを見るので、入れた瞬間に 401 になる）。
+-- `user` への外部キーは張らない（`project.user_id`・`task.user_id` と同じ流儀。
+-- 利用者を畳んでも端末の記録は残す）。
+CREATE TABLE IF NOT EXISTS web_device (
+  id           TEXT PRIMARY KEY,          -- uuid4 の hex
+  name         TEXT NOT NULL,             -- 端末が名乗った名前（「Quest 3」など）
+  kind         TEXT NOT NULL DEFAULT '',  -- `kitchenxr` など。表示と絞り込みのため
+  user_id      TEXT NOT NULL,             -- ADR-014 の利用者（端末はこの人として振る舞う）
+  token_hash   TEXT NOT NULL,             -- 鍵の pbkdf2_sha256（平文は保存しない）
+  created_at   TEXT NOT NULL,
+  last_seen_at TEXT,                      -- 最後に叩かれた時刻（書き込みは1分に1回まで間引く）
+  revoked_at   TEXT                       -- 失効（入っていれば 401）
+);
+CREATE INDEX IF NOT EXISTS web_device_user ON web_device(user_id);
+
+-- ADR-017 D2「ペアリング」の待ち行列。端末が `pair/start` で番号（6桁）を取り、主人が
+-- Web の 設定 → 端末 でその番号を入れて利用者を選ぶと、ここに `approved_user_id` と
+-- `token_plain_once` が入る。**`token_plain_once` は「許可」から「端末が受け取る」までの
+-- 間だけ平文を持つ**——`pair/poll` が返した瞬間に消し（`consumed_at` を入れ）、以後は
+-- `web_device.token_hash` しか残らない。鍵を一度しか返さないための置き場であって、
+-- 保管場所ではない。
+-- `attempts` は番号の照合を外した回数（5回で行ごと捨てる。D2-4）。
+CREATE TABLE IF NOT EXISTS web_device_pairing (
+  pair_id          TEXT PRIMARY KEY,          -- uuid4 の hex（端末が poll に使う）
+  code             TEXT NOT NULL,             -- 6桁の番号（端末が画面に大きく出す）
+  name             TEXT NOT NULL,
+  kind             TEXT NOT NULL DEFAULT '',
+  created_at       TEXT NOT NULL,
+  expires_at       TEXT NOT NULL,             -- 発行から5分
+  attempts         INTEGER NOT NULL DEFAULT 0,
+  approved_user_id TEXT,                      -- 主人が選んだ利用者（許可済みの印）
+  device_id        TEXT,                      -- 許可で作った端末（poll がこれを返す）
+  token_plain_once TEXT,                      -- 受け渡しの間だけの平文（渡したら NULL）
+  consumed_at      TEXT                       -- 端末が鍵を受け取った時刻（二度目は expired）
+);
+CREATE INDEX IF NOT EXISTS web_device_pairing_code ON web_device_pairing(code);

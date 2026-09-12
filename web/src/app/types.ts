@@ -249,6 +249,21 @@ export interface UserInfo {
   role: UserRole;
 }
 
+// ADR-017 D1・D5:「端末」（鍵を持って `/api/v1/kitchen/*` を叩く相手。XR など）。
+// GET /api/v1/devices がこの形で返す。**鍵（平文・ハッシュ）は決して返らない**——
+// 画面に出せるのは「どの端末が誰として、いつ使ったか」だけ。
+export interface DeviceInfo {
+  id: string;
+  name: string;
+  kind: string;
+  user_id: string;
+  // 利用者名（画面が `/users` を引き直さずに済むようにバックエンドが添える）。
+  user_name?: string;
+  created_at: string;
+  last_seen_at: string | null;
+  revoked_at: string | null;
+}
+
 export interface Meta {
   version: string;
   today: string;

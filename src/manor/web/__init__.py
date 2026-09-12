@@ -27,6 +27,7 @@ def register(subparsers: "argparse._SubParsersAction") -> None:
     _add_install(sub)
     _add_uninstall(sub)
     _add_status(sub)
+    _add_device(sub)
 
 
 # --- serve -----------------------------------------------------------------------
@@ -38,6 +39,11 @@ def _add_serve(sub: "argparse._SubParsersAction") -> None:
     p.add_argument("--port", type=int, default=8789)
     p.add_argument("--read-only", action="store_true", dest="read_only")
     p.add_argument("--open", action="store_true", dest="open_browser", help=i18n.t("cli.web.serve.open.help"))
+    # ADR-017 D3: 探索（UDP 8791）を止める。既定は `[web] discovery`（true）に従う。
+    p.add_argument(
+        "--no-discovery", action="store_true", dest="no_discovery",
+        help=i18n.t("cli.web.serve.no_discovery.help"),
+    )
     p.add_argument("--json", action="store_true")
     p.set_defaults(func=_cmd_serve, is_write=False)
 
@@ -55,6 +61,7 @@ def _cmd_serve(conn: object, home: Path, args: "argparse.Namespace") -> None:
     run_server(
         home=Path(home), host=args.host, port=args.port, read_only=args.read_only,
         open_browser=args.open_browser,
+        discovery=False if getattr(args, "no_discovery", False) else None,
     )
     return None
 
@@ -200,3 +207,84 @@ def _cmd_status(args: "argparse.Namespace") -> int:
         else:
             print(i18n.t("web.status.unknown", detail=sched.get("detail", "")))
     return 0
+
+
+# --- device（ADR-017 D5。Web が使えないときの逃げ道） ---------------------------------
+
+
+def _add_device(sub: "argparse._SubParsersAction") -> None:
+    """`manor web device list|revoke <id>|pair <番号> [--user]`（ADR-017 D5）。
+
+    **Web の画面と同じ段（`web/device.py`）を呼ぶ**——画面と CLI で判断が分かれないように、
+    どちらも SQL を書かず同じ関数を通す。`manor web serve` が止まっているときでも
+    （DB を直に開くので）端末の一覧と失効ができる。
+    """
+    p = sub.add_parser("device", help=i18n.t("cli.web.device.help"))
+    dsub = p.add_subparsers(dest="device_verb")
+
+    lp = dsub.add_parser("list", help=i18n.t("cli.web.device.list.help"))
+    lp.add_argument(
+        "--all", action="store_true", dest="include_revoked",
+        help=i18n.t("cli.web.device.list.all.help"),
+    )
+    lp.add_argument("--json", action="store_true")
+    lp.set_defaults(func=_cmd_device_list, is_write=False)
+
+    rp = dsub.add_parser("revoke", help=i18n.t("cli.web.device.revoke.help"))
+    rp.add_argument("device_id")
+    rp.add_argument("--json", action="store_true")
+    rp.set_defaults(func=_cmd_device_revoke, is_write=True)
+
+    pp = dsub.add_parser("pair", help=i18n.t("cli.web.device.pair.help"))
+    pp.add_argument("code", help=i18n.t("cli.web.device.pair.code.help"))
+    pp.add_argument("--user", default=None, help=i18n.t("cli.web.device.pair.user.help"))
+    pp.add_argument("--json", action="store_true")
+    pp.set_defaults(func=_cmd_device_pair, is_write=True)
+
+
+def _cmd_device_list(conn, home: Path, args: "argparse.Namespace") -> object:
+    from . import device as device_mod
+
+    items = device_mod.list_devices(conn, include_revoked=bool(args.include_revoked))
+    if args.json:
+        return {"items": items}
+    if not items:
+        return i18n.t("web.device.list.empty")
+    lines = [
+        i18n.t(
+            "web.device.list.line",
+            id=item["id"],
+            name=item["name"],
+            user=item.get("user_name") or item["user_id"],
+            last_seen=item["last_seen_at"] or i18n.t("web.device.never"),
+            state=i18n.t("web.device.revoked") if item["revoked_at"] else i18n.t("web.device.live"),
+        )
+        for item in items
+    ]
+    return "\n".join(lines)
+
+
+def _cmd_device_revoke(conn, home: Path, args: "argparse.Namespace") -> object:
+    from . import device as device_mod
+
+    result = device_mod.revoke(conn, args.device_id)
+    if args.json:
+        return {"id": result["id"], "revoked_at": result["revoked_at"]}
+    return i18n.t("web.device.revoked_line", id=result["id"], name=result["name"])
+
+
+def _cmd_device_pair(conn, home: Path, args: "argparse.Namespace") -> object:
+    """番号を許可して端末を作る。**鍵は端末が `pair/poll` で受け取る**ので、ここでは出さない
+    （出せば端末の画面の外に平文が残ってしまう。ADR-017 D2-2）。
+    """
+    from .. import user as user_mod
+    from . import device as device_mod
+
+    user_id = (args.user or "").strip() or user_mod.principal_id(conn)
+    result = device_mod.pair_approve(conn, code=args.code, user_id=user_id)
+    if args.json:
+        return result
+    return i18n.t(
+        "web.device.paired_line",
+        name=result["name"], user=result["user_id"], id=result["device_id"],
+    )

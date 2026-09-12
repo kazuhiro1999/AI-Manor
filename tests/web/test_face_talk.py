@@ -24,7 +24,12 @@ def _passcode_client(home: Path) -> TestClient:
     from manor.web import config as web_config
 
     web_config.set_passcode(home, "himitsu-desu")
-    return TestClient(web_app_mod.create_app(home, host="0.0.0.0"))
+    # ADR-017 D4: 送信元を名乗る。`TestClient` の既定は `"testclient"` で、`web/net.py` は
+    # それを LAN と見る——ここで見たいのは合言葉の門であって LAN の規則ではないので、
+    # ループバック（`tailscale serve` の転送先と同じ）から来たことにする。
+    return TestClient(
+        web_app_mod.create_app(home, host="0.0.0.0"), client=("127.0.0.1", 50000)
+    )
 
 
 def _mock_success(monkeypatch: pytest.MonkeyPatch, *, reply: str = "承知いたしました。") -> None:

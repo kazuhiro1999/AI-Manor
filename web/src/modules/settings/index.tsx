@@ -6,7 +6,7 @@ import { usePolling } from "../../app/polling";
 import { APP_NAME } from "../../app/brand";
 import { useEditingGuard } from "../../app/editing";
 import { api, apiUpload, ApiError } from "../../app/api";
-import type { FaceModelEntry, Meta, RunKindStat, RunRow, RunsData, RunStatsData, SettingsData, SetupInfo, TaskKind, UserInfo } from "../../app/types";
+import type { DeviceInfo, FaceModelEntry, Meta, RunKindStat, RunRow, RunsData, RunStatsData, SettingsData, SetupInfo, TaskKind, UserInfo } from "../../app/types";
 import { useTheme, THEMES, type Theme } from "../../app/theme";
 import { fmtCost, fmtDateTime, fmtSeconds, runKindLabel } from "../../app/format";
 import { DataTable, type Column } from "../../components/DataTable";
@@ -357,6 +357,160 @@ function UsersSection({ currentUserId }: { currentUserId?: string }) {
         />
       )}
     </section>
+  );
+}
+
+/** ADR-017 D5:「端末」節。上に**ペアリング番号の入力**と利用者の選択と「許可」、下に
+ * 端末の一覧（名前・利用者・最後に使った日時・「失効」）。
+ *
+ * **鍵はこの画面に出ない。** 受け取るのは端末だけ（`pair/poll`）で、画面が平文を持つ経路を
+ * 作らない（ADR-017 D2-2。出せばスクリーンショットや記録に残ってしまう）。ここでするのは
+ * 「端末が出している6桁を入れて、どの利用者として振る舞わせるかを選ぶ」だけ。
+ *
+ * 失効は2度押し（1度目は確認ボタンへ切り替わるだけ）——`UserRow` の「畳む」と同じ作法で、
+ * `window.confirm` は使わない。
+ */
+function DevicesSection({ users, currentUserId }: { users: UserInfo[]; currentUserId?: string }) {
+  const t = useT();
+  const { show } = useToast();
+  const { ref } = useEditingGuard<HTMLDivElement>();
+  const { data, error, reload } = usePolling<{ items: DeviceInfo[] }>(
+    "/devices",
+    10000,
+    ref as React.RefObject<HTMLElement>
+  );
+  const [code, setCode] = useState("");
+  const [userId, setUserId] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const rows = data?.items || [];
+  // 既定は「いま見ている利用者」（たいていは主人）。選び直せる。
+  const selectedUser = userId || currentUserId || users[0]?.id || "";
+
+  const approve = async () => {
+    const trimmed = code.trim();
+    if (!trimmed) {
+      show(t("settings.devices.codeRequired"), "error");
+      return;
+    }
+    if (!selectedUser) {
+      show(t("settings.devices.userRequired"), "error");
+      return;
+    }
+    setBusy(true);
+    try {
+      const result = await api<{ name: string }>("/devices/pair/approve", {
+        method: "POST",
+        body: { code: trimmed, user_id: selectedUser },
+      });
+      show(t("settings.devices.approved", { name: result.name }), "ok", 4000);
+      setCode("");
+      reload();
+    } catch (err) {
+      show(
+        t("settings.devices.approveFailed", { reason: err instanceof ApiError ? err.message : t("common.unknown") }),
+        "error"
+      );
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <section className="panel" id="settings-devices" ref={ref}>
+      <div className="panel-head">
+        <h2>{t("settings.devices.heading")}</h2>
+      </div>
+      <p className="panel-note">{t("settings.devices.hint")}</p>
+      <div className="form-inline">
+        <input
+          className="form-input"
+          style={{ maxWidth: 140 }}
+          value={code}
+          inputMode="numeric"
+          maxLength={6}
+          placeholder={t("settings.devices.codePlaceholder")}
+          aria-label={t("settings.devices.codePlaceholder")}
+          onChange={(e) => setCode(e.target.value.replace(/[^0-9]/g, ""))}
+          disabled={busy}
+        />
+        <select
+          className="form-input"
+          style={{ maxWidth: 200 }}
+          value={selectedUser}
+          aria-label={t("settings.devices.userLabel")}
+          onChange={(e) => setUserId(e.target.value)}
+          disabled={busy}
+        >
+          {users.map((u) => (
+            <option key={u.id} value={u.id}>
+              {u.name}
+            </option>
+          ))}
+        </select>
+        <button className="btn btn-primary" type="button" onClick={approve} disabled={busy}>
+          {t("settings.devices.approve")}
+        </button>
+      </div>
+      <p className="setting-note">{t("settings.devices.tokenNeverShownHint")}</p>
+      {error && <p className="panel-note">{t("errors.loadFailed", { reason: error })}</p>}
+      <div className="rows">
+        {!rows.length && <p className="panel-note">{t("settings.devices.empty")}</p>}
+        {rows.map((d) => (
+          <DeviceRow key={d.id} device={d} onChanged={reload} />
+        ))}
+      </div>
+    </section>
+  );
+}
+
+/** 端末の一覧の1行（名前・利用者・最後に使った日時・「失効」）。 */
+function DeviceRow({ device, onChanged }: { device: DeviceInfo; onChanged: () => void }) {
+  const t = useT();
+  const { show } = useToast();
+  const [confirmRevoke, setConfirmRevoke] = useState(false);
+  const [busy, setBusy] = useState(false);
+
+  const revoke = async () => {
+    if (!confirmRevoke) {
+      setConfirmRevoke(true);
+      return;
+    }
+    setBusy(true);
+    try {
+      await api(`/devices/${encodeURIComponent(device.id)}`, { method: "DELETE" });
+      show(t("settings.devices.revoked"), "ok", 3000);
+      onChanged();
+    } catch (err) {
+      show(
+        t("settings.devices.revokeFailed", { reason: err instanceof ApiError ? err.message : t("common.unknown") }),
+        "error"
+      );
+    } finally {
+      setBusy(false);
+      setConfirmRevoke(false);
+    }
+  };
+
+  return (
+    <div className="row-item" data-device-id={device.id}>
+      <span className="row-title">{device.name}</span>
+      <span className="row-meta">{device.user_name || device.user_id}</span>
+      <span className="row-meta">
+        {device.last_seen_at
+          ? t("settings.devices.lastSeen", { when: fmtDateTime(device.last_seen_at) })
+          : t("settings.devices.neverSeen")}
+      </span>
+      <button
+        className="btn btn-small btn-danger"
+        style={{ marginLeft: "auto" }}
+        type="button"
+        onClick={revoke}
+        disabled={busy}
+      >
+        {confirmRevoke ? t("settings.devices.revokeConfirm") : t("settings.devices.revoke")}
+      </button>
+    </div>
   );
 }
 
@@ -1027,6 +1181,8 @@ function SettingsScreen() {
       <ProfileSection />
 
       <UsersSection currentUserId={meta?.user?.id} />
+
+      <DevicesSection users={meta?.users || []} currentUserId={meta?.user?.id} />
 
       <TaskKindsSection />
 

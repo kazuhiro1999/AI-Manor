@@ -634,3 +634,71 @@ def test_fresh_db_already_allows_site_nutrition_source(tmp_path: Path) -> None:
         assert row["nutrition_source"] == "site"
     finally:
         conn.close()
+
+
+# --- ADR-017 D1・D2（端末の鍵とペアリングの表） --------------------------------------
+
+
+def test_init_adds_web_device_tables_to_old_db(tmp_path: Path) -> None:
+    """`web_device` / `web_device_pairing` は core.sql の `CREATE TABLE IF NOT EXISTS`
+    で既存 DB にも足される（`run` 表・`notion_page` 表と同じ経路）。
+    """
+    home = tmp_path / "old_home_device"
+    _make_old_db(home)
+
+    db_mod.init(home)
+    db_mod.init(home)  # 冪等（2回目もエラーにならない）
+
+    conn = db_mod.connect(home)
+    try:
+        for table in ("web_device", "web_device_pairing"):
+            assert (
+                conn.execute(
+                    "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)
+                ).fetchone()
+                is not None
+            ), table
+        cols = {r["name"] for r in conn.execute("PRAGMA table_info(web_device)").fetchall()}
+        assert {"id", "name", "kind", "user_id", "token_hash", "created_at", "last_seen_at",
+                "revoked_at"} <= cols
+        pair_cols = {
+            r["name"] for r in conn.execute("PRAGMA table_info(web_device_pairing)").fetchall()
+        }
+        assert {"pair_id", "code", "name", "kind", "created_at", "expires_at", "attempts",
+                "approved_user_id", "device_id", "token_plain_once", "consumed_at"} <= pair_cols
+    finally:
+        conn.close()
+
+
+def test_migrate_core_adds_web_device_tables_to_old_db(tmp_path: Path) -> None:
+    """`manor init` を忘れた home でも CLI の起動時の移行で足される（`migrate_core`）。"""
+    home = tmp_path / "old_home_device_migrate"
+    _make_old_db(home)
+    db_mod.migrate_core(home)
+    conn = db_mod.connect(home)
+    try:
+        assert (
+            conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='web_device'"
+            ).fetchone()
+            is not None
+        )
+    finally:
+        conn.close()
+
+
+def test_check_c9_does_not_flag_web_device_tables(tmp_path: Path) -> None:
+    """`web_device*` は core の表——C9（部下の表名接頭検査）の違反にしない
+    （`db.CORE_TABLES` に加えたことの検算。`rule` と同じ）。
+    """
+    from manor import check as check_mod
+
+    home = tmp_path / "check_home_device"
+    db_mod.init(home)
+    conn = db_mod.connect(home)
+    try:
+        violations = check_mod.check_c9(conn)
+    finally:
+        conn.close()
+    assert "web_device" not in violations
+    assert "web_device_pairing" not in violations

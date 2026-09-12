@@ -113,6 +113,10 @@ ALLOWLIST: set[str] = {
     "web/passcode.py",
     "web/face.py",
     "web/api_v1/auth.py",
+    # [共有] ADR-017 D1・D2（端末の鍵とペアリング）の応答。`web/api_v1/auth.py` と
+    # 同じ枠——`detail` は画面（`web/`）と XR の両方が受け取る API の応答で、CLI の
+    # 出力ではない（`manor web device ...` の文言は `cli.web.device.*` として訳した）。
+    "web/api_v1/devices.py",
     "web/api_v1/face_models.py",
     "web/api_v1/face_thumbnail.py",
     "web/api_v1/face_talk.py",
