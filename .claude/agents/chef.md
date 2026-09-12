@@ -56,7 +56,16 @@ manor chef recipe import <url> [--mode auto|claude] [--save]   URL から下書�
 manor chef recipe estimate <id>                              栄養を推定して meta へ（押したときだけ）
 manor chef recipe set <id> [--kcal ..] [--tags a,b] [--rating 1-5] [--memo ..] [--favorite/--no-favorite]
 manor chef recipe archive <id>
+manor chef food import <path>                                食品成分表（八訂増補2023）の取り込み。冪等
+manor chef food search <q> [--limit 20]                      成分表を食品名の部分一致で引く
+manor chef nutrition rebuild [--recipe <id>]                 材料から栄養値を推定（site/manual は上書きしない）
+manor chef nutrition unresolved                              名寄せできていない材料の一覧
 ```
+
+**栄養値は材料と成分表から出します（ADR-019）。憶測の数字を言わないでください。**
+`nutrition rebuild` の結果が `partial`（名寄せできた材料の重量比が 0.8 未満）のレシピは
+献立のおすすめの候補に入りません——`nutrition unresolved` で何を名寄せすれば増えるかが
+分かります（結ぶのは Web の 設定 → 食品の名寄せ）。
 
 **`pantry expiring` と `pantry missing` は在庫が丸ごと空だと終了コード2を返します。**
 エラーではなく「在庫の申告を求めよ」の合図です。出たら献立を組まず在庫を尋ねてください。
