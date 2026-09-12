@@ -35,7 +35,11 @@ def register(subparsers: "argparse._SubParsersAction") -> None:
 
 def _add_serve(sub: "argparse._SubParsersAction") -> None:
     p = sub.add_parser("serve", help=i18n.t("cli.web.serve.help"))
-    p.add_argument("--host", default="127.0.0.1", help=i18n.t("cli.web.serve.host.help"))
+    # 既定は None＝`[web] host`（無ければ 127.0.0.1）。ADR-017 D4 の追補: デスクトップの
+    # ショートカット（`manor shortcut create` が生成する launch-manor.cmd）は `--host` を渡さない
+    # ので、LAN 向け（0.0.0.0）で立てたいときは設定に書く。ランチャーを手で直しても次の生成で
+    # 戻ってしまう（2026-09-13 主人がショートカットで再起動→loopback に戻り、Quest から見えなくなった）。
+    p.add_argument("--host", default=None, help=i18n.t("cli.web.serve.host.help"))
     p.add_argument("--port", type=int, default=8789)
     p.add_argument("--read-only", action="store_true", dest="read_only")
     p.add_argument("--open", action="store_true", dest="open_browser", help=i18n.t("cli.web.serve.open.help"))
@@ -59,11 +63,31 @@ def _cmd_serve(conn: object, home: Path, args: "argparse.Namespace") -> None:
     from .app import run_server
 
     run_server(
-        home=Path(home), host=args.host, port=args.port, read_only=args.read_only,
+        home=Path(home), host=resolve_serve_host(Path(home), args.host), port=args.port,
+        read_only=args.read_only,
         open_browser=args.open_browser,
         discovery=False if getattr(args, "no_discovery", False) else None,
     )
     return None
+
+
+DEFAULT_SERVE_HOST = "127.0.0.1"
+
+
+def resolve_serve_host(home: Path, explicit: "str | None") -> str:
+    """`--host` が無ければ `[web] host`、それも無ければ loopback。
+
+    `--host` を明示したときはそれが勝つ（設定に 0.0.0.0 があっても、試しに loopback で
+    立てたいことはある）。
+    """
+    if explicit:
+        return explicit
+    from . import config as web_config
+
+    value = web_config.get_web_section(home).get("host")
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    return DEFAULT_SERVE_HOST
 
 
 # --- build -----------------------------------------------------------------------

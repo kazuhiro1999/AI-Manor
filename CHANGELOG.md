@@ -42,6 +42,10 @@ XR（Quest 3）へ**接続先の URL と合言葉を平文のファイルで**�
 
 ---
 
+### 変更: `manor web serve` の待ち受けは `[web] host` を既定に（ADR-017 §4.12）
+
+- デスクトップのショートカット（`launch-manor.cmd`）は `--host` を渡さないので loopback に戻り、Quest から見えなくなった（主人 2026-09-13）。`--host` が無ければ `home/config.toml` の `[web] host` を使い、明示すればそれが勝つ。主人の home は `0.0.0.0`。
+
 ## 2026-09-12（料理長の動画リスト。ADR-016）
 
 ### 追加: 料理中の「ながら見」動画を manor が持ち、XR が API で読む（ADR-016）
