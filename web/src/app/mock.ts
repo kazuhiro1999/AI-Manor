@@ -25,6 +25,7 @@ import type {
   HouseData,
   LogData,
   Meal,
+  MediaItem,
   Meta,
   MoneyData,
   MoneyExpense,
@@ -1004,6 +1005,41 @@ function validateRecipeBody(body: RecipeBody): RecipeBody {
   };
 }
 
+/* ADR-016: 動画リストの合成データ。実在の動画は指さない（`video_id` は架空の 11 文字）。
+ * 本物と同じく `sort_order` 昇順で返し、`updated_at` は一覧全体の最終更新。 */
+const mediaItems: MediaItem[] = [
+  {
+    id: "media-1",
+    title: "煮込み用の長い音楽",
+    video_id: "mockAAAAAA1",
+    url: "https://www.youtube.com/watch?v=mockAAAAAA1",
+    thumbnail_url: "https://i.ytimg.com/vi/mockAAAAAA1/hqdefault.jpg",
+    author: "架空チャンネル",
+    memo: "煮込みのとき",
+    sort_order: 1,
+  },
+  {
+    id: "media-2",
+    title: "下ごしらえのラジオ",
+    video_id: "mockBBBBBB2",
+    url: "https://www.youtube.com/watch?v=mockBBBBBB2",
+    thumbnail_url: "https://i.ytimg.com/vi/mockBBBBBB2/hqdefault.jpg",
+    author: "",
+    memo: "",
+    sort_order: 2,
+  },
+];
+let mediaUpdatedAt = new Date().toISOString().slice(0, 19);
+let mediaSeq = mediaItems.length;
+
+/** 本物の `chef/media.extract_video_id` を手元で真似た簡易版（受ける形は ADR-016 D2-1）。 */
+function mockExtractVideoId(url: string): string | null {
+  const m = url.trim().match(/(?:youtu\.be\/|\/shorts\/|\/embed\/|\/live\/|\/v\/|[?&]v=)([A-Za-z0-9_-]{11})(?![A-Za-z0-9_-])/);
+  if (!m) return null;
+  if (!/^https?:\/\/([a-z0-9-]+\.)*(youtube\.com|youtu\.be|youtube-nocookie\.com)\//i.test(url.trim())) return null;
+  return m[1];
+}
+
 export async function mockApi<T>(path: string, options: ApiOptions = {}): Promise<T> {
   const method = options.method || "GET";
   const body = (options.body || {}) as Record<string, unknown>;
@@ -1557,6 +1593,59 @@ export async function mockApi<T>(path: string, options: ApiOptions = {}): Promis
     findRecipe(id);
     archivedRecipeIds.add(id);
     return { id } as unknown as T;
+  }
+
+  // ---------- kitchen: 動画リスト（ADR-016 D3） ----------
+  if (path === "/kitchen/media" && method === "GET") {
+    return { items: [...mediaItems], updated_at: mediaItems.length ? mediaUpdatedAt : null } as unknown as T;
+  }
+  if (path === "/kitchen/media" && method === "POST") {
+    const url = String(body.url || "").trim();
+    const videoId = mockExtractVideoId(url);
+    if (!videoId) badRequest(`YouTube の動画 URL として読めません: ${url}`);
+    if (mediaItems.some((m) => m.video_id === videoId)) conflict(`この動画は既に登録されています: ${videoId}`);
+    mediaSeq += 1;
+    const item: MediaItem = {
+      id: `media-${mediaSeq}`,
+      title: `動画 ${videoId}`,
+      video_id: videoId as string,
+      url,
+      thumbnail_url: `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`,
+      author: "",
+      memo: String(body.memo || ""),
+      sort_order: mediaItems.length + 1,
+    };
+    mediaItems.push(item);
+    mediaUpdatedAt = new Date().toISOString().slice(0, 19);
+    return item as unknown as T;
+  }
+  if (path === "/kitchen/media/reorder" && method === "POST") {
+    const ids = (body.ids as string[]) || [];
+    for (const id of ids) {
+      if (!mediaItems.some((m) => m.id === id)) notFound(`動画が見つかりません: ${id}`);
+    }
+    const ordered = [...ids, ...mediaItems.filter((m) => !ids.includes(m.id)).map((m) => m.id)];
+    mediaItems.sort((a, b) => ordered.indexOf(a.id) - ordered.indexOf(b.id));
+    mediaItems.forEach((m, i) => (m.sort_order = i + 1));
+    mediaUpdatedAt = new Date().toISOString().slice(0, 19);
+    return { items: [...mediaItems] } as unknown as T;
+  }
+  if (path.match(/^\/kitchen\/media\/[^/]+$/) && method === "PATCH") {
+    const id = path.split("/")[3];
+    const item = mediaItems.find((m) => m.id === id);
+    if (!item) notFound(`動画が見つかりません: ${id}`);
+    if (body.title !== undefined) item.title = String(body.title || "").trim() || item.video_id;
+    if (body.memo !== undefined) item.memo = String(body.memo || "").trim();
+    mediaUpdatedAt = new Date().toISOString().slice(0, 19);
+    return item as unknown as T;
+  }
+  if (path.match(/^\/kitchen\/media\/[^/]+$/) && method === "DELETE") {
+    const id = path.split("/")[3];
+    const index = mediaItems.findIndex((m) => m.id === id);
+    if (index < 0) notFound(`動画が見つかりません: ${id}`);
+    const [removed] = mediaItems.splice(index, 1);
+    mediaItems.forEach((m, i) => (m.sort_order = i + 1));
+    return removed as unknown as T;
   }
 
   // ---------- house ----------

@@ -37,6 +37,29 @@ def _require_chef_recipes(conn) -> None:
         raise HTTPException(status_code=404, detail="料理長のレシピ帳が未導入です")
 
 
+def _require_chef_media(conn) -> None:
+    """ADR-016: `chef_media` が無い home 向け（`_require_chef_recipes` と同じ流儀）。
+    表は `staff/chef/schema.sql` の `CREATE TABLE IF NOT EXISTS` が作る——`manor init`
+    （web の `create_app` も起動時に呼ぶ）を通すまでは無いことがある。
+    """
+    if not table_exists(conn, "chef_media"):
+        raise HTTPException(status_code=404, detail="料理長の動画リストが未導入です")
+
+
+def _media_error_to_http(exc: ManorError) -> HTTPException:
+    """ADR-016 D3 の状態コードへ写す。**写し先の出どころは `chef/media.py` のキー定数**
+    ——`recipes` のように「すべて code=2 → 404」にすると、400（URL が読めない）と
+    409（重複）を区別できない。
+    """
+    from ...staff.chef import media as chef_media
+
+    if exc.key == chef_media.ERR_URL_INVALID:
+        return HTTPException(status_code=400, detail=exc.message_ja)
+    if exc.key == chef_media.ERR_DUPLICATE:
+        return HTTPException(status_code=409, detail=exc.message_ja)
+    return manor_error_to_http(exc)
+
+
 class PantryAddRequest(BaseModel):
     item: str = Field(..., min_length=1)
     qty: str = "不明"
@@ -103,6 +126,26 @@ class RecipeRefineRequest(BaseModel):
     """ADR-015 D7-2。自動抽出の下書きを Claude で整える。**保存しない**。"""
 
     recipe: dict = Field(default_factory=dict)
+
+
+class MediaAddRequest(BaseModel):
+    """ADR-016 D2。URL を貼るだけ——題名・チャンネル名・サムネイルは oEmbed が補う。"""
+
+    url: str = Field(..., min_length=1)
+    memo: str = ""
+
+
+class MediaUpdateRequest(BaseModel):
+    """ADR-016 D3。その場編集。`exclude_unset=True` で「渡した欄だけ」を渡す
+    （`RecipeMetaRequest` と同じ作法）。
+    """
+
+    title: str | None = None
+    memo: str | None = None
+
+
+class MediaReorderRequest(BaseModel):
+    ids: list[str] = Field(default_factory=list)
 
 
 class CookSessionStartRequest(BaseModel):
@@ -460,5 +503,85 @@ def register(app: FastAPI, ctx: WebContext) -> None:
             except ManorError as exc:
                 conn.rollback()
                 raise manor_error_to_http(exc)
+            commit_and_render(conn, ctx)
+            return result
+
+    # --- media（動画リスト。ADR-016 D3） ---
+    #
+    # すべて `viewing_user_id`（ADR-014 D3）で絞る——動画は利用者ごと（ADR-016 D1）。
+    # `reorder` を `{media_id}` より先に登録する（`facets` と同じ理由——さもないと
+    # `reorder` が `media_id` として吸われる）。
+
+    @app.get("/api/v1/kitchen/media")
+    def media_list(request: Request) -> dict[str, object]:
+        """**XR（kitchen-xr）はこの口だけを読む**（ADR-016 D3）。"""
+        from ...staff.chef import media as chef_media
+
+        with open_conn(ctx) as conn:
+            _require_chef_media(conn)
+            return chef_media.list_payload(conn, user_id=viewing_user_id(request, conn))
+
+    @app.post("/api/v1/kitchen/media", status_code=201)
+    def media_add(request: Request, body: MediaAddRequest) -> dict[str, object]:
+        require_writable(ctx)
+        from ...staff.chef import media as chef_media
+
+        with open_conn(ctx) as conn:
+            _require_chef_media(conn)
+            try:
+                result = chef_media.add_from_url(
+                    conn, body.url, user_id=viewing_user_id(request, conn), memo=body.memo
+                )
+            except ManorError as exc:
+                conn.rollback()
+                raise _media_error_to_http(exc)
+            commit_and_render(conn, ctx)
+            return result
+
+    @app.post("/api/v1/kitchen/media/reorder")
+    def media_reorder(request: Request, body: MediaReorderRequest) -> dict[str, object]:
+        require_writable(ctx)
+        from ...staff.chef import media as chef_media
+
+        with open_conn(ctx) as conn:
+            _require_chef_media(conn)
+            try:
+                items = chef_media.reorder(conn, body.ids, user_id=viewing_user_id(request, conn))
+            except ManorError as exc:
+                conn.rollback()
+                raise _media_error_to_http(exc)
+            commit_and_render(conn, ctx)
+            return {"items": items}
+
+    @app.patch("/api/v1/kitchen/media/{media_id}")
+    def media_update(request: Request, media_id: str, body: MediaUpdateRequest) -> dict[str, object]:
+        require_writable(ctx)
+        from ...staff.chef import media as chef_media
+
+        with open_conn(ctx) as conn:
+            _require_chef_media(conn)
+            fields = body.model_dump(exclude_unset=True)
+            try:
+                result = chef_media.update(
+                    conn, media_id, user_id=viewing_user_id(request, conn), **fields
+                )
+            except ManorError as exc:
+                conn.rollback()
+                raise _media_error_to_http(exc)
+            commit_and_render(conn, ctx)
+            return result
+
+    @app.delete("/api/v1/kitchen/media/{media_id}")
+    def media_remove(request: Request, media_id: str) -> dict[str, object]:
+        require_writable(ctx)
+        from ...staff.chef import media as chef_media
+
+        with open_conn(ctx) as conn:
+            _require_chef_media(conn)
+            try:
+                result = chef_media.remove(conn, media_id, user_id=viewing_user_id(request, conn))
+            except ManorError as exc:
+                conn.rollback()
+                raise _media_error_to_http(exc)
             commit_and_render(conn, ctx)
             return result

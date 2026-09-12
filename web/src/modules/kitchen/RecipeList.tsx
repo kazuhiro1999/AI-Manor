@@ -190,6 +190,10 @@ export function RecipeList() {
           <Link className="btn btn-primary btn-small" to="/kitchen/recipes/new" style={{ marginLeft: "auto" }}>
             {t("kitchen.recipes.addButton")}
           </Link>
+          {/* ADR-016 D4: 動画リストへの行き来（料理長の持ち場の中で2枚を往復する）。 */}
+          <Link className="btn btn-small" to="/kitchen/media">
+            {t("kitchen.recipes.mediaLink")}
+          </Link>
         </div>
 
         {facets && (

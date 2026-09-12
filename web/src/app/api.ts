@@ -32,7 +32,8 @@ export function setUnauthorizedHandler(fn: () => void): void {
 }
 
 export interface ApiOptions {
-  method?: "GET" | "POST" | "PUT" | "DELETE";
+  // PATCH は動画リストのその場編集（ADR-016 D3）で使う。
+  method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
   body?: unknown;
 }
 

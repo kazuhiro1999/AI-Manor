@@ -351,6 +351,17 @@ LINE_ALLOWLIST: set[str] = {
     "staff/chef/recipe_import.py:1061", "staff/chef/recipe_import.py:1138",
     "staff/chef/recipe_import.py:1279", "staff/chef/recipe_import.py:1303",
     "staff/chef/recipe_import.py:1305", "staff/chef/recipe_import.py:1341",
+    # [データ] staff/chef/media.py（ADR-016 D2・2026-09-12）: `fetch_oembed` の
+    # `reason` ——`recipe_import.fetch_page` の `reason` と同じ「共有の診断文字列」。
+    # **そもそも主人には見えない**（ADR-016 D2-3 のとおり、oEmbed が落ちても登録は
+    # 通すので `add_from_url` はこの理由を捨てる。残してあるのは道具から呼んで
+    # 切り分けるときのため）。
+    # ⚠ 行番号で固定してあるので、上に行を足すとずれる。ずれたら手で数えず、
+    #   `_string_constant_offenders` に直接聞いて入れ替えること。
+    "staff/chef/media.py:140", "staff/chef/media.py:142",
+    "staff/chef/media.py:144", "staff/chef/media.py:146",
+    "staff/chef/media.py:149", "staff/chef/media.py:153",
+    "staff/chef/media.py:155",
     # [データ] staff/chef/recipe_shaping.py（ADR-015 D7・2026-09-12）: 下ごしらえ語
     # （`_PREP_WORDS`）・既定の phase 見出し（`_PHASE_DEFS` の「下ごしらえ」「調理」
     # 「仕上げ」）は自動抽出が機械的に使う手がかり語・レシピ本体に残る見出し文字列

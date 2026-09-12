@@ -594,3 +594,31 @@ table.grid td.col-wide, table.grid th.col-wide { min-width: 220px; }
 /* 材料の表のグループ字下げ（ADR-015 §6 D4'。参考画面の「A」見出し＋字下げ）。 */
 .recipe-ing-group-row td { padding-top: 12px; font-weight: 700; font-size: 11.5px; color: var(--text-dim); border-bottom: 0; }
 .recipe-ing-indent { padding-left: 20px; }
+
+/* ---------- kitchen: 動画リスト（ADR-016 D4） ---------- */
+/* レシピ帳のカード（グリッド）と違い、こちらは「題名・メモをその場で直す」ための横一列
+   ——サムネイルを左に小さく置き、右に入力欄を縦に積む。 */
+.media-rows { display: flex; flex-direction: column; gap: 10px; }
+.media-row {
+  display: flex; gap: 12px; align-items: flex-start; padding: 10px;
+  border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg-panel-2);
+}
+.media-thumb {
+  flex: 0 0 140px; display: block; aspect-ratio: 16 / 9; border-radius: var(--radius);
+  overflow: hidden; background: var(--bg-panel); text-decoration: none;
+}
+.media-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.media-thumb-placeholder {
+  width: 100%; height: 100%; display: flex; align-items: center; justify-content: center;
+  color: var(--text-faint); font-size: 10.5px; border: 1px dashed var(--border);
+}
+.media-fields { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 5px; }
+.media-fields .media-title { font-weight: 700; }
+.media-sub { font-size: 11px; color: var(--text-faint); }
+.media-actions { display: flex; flex-direction: column; gap: 5px; flex: 0 0 auto; }
+
+@media (max-width: 620px) {
+  .media-row { flex-wrap: wrap; }
+  .media-thumb { flex-basis: 100px; }
+  .media-actions { flex-direction: row; }
+}

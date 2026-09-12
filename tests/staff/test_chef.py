@@ -174,6 +174,8 @@ def test_all_chef_tables_are_prefixed(home: Path) -> None:
         "chef_pantry", "chef_meal", "chef_shopping", "chef_taste",
         # ADR-015 D1: レシピ帳（本体2表＋調理の記録2表）。
         "chef_recipe", "chef_recipe_meta", "chef_cook_session", "chef_cook_event",
+        # ADR-016 D1: 動画リスト（ながら見する YouTube の一覧。利用者ごと）。
+        "chef_media",
     }
 
 

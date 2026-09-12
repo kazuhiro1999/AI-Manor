@@ -437,6 +437,28 @@ export interface RecipeImportResult {
 
 export type RecipeImportMode = "auto" | "claude";
 
+/* ---------- kitchen: 動画リスト（ADR-016 D3） ---------- */
+
+// `GET /api/v1/kitchen/media` の1行。**XR（kitchen-xr）が読むのと同じ形**——ADR-016 D3 の
+// JSON が正なので、欄を足したくなったら先に ADR を直す（`user_id` は返らない契約）。
+export interface MediaItem {
+  id: string;
+  title: string;
+  video_id: string;
+  url: string;
+  thumbnail_url: string;
+  author: string;
+  memo: string;
+  sort_order: number;
+}
+
+// 一覧の応答。`updated_at` は一覧全体の最終更新（1件も無ければ null）——XR が
+// 「前に読んだときから変わったか」を1つの値で見られるようにするためのもの。
+export interface MediaList {
+  items: MediaItem[];
+  updated_at: string | null;
+}
+
 /* ---------- house ---------- */
 
 export interface HouseRow {

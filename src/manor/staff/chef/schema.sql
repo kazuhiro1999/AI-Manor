@@ -73,3 +73,21 @@ CREATE TABLE IF NOT EXISTS chef_cook_event (
   at TEXT NOT NULL, type TEXT NOT NULL,    -- next | prev | timer_start | done
   step INTEGER
 );
+
+-- 動画リスト（ADR-016 D1）。料理中に「ながら見」する YouTube の一覧。**レシピは共通、
+-- 動画は利用者ごと**（ながら見の好みは人によって違う。ADR-014 の規則で user_id で分ける）。
+-- id は uuid4 の hex——XR・Web のどこで作っても衝突せず、meta の採番カウンタを増やさない。
+CREATE TABLE IF NOT EXISTS chef_media (
+  id            TEXT PRIMARY KEY,
+  user_id       TEXT NOT NULL DEFAULT 'master',
+  title         TEXT NOT NULL,
+  video_id      TEXT NOT NULL,             -- YouTube の 11 文字
+  url           TEXT NOT NULL,             -- 貼られた元の URL（youtu.be 等をそのまま残す）
+  thumbnail_url TEXT NOT NULL DEFAULT '',
+  author        TEXT NOT NULL DEFAULT '',  -- チャンネル名。oEmbed が落ちれば空
+  memo          TEXT NOT NULL DEFAULT '',
+  sort_order    INTEGER NOT NULL DEFAULT 0,
+  created_at    TEXT NOT NULL, updated_at TEXT NOT NULL,
+  -- 同じ動画を同じ人が二度入れることだけを防ぐ（同居人が同じ動画を持つのは重複ではない）。
+  UNIQUE (user_id, video_id)
+);

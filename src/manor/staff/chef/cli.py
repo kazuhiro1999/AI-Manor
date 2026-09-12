@@ -14,7 +14,7 @@ import sqlite3
 from manor import i18n, util
 from manor.errors import ManorError
 
-from . import ops, recipe_import, recipes
+from . import media, ops, recipe_import, recipes
 
 VALID_SLOTS: tuple[str, ...] = ("breakfast", "lunch", "dinner", "snack")
 VALID_AISLES: tuple[str, ...] = ("野菜", "肉魚", "乳卵", "主食", "調味料", "その他")
@@ -570,6 +570,51 @@ def cmd_recipe_estimate(conn, home, args) -> object:
     return i18n.t("chef.recipe.estimate.done", id=args.id)
 
 
+# --- media（動画リスト。ADR-016 D5） ------------------------------------------------
+
+
+def _require_chef_media_table(conn: sqlite3.Connection) -> None:
+    """`chef_media` が無い home 向け（`_require_chef_recipe_table` と同じ理由・同じ流儀）。"""
+    row = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'chef_media'"
+    ).fetchone()
+    if row is None:
+        raise ManorError(
+            "料理長の動画リストが未導入です。`manor init` を実行してください",
+            code=2,
+            key="error.chef.media_table_missing",
+        )
+
+
+def cmd_media_list(conn, home, args) -> object:
+    """読み取りの確認用（ADR-016 D5）。**登録・並べ替えは Web の仕事**——URL を貼る導線は
+    画面のほうが主人の手に合う（Chrome の共有から貼る想定）。
+
+    動画は利用者ごと（ADR-016 D1）。CLI には cookie が無いので、`--user` を省いたら
+    主人（`user.principal_id`）の一覧を見る。
+    """
+    from manor import user as user_mod
+
+    _require_chef_media_table(conn)
+    user_id = args.user or user_mod.principal_id(conn)
+    payload = media.list_payload(conn, user_id=user_id)
+    if args.json:
+        return payload
+    items = payload["items"]
+    if not items:
+        return i18n.t("chef.media.list.empty")
+    return "\n".join(
+        i18n.t(
+            "chef.media.list.line",
+            sort_order=it["sort_order"],
+            title=it["title"],
+            author=it["author"] or i18n.t("chef.common.unknown"),
+            video_id=it["video_id"],
+        )
+        for it in items  # type: ignore[union-attr]
+    )
+
+
 # --- パーサ組み立て -----------------------------------------------------------------
 
 
@@ -759,3 +804,12 @@ def register(subparsers) -> None:
     p.add_argument("--json", action="store_true")
     p.add_argument("--no-render", action="store_true")
     p.set_defaults(func=cmd_recipe_estimate, is_write=True)
+
+    # --- media（動画リスト。ADR-016 D5。読み取りだけ置く） ---
+    media_p = chef_sub.add_parser("media", help=i18n.t("cli.chef.media.help"))
+    media_sub = media_p.add_subparsers(dest="media_verb")
+
+    p = media_sub.add_parser("list")
+    p.add_argument("--user", help=i18n.t("cli.chef.media.list.user.help"))
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=cmd_media_list, is_write=False)

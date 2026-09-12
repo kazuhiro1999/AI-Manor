@@ -8,6 +8,7 @@ import { useToast } from "../../components/Toast";
 import { ScreenHeader } from "../../components/ScreenHeader";
 import { formatDay, useT, type TranslationKey } from "../../app/i18n";
 import { RecipesRouter } from "./RecipesRouter";
+import { MediaList } from "./MediaList";
 import { fetchRecipeList } from "./recipeShared";
 
 /** 台所トップの「レシピ帳」入口カード（ADR-015 D4「台所のトップには入口と直近3件だけ」）。
@@ -373,5 +374,7 @@ export const kitchenModule: ModuleDefinition = {
     { index: true, element: <KitchenScreen /> },
     // ADR-015 D4: レシピ帳はページ遷移で分ける（台所のトップに詰め込まない）。
     { path: "recipes/*", element: <RecipesRouter /> },
+    // ADR-016 D4: 動画リストも同じ理由で別ページ（行き来はレシピ帳の頭のリンクから）。
+    { path: "media", element: <MediaList /> },
   ],
 };
