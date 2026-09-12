@@ -59,6 +59,15 @@ ALLOWLIST: set[str] = {
     "notion.py",
     # [データ] 買い物のアイル区分(VALID_AISLES)。task_kind と同じ「閉じた語彙」。
     "staff/chef/cli.py",
+    # [データ] staff/chef/nutrition.py（ADR-019・2026-09-13）: 食品成分表の取り込みと
+    # 名寄せ。日本語の文字列は**全部データ**——成分表の列見出しを探す語（「食品番号」
+    # 「たんぱく質」「食塩相当量」…）、名寄せで「生」を優先するための調理法の語、
+    # `Tr`（微量）等の記法。`lexicon.toml` の語彙・`recipe_shaping` の手がかり語と同じ
+    # 扱いで、画面の文言ではない（CLI の結果行は `chef.food.*`／`chef.nutrition.*` と
+    # して訳し、画面は `kitchen.nutrition.*` を持つ）。**行単位ではなくファイル単位で
+    # 許す**——この module は語彙の塊で、行番号で固定すると編集のたびに壊れる
+    # （`task.py` の許可が3日で2度ずれた前例）。
+    "staff/chef/nutrition.py",
     # [データ] JSON 出力のキーとして使われる日本語ラベル(`tests/staff/test_housekeeper.py`
     # が実際にこの文字列をキーとして検算している——データ契約であって UI 文言ではない。
     # chef/cli.py の VALID_AISLES と同じ判断。5h-2 のサブエージェントが検分して報告)。
@@ -269,7 +278,7 @@ LINE_ALLOWLIST: set[str] = {
     # field_key を渡して訳している(cli.py 側からの呼び出しはすべて明示的)。
     # ⚠ 2026-09-12（ADR-015 D9追補）: レシピ分類3軸の lexicon アクセサを validate_date
     # より前に足したので行がずれた（57 → 96）。
-    "staff/chef/ops.py:96",
+    "staff/chef/ops.py:117",
     # [データ] secretary/ops.py: 曜日の対訳表・相対日付(今日/明日/明後日)の受理語彙は
     # 「主人が入力する側」の語彙(ADR-002 §6)であって、出力の文言ではない。
     "staff/secretary/ops.py:26", "staff/secretary/ops.py:33",
@@ -339,25 +348,25 @@ LINE_ALLOWLIST: set[str] = {
     # （2026-09-13・取り込み対象を3サイト広げたとき: JSON-LD のタグ収集・アダプタの
     #   「補い」（`extract_hints`）を足して行数が増え、もう一度洗い直した。
     #   ここで増えた `_LD_TAG_SPLIT_RE` の読点も「サイトの文字列を割るためのデータ」）。
-    "staff/chef/recipe_import.py:129", "staff/chef/recipe_import.py:131",
-    "staff/chef/recipe_import.py:133", "staff/chef/recipe_import.py:135",
-    "staff/chef/recipe_import.py:140", "staff/chef/recipe_import.py:502",
-    "staff/chef/recipe_import.py:692", "staff/chef/recipe_import.py:693",
-    "staff/chef/recipe_import.py:822", "staff/chef/recipe_import.py:823",
-    "staff/chef/recipe_import.py:855", "staff/chef/recipe_import.py:974",
-    "staff/chef/recipe_import.py:979", "staff/chef/recipe_import.py:1011",
-    "staff/chef/recipe_import.py:1055", "staff/chef/recipe_import.py:1071",
-    "staff/chef/recipe_import.py:1078", "staff/chef/recipe_import.py:1080",
-    "staff/chef/recipe_import.py:1082", "staff/chef/recipe_import.py:1087",
-    "staff/chef/recipe_import.py:1095", "staff/chef/recipe_import.py:1130",
-    "staff/chef/recipe_import.py:1139", "staff/chef/recipe_import.py:1141",
-    "staff/chef/recipe_import.py:1144", "staff/chef/recipe_import.py:1148",
-    "staff/chef/recipe_import.py:1162", "staff/chef/recipe_import.py:1170",
-    "staff/chef/recipe_import.py:1173", "staff/chef/recipe_import.py:1196",
-    "staff/chef/recipe_import.py:1197", "staff/chef/recipe_import.py:1202",
-    "staff/chef/recipe_import.py:1203", "staff/chef/recipe_import.py:1280",
-    "staff/chef/recipe_import.py:1434", "staff/chef/recipe_import.py:1458",
-    "staff/chef/recipe_import.py:1460", "staff/chef/recipe_import.py:1496",
+    "staff/chef/recipe_import.py:130", "staff/chef/recipe_import.py:132",
+    "staff/chef/recipe_import.py:134", "staff/chef/recipe_import.py:136",
+    "staff/chef/recipe_import.py:141", "staff/chef/recipe_import.py:503",
+    "staff/chef/recipe_import.py:693", "staff/chef/recipe_import.py:694",
+    "staff/chef/recipe_import.py:843", "staff/chef/recipe_import.py:844",
+    "staff/chef/recipe_import.py:876", "staff/chef/recipe_import.py:995",
+    "staff/chef/recipe_import.py:1000", "staff/chef/recipe_import.py:1032",
+    "staff/chef/recipe_import.py:1076", "staff/chef/recipe_import.py:1092",
+    "staff/chef/recipe_import.py:1099", "staff/chef/recipe_import.py:1101",
+    "staff/chef/recipe_import.py:1103", "staff/chef/recipe_import.py:1108",
+    "staff/chef/recipe_import.py:1116", "staff/chef/recipe_import.py:1151",
+    "staff/chef/recipe_import.py:1160", "staff/chef/recipe_import.py:1162",
+    "staff/chef/recipe_import.py:1165", "staff/chef/recipe_import.py:1169",
+    "staff/chef/recipe_import.py:1183", "staff/chef/recipe_import.py:1191",
+    "staff/chef/recipe_import.py:1194", "staff/chef/recipe_import.py:1217",
+    "staff/chef/recipe_import.py:1218", "staff/chef/recipe_import.py:1223",
+    "staff/chef/recipe_import.py:1224", "staff/chef/recipe_import.py:1301",
+    "staff/chef/recipe_import.py:1455", "staff/chef/recipe_import.py:1479",
+    "staff/chef/recipe_import.py:1481", "staff/chef/recipe_import.py:1517",
     # [データ] staff/chef/media.py（ADR-016 D2・2026-09-12）: `fetch_oembed` の
     # `reason` ——`recipe_import.fetch_page` の `reason` と同じ「共有の診断文字列」。
     # **そもそも主人には見えない**（ADR-016 D2-3 のとおり、oEmbed が落ちても登録は
@@ -375,18 +384,18 @@ LINE_ALLOWLIST: set[str] = {
     # ——画面の文言ではなくデータ（`lexicon.toml` の分類語彙と同じ扱い）。
     # ⚠ 2026-09-13: アダプタ共通の小道具（`text_only`/`tag_attr`/
     #   `image_url_from_img_tag`）をここへ移して行がずれたので洗い直した。
-    "staff/chef/recipe_shaping.py:27", "staff/chef/recipe_shaping.py:28",
-    "staff/chef/recipe_shaping.py:36", "staff/chef/recipe_shaping.py:37",
-    "staff/chef/recipe_shaping.py:38", "staff/chef/recipe_shaping.py:84",
-    # [データ] staff/chef/recipe_shaping.py（ADR-015 §6 追補・2026-09-12）: 材料の
-    # 分割で使う量の語彙（`_QTY_PHRASE_WORDS`/`_QTY_COUNTER_UNITS`/「大さじ」等）と、
-    # その語彙を埋め込んだ正規表現（`_NUM_PART`/`_AMOUNT_TAIL_RE`の「各」等）——
-    # `_PREP_WORDS` と同じ「手がかり語」の扱いで、画面の文言ではない。
-    "staff/chef/recipe_shaping.py:150", "staff/chef/recipe_shaping.py:155",
-    "staff/chef/recipe_shaping.py:156", "staff/chef/recipe_shaping.py:160",
-    "staff/chef/recipe_shaping.py:165", "staff/chef/recipe_shaping.py:169",
-    "staff/chef/recipe_shaping.py:192", "staff/chef/recipe_shaping.py:216",
-    "staff/chef/recipe_shaping.py:271",
+    # [データ] staff/chef/recipe_shaping.py（ADR-015 §6 追補・2026-09-12／ADR-019・
+    # 2026-09-13）: 材料の分割で使う量の語彙（`_QTY_PHRASE_WORDS`/`_QTY_COUNTER_UNITS`/
+    # 「大さじ」等）と、その語彙を埋め込んだ正規表現（`_NUM_PART`/`_AMOUNT_TAIL_RE` の
+    # 「各」等）、材料名の正規化で落とす飾り。`_PREP_WORDS` と同じ「手がかり語」の扱い。
+    "staff/chef/recipe_shaping.py:28", "staff/chef/recipe_shaping.py:29",
+    "staff/chef/recipe_shaping.py:37", "staff/chef/recipe_shaping.py:38",
+    "staff/chef/recipe_shaping.py:39", "staff/chef/recipe_shaping.py:85",
+    "staff/chef/recipe_shaping.py:151", "staff/chef/recipe_shaping.py:156",
+    "staff/chef/recipe_shaping.py:157", "staff/chef/recipe_shaping.py:161",
+    "staff/chef/recipe_shaping.py:166", "staff/chef/recipe_shaping.py:170",
+    "staff/chef/recipe_shaping.py:193", "staff/chef/recipe_shaping.py:217",
+    "staff/chef/recipe_shaping.py:272",
     # [データ] staff/chef/recipe_sites/cookpad.py（ADR-015 D7・2026-09-12）:
     # 「作り方」「手順」はサイトの見出し語を拾うための正規表現の一部（データ）。
     "staff/chef/recipe_sites/cookpad.py:25",
@@ -410,16 +419,9 @@ LINE_ALLOWLIST: set[str] = {
     # 分類語彙と同じ「データ」の扱い。⚠ 本来は lexicon 側に英語の手がかり語を足したいが、
     # 別の担当が同じファイルを編集中のため今回は触らず、報告で挙げた）
     # ③分量「【2人分】」を拾う正規表現（`_SERVINGS_NUM_RE`）。
-    "staff/chef/recipe_sites/delishkitchen.py:57", "staff/chef/recipe_sites/delishkitchen.py:58",
-    "staff/chef/recipe_sites/delishkitchen.py:59", "staff/chef/recipe_sites/delishkitchen.py:60",
-    "staff/chef/recipe_sites/delishkitchen.py:61", "staff/chef/recipe_sites/delishkitchen.py:69",
-    "staff/chef/recipe_sites/delishkitchen.py:70", "staff/chef/recipe_sites/delishkitchen.py:71",
-    "staff/chef/recipe_sites/delishkitchen.py:72", "staff/chef/recipe_sites/delishkitchen.py:73",
-    "staff/chef/recipe_sites/delishkitchen.py:74", "staff/chef/recipe_sites/delishkitchen.py:75",
-    "staff/chef/recipe_sites/delishkitchen.py:76", "staff/chef/recipe_sites/delishkitchen.py:77",
-    "staff/chef/recipe_sites/delishkitchen.py:78", "staff/chef/recipe_sites/delishkitchen.py:79",
-    "staff/chef/recipe_sites/delishkitchen.py:80", "staff/chef/recipe_sites/delishkitchen.py:81",
-    "staff/chef/recipe_sites/delishkitchen.py:82", "staff/chef/recipe_sites/delishkitchen.py:88",
+    "staff/chef/recipe_sites/delishkitchen.py:60", "staff/chef/recipe_sites/delishkitchen.py:61",
+    "staff/chef/recipe_sites/delishkitchen.py:62", "staff/chef/recipe_sites/delishkitchen.py:63",
+    "staff/chef/recipe_sites/delishkitchen.py:64", "staff/chef/recipe_sites/delishkitchen.py:72",
     # [データ] staff/chef/recipe_sites/generic.py（ADR-015 D7・2026-09-12）:
     # 見出し語の手がかり（「材料」「作り方」「手順」等）——lexicon.toml の分類語彙と
     # 同じ「データ」の扱いで、画面の文言ではない。

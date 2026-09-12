@@ -1115,6 +1115,48 @@ export const ja = {
   "settings.devices.revokeConfirm": "もう一度押すと失効します",
   "settings.devices.revoked": "失効させました",
   "settings.devices.revokeFailed": (p) => `失効できませんでした: ${p.reason}`,
+
+  /* 材料からの栄養値の推定（ADR-019 D5）。`nutrition_source` の表示語は
+     kitchen.recipes.nutritionSource* を使い回す。 */
+  "kitchen.nutrition.heading": "栄養値の出どころ",
+  "kitchen.nutrition.estimatedBadge": "推定（材料から）",
+  "kitchen.nutrition.coverage": (p) => `名寄せできた材料: ${p.percent}%`,
+  "kitchen.nutrition.partialWarning": (p) =>
+    `解決率が ${p.min}% に届かないため、献立のおすすめには入りません。`,
+  "kitchen.nutrition.unresolvedHeading": "名寄せできていない材料",
+  "kitchen.nutrition.unresolvedLine": (p) => `${p.name}（${p.amount}）`,
+  "kitchen.nutrition.amountUnknown": "分量なし",
+  "kitchen.nutrition.toAliases": "名寄せへ →",
+  "kitchen.nutrition.rebuild": "材料から推定する",
+  "kitchen.nutrition.rebuilt": "材料から推定しました",
+  "kitchen.nutrition.tableMissing": "食品成分表をまだ取り込んでいません（設定 → 食品の名寄せ）。",
+  "kitchen.nutrition.reason.no_food": "成分表に当たりません",
+  "kitchen.nutrition.reason.no_amount": "分量が書かれていません",
+  "kitchen.nutrition.reason.unknown_unit": "単位を換算できません",
+  "kitchen.nutrition.reason.no_piece": "1個あたりの重さが分かりません",
+
+  /* 設定 → 食品の名寄せ（ADR-019 D5）。 */
+  "settings.food.heading": "食品の名寄せ",
+  "settings.food.hint":
+    "レシピの材料名を食品成分表の食品に結びます。結ぶと、その材料を使うレシピの栄養値が推定し直されます。",
+  "settings.food.tableMissing":
+    "食品成分表をまだ取り込んでいません。公式サイトから落としたファイルを home/ に置き、`manor chef food import <ファイル>` を実行してください。",
+  "settings.food.unresolvedHeading": "名寄せできていない材料",
+  "settings.food.unresolvedEmpty": "（名寄せできていない材料はありません）",
+  "settings.food.unresolvedCount": (p) => `${p.count}件のレシピ`,
+  "settings.food.pick": "食品を選ぶ",
+  "settings.food.cancel": "やめる",
+  "settings.food.searchPlaceholder": "食品名で検索（部分一致）",
+  "settings.food.search": "探す",
+  "settings.food.searchEmpty": "（当たる食品がありませんでした）",
+  "settings.food.link": "これに結ぶ",
+  "settings.food.linked": (p) => `${p.alias} を「${p.food}」に結びました`,
+  "settings.food.linkFailed": (p) => `結べませんでした: ${p.reason}`,
+  "settings.food.aliasesHeading": "結んだ名寄せ",
+  "settings.food.aliasesEmpty": "（まだありません）",
+  "settings.food.unlink": "外す",
+  "settings.food.unlinked": "名寄せを外しました",
+  "settings.food.foodKcal": (p) => `${p.kcal} kcal/100g`,
 } satisfies Record<string, Entry>;
 
 export type TranslationKey = keyof typeof ja;

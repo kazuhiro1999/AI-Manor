@@ -255,6 +255,10 @@ def migrate_core(home: Path) -> None:
         # ADR-015 §6（追補・2026-09-12）: `nutrition_source` の語彙に `'site'` を冪等に足す。
         # 表の作り直しなので、上の3つの ADD COLUMN の**後**（列が揃った状態でコピーする）。
         _migrate_chef_recipe_meta_nutrition_source_site(conn)
+        # ADR-019 D4（2026-09-13）: 推定の解決率（`coverage`）。**表の作り直しの後に置く**
+        # ——`_migrate_chef_recipe_meta_nutrition_source_site` は現在の列をそのまま
+        # 新しい表へコピーするので、先に足すとコピー先に無い列を指してしまう。
+        _add_column_if_missing(conn, "chef_recipe_meta", "nutrition_coverage", "REAL")
         # **既定の8つもここで入れる**（執事の裁定 2026-09-04）。`manor init` だけに任せると、
         # 更新後に init を忘れた home は「表はあるが空」になり、種類を1つも選べない——
         # `run`／`notion_page` で2度踏んだのと**同じ穴**（GROWTH G5）。
@@ -380,6 +384,10 @@ def init(home: Path) -> list[str]:
         # ADR-015 §6（追補・2026-09-12）: `nutrition_source` の語彙に `'site'` を冪等に足す。
         # 表の作り直しなので、上の3つの ADD COLUMN の**後**（列が揃った状態でコピーする）。
         _migrate_chef_recipe_meta_nutrition_source_site(conn)
+        # ADR-019 D4（2026-09-13）: 推定の解決率（`coverage`）。**表の作り直しの後に置く**
+        # ——`_migrate_chef_recipe_meta_nutrition_source_site` は現在の列をそのまま
+        # 新しい表へコピーするので、先に足すとコピー先に無い列を指してしまう。
+        _add_column_if_missing(conn, "chef_recipe_meta", "nutrition_coverage", "REAL")
 
         if conn.execute("SELECT value FROM meta WHERE key='schema_version'").fetchone() is None:
             conn.execute("INSERT INTO meta (key, value) VALUES ('schema_version', '1')")

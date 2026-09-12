@@ -176,6 +176,8 @@ def test_all_chef_tables_are_prefixed(home: Path) -> None:
         "chef_recipe", "chef_recipe_meta", "chef_cook_session", "chef_cook_event",
         # ADR-016 D1: 動画リスト（ながら見する YouTube の一覧。利用者ごと）。
         "chef_media",
+        # ADR-019 D1・D2: 食品成分表の写しと、材料名 → 食品番号の名寄せ。
+        "chef_food", "chef_food_alias",
     }
 
 

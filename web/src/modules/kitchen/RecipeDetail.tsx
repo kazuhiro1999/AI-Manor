@@ -10,8 +10,8 @@ import { api, ApiError } from "../../app/api";
 import { useToast } from "../../components/Toast";
 import { ScreenHeader } from "../../components/ScreenHeader";
 import { formatDay, useT } from "../../app/i18n";
-import type { Recipe } from "../../app/types";
-import { NUTRITION_SOURCE_LABEL_KEY } from "./recipeShared";
+import type { Recipe, RecipeNutrition } from "../../app/types";
+import { NUTRITION_SOURCE_LABEL_KEY, NUTRITION_UNRESOLVED_REASON_KEY, formatIngredientAmount } from "./recipeShared";
 
 export function RecipeDetail() {
   const t = useT();
@@ -21,6 +21,9 @@ export function RecipeDetail() {
   const recipeId = Number(id);
 
   const [recipe, setRecipe] = useState<Recipe | null>(null);
+  // 栄養値の出どころ（ADR-019 D5）。本体とは別の口（`/nutrition`）——`source`/`coverage`/
+  // `unresolved` は保存されている5項目に**足すだけ**の値で、XR が読む契約は変わらない。
+  const [nutrition, setNutrition] = useState<RecipeNutrition | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [openTips, setOpenTips] = useState<Set<number>>(new Set());
   const [archiveConfirm, setArchiveConfirm] = useState(false);
@@ -29,6 +32,10 @@ export function RecipeDetail() {
     api<Recipe>(`/kitchen/recipes/${recipeId}`)
       .then(setRecipe)
       .catch((err) => setError(err instanceof ApiError ? err.message : t("errors.genericLoadFailed")));
+    // 推定の情報は**落ちても画面を壊さない**（成分表を入れていない home では 404）。
+    api<RecipeNutrition>(`/kitchen/recipes/${recipeId}/nutrition`)
+      .then(setNutrition)
+      .catch(() => setNutrition(null));
   };
 
   useEffect(() => {
@@ -247,6 +254,47 @@ export function RecipeDetail() {
             <p className="panel-note">
               {t("kitchen.recipes.nutritionSourceLabel")}: {t(NUTRITION_SOURCE_LABEL_KEY[recipe.meta.nutrition_source] ?? "kitchen.recipes.nutritionSourceNone")}
             </p>
+            {/* ADR-019 D5: 推定（材料から）の印と解決率、未解決の材料と「名寄せへ」。 */}
+            {recipe.meta.nutrition_source === "estimated" && (
+              <div id="recipe-nutrition-estimated">
+                <p className="panel-note">
+                  <span className="chip">{t("kitchen.nutrition.estimatedBadge")}</span>
+                </p>
+                {nutrition?.coverage != null && (
+                  <p className="panel-note">
+                    {t("kitchen.nutrition.coverage", { percent: Math.round(nutrition.coverage * 100) })}
+                  </p>
+                )}
+                {nutrition?.partial && (
+                  <p className="panel-note warn">
+                    {t("kitchen.nutrition.partialWarning", { min: Math.round(nutrition.coverage_min * 100) })}
+                  </p>
+                )}
+              </div>
+            )}
+            {nutrition && nutrition.unresolved.length > 0 && (
+              <div id="recipe-nutrition-unresolved">
+                <p className="panel-note">{t("kitchen.nutrition.unresolvedHeading")}</p>
+                <ul className="panel-note">
+                  {nutrition.unresolved.map((u) => (
+                    <li key={`${u.normalized}-${u.name}`}>
+                      {t("kitchen.nutrition.unresolvedLine", {
+                        name: u.name,
+                        amount: formatIngredientAmount(u.qty, u.unit) || t("kitchen.nutrition.amountUnknown"),
+                      })}
+                      {" — "}
+                      {t(NUTRITION_UNRESOLVED_REASON_KEY[u.reason] ?? "kitchen.nutrition.reason.no_food")}
+                    </li>
+                  ))}
+                </ul>
+                <Link className="btn btn-small" to="/settings#settings-food-aliases">
+                  {t("kitchen.nutrition.toAliases")}
+                </Link>
+              </div>
+            )}
+            {nutrition && !nutrition.food_table_available && (
+              <p className="panel-note">{t("kitchen.nutrition.tableMissing")}</p>
+            )}
             <p className="panel-note">
               {t("kitchen.recipes.ratingLabel")}: {recipe.meta.rating ?? t("common.none")}
             </p>

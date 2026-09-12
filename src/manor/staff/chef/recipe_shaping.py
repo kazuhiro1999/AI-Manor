@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import html as html_lib
 import re
+import unicodedata
 import urllib.parse
 
 #: 工程の見出しを切る区切り（句読点。ADR-015 D7「本文の先頭を句読点まで」）。
@@ -270,3 +271,39 @@ def parse_ingredient_line(line: str) -> list[dict[str, str]]:
 
     amount_text = ("各" if m.group("each") else "") + m.group("amount")
     return split_grouped_ingredient(name_part, amount_text, group=group)
+
+
+# --- 材料名の機械的な正規化（ADR-019 D2 ②の前半） ----------------------------------------
+#
+# 名寄せ（材料名 → 食品成分表の食品番号）の前に、**判断を持たない**均しだけをここでやる。
+# 下ごしらえ語・同義語は語彙の話なので `lexicon.toml` の `[food_normalize]` の領分
+# （続きは `staff/chef/nutrition.py`）——この module の約束（「判断を持たない機械的な
+# 変換だけ」）を保つため、語彙をここに書かない。
+
+#: 括弧書き（「玉ねぎ（中）」「豚肉(こま切れ)」）。成分表の食品名には現れないので落とす。
+_PARENS_RE = re.compile(r"[（(\[【][^）)\]】]*[）)\]】]")
+
+#: 空白（全角も）。材料名の中の空白は意味を持たないので詰める。
+_NAME_SPACE_RE = re.compile(r"[\s　]+")
+
+#: 前後から落とす飾り（箇条書きの記号・読点）。
+_NAME_TRIM_CHARS = "・*★☆…、,.-—〜~:：/|"
+
+
+def normalize_food_name(name: str) -> str:
+    """材料名を機械的に均す（ADR-019 D2 ②）。
+
+    NFKC（全角英数・半角カナを均す）→ グループ記号（`(A)` 等）を落とす → 括弧書きを
+    落とす → 空白を詰める → 前後の飾りを落とす → 小文字（英字だけが変わる）。
+
+    **語彙を使う均し（「みじん切り」を落とす・「しょうゆ」を「醤油」に寄せる）はしない**
+    ——それは `lexicon.toml` の `[food_normalize]` を読む `nutrition.normalize_name()` の
+    仕事で、ここは辞書を持たない（この module の docstring の約束）。
+    """
+    text = unicodedata.normalize("NFKC", name or "").strip()
+    gm = _GROUP_PREFIX_RE.match(text)
+    if gm:
+        text = text[gm.end():].strip()
+    text = _PARENS_RE.sub("", text)
+    text = _NAME_SPACE_RE.sub("", text)
+    return text.strip(_NAME_TRIM_CHARS).lower()

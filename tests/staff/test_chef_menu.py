@@ -35,6 +35,9 @@ def _cand(recipe_id: int, title: str, **over) -> dict[str, object]:
         "id": recipe_id,
         "title": title,
         "nutrition": _nutrition(80, 3, 2, 10, 0.6),
+        # ADR-019 D4 で D1 の判定に出所が入った（`nutrition_source` が無い＝出どころを
+        # 言えない値は候補にしない）。採点そのものを見る試験は `manual` を既定に置く。
+        "nutrition_source": "manual",
         "category": "副菜",
         "main_ingredient": "野菜",
         "cuisine": "和食",
@@ -55,6 +58,7 @@ MAIN = {
     "id": 1,
     "title": "豚の生姜焼き",
     "nutrition": _nutrition(450, 24, 22, 30, 1.8),
+    "nutrition_source": "manual",
     "main_ingredient": "肉",
     "cuisine": "和食",
     "dish_type": "焼き物",
@@ -261,6 +265,37 @@ def test_recipe_without_nutrition_is_dropped() -> None:
     empty = _cand(4, "栄養値なしの副菜", nutrition={})
     ranked = _score([_cand(2, "ふつうの副菜"), partial, empty])
     assert [s.recipe_id for s in ranked] == [2]
+
+
+def test_recipe_without_a_nutrition_source_is_dropped() -> None:
+    """D1（ADR-019 D4 で足した分）: 数字があっても出どころが言えない値は候補にしない。"""
+    ranked = _score([_cand(2, "ふつうの副菜"), _cand(3, "出所不明の副菜", nutrition_source="")])
+    assert [s.recipe_id for s in ranked] == [2]
+
+
+def test_estimated_recipe_below_the_coverage_floor_is_dropped() -> None:
+    """ADR-019 D4: 推定の解決率が `nutrition_coverage_min` に届かないものは `partial`。"""
+    good = _cand(2, "解決できた副菜", nutrition_source="estimated", nutrition_coverage=0.95)
+    poor = _cand(3, "半分しか名寄せできていない副菜", nutrition_source="estimated", nutrition_coverage=0.4)
+    ranked = _score([good, poor])
+    assert [s.recipe_id for s in ranked] == [2]
+    assert menu.nutrition_status(poor, 0.8) == menu.NUTRITION_PARTIAL
+    # 解決率を持たない古い推定（ADR-019 より前の行）は落とさない——今より悪くしない。
+    legacy = _cand(4, "解決率の無い古い推定", nutrition_source="estimated", nutrition_coverage=None)
+    assert menu.nutrition_status(legacy, 0.8) == menu.NUTRITION_OK
+
+
+def test_recommend_counts_partial_separately(conn: sqlite3.Connection, stocked: dict[str, int]) -> None:
+    """画面が「名寄せへ」を出せるよう、`partial` で外した件数を別に数える。"""
+    poor = _add_recipe(
+        conn, "名寄せの足りない副菜", category="副菜", nutrition=_nutrition(70, 2, 1, 8, 0.4),
+    )
+    recipes.set_meta(conn, poor, nutrition_source="estimated")
+    conn.execute("UPDATE chef_recipe_meta SET nutrition_coverage = 0.3 WHERE recipe_id = ?", (poor,))
+    payload = menu.recommend(conn, main_recipe_id=stocked["main"])
+    assert payload["excluded_partial"] == 1
+    assert payload["coverage_min"] == 0.8
+    assert poor not in [row["recipe_id"] for row in payload["slots"]["side"]]
 
 
 def test_disliked_and_allergic_ingredients_are_excluded() -> None:

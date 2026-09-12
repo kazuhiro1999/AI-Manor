@@ -1112,4 +1112,45 @@ export const en: { [K in TranslationKey]: MirrorEntry<K> } = {
   "settings.devices.revokeConfirm": "Press again to revoke",
   "settings.devices.revoked": "Revoked",
   "settings.devices.revokeFailed": (p) => `Could not revoke it: ${p.reason}`,
+
+  /* Nutrition estimated from ingredients (ADR-019 D5). */
+  "kitchen.nutrition.heading": "Where the nutrition comes from",
+  "kitchen.nutrition.estimatedBadge": "Estimated (from ingredients)",
+  "kitchen.nutrition.coverage": (p) => `Ingredients matched: ${p.percent}%`,
+  "kitchen.nutrition.partialWarning": (p) =>
+    `Coverage is below ${p.min}%, so this recipe is left out of menu suggestions.`,
+  "kitchen.nutrition.unresolvedHeading": "Ingredients not matched",
+  "kitchen.nutrition.unresolvedLine": (p) => `${p.name} (${p.amount})`,
+  "kitchen.nutrition.amountUnknown": "no amount",
+  "kitchen.nutrition.toAliases": "Food mapping →",
+  "kitchen.nutrition.rebuild": "Estimate from ingredients",
+  "kitchen.nutrition.rebuilt": "Estimated from the ingredients",
+  "kitchen.nutrition.tableMissing": "The food composition table has not been imported yet (Settings → Food mapping).",
+  "kitchen.nutrition.reason.no_food": "no match in the composition table",
+  "kitchen.nutrition.reason.no_amount": "no amount given",
+  "kitchen.nutrition.reason.unknown_unit": "cannot convert the unit",
+  "kitchen.nutrition.reason.no_piece": "no per-piece weight known",
+
+  /* Settings -> Food mapping (ADR-019 D5). */
+  "settings.food.heading": "Food mapping",
+  "settings.food.hint":
+    "Link ingredient names to foods in the composition table. Linking one re-estimates the nutrition of every recipe that uses it.",
+  "settings.food.tableMissing":
+    "The food composition table has not been imported yet. Put the file you downloaded from the official site under home/ and run `manor chef food import <file>`.",
+  "settings.food.unresolvedHeading": "Ingredients not matched",
+  "settings.food.unresolvedEmpty": "(No ingredient is left unmatched.)",
+  "settings.food.unresolvedCount": (p) => `${p.count} recipes`,
+  "settings.food.pick": "Pick a food",
+  "settings.food.cancel": "Cancel",
+  "settings.food.searchPlaceholder": "Search food names (substring)",
+  "settings.food.search": "Search",
+  "settings.food.searchEmpty": "(No matching food.)",
+  "settings.food.link": "Link to this",
+  "settings.food.linked": (p) => `Linked ${p.alias} to "${p.food}"`,
+  "settings.food.linkFailed": (p) => `Could not link it: ${p.reason}`,
+  "settings.food.aliasesHeading": "Links you made",
+  "settings.food.aliasesEmpty": "(None yet.)",
+  "settings.food.unlink": "Unlink",
+  "settings.food.unlinked": "Removed the link",
+  "settings.food.foodKcal": (p) => `${p.kcal} kcal/100g`,
 };

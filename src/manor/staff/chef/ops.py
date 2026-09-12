@@ -90,6 +90,27 @@ def recipe_cuisine_cues(path: Path | None = None) -> dict[str, list[str]]:
     return dict(lex.get("recipe_cuisine_cues", {}))  # type: ignore[arg-type]
 
 
+def recipe_tag_translations(path: Path | None = None) -> list[tuple[str, str]]:
+    """出典サイトの**英語の分類語** → `lexicon.toml` の語（`(手がかり語, 分類の値)` の並び）。
+
+    `[recipe_category_cues]`・`[recipe_cuisine_cues]` の**ASCII の手がかり語だけ**を
+    集めて返す（`"side dish"` → `"副菜"`、`"japanese"` → `"和食"`）。長い語を先に置く
+    ——`"main dish"` を `"dish"` のような短い語より先に当てたいため。
+
+    サイト別アダプタ（`recipe_sites/delishkitchen.py`）が自前の読み替え表を持っていたのを
+    2026-09-13 にここへ寄せた（ADR-019 §4「ついでの小さな直し」）。**同じ対応表を2か所に
+    置かない**——語を足すのは `lexicon.toml` だけで済むべきである。
+    """
+    out: list[tuple[str, str]] = []
+    for cues in (recipe_category_cues(path), recipe_cuisine_cues(path)):
+        for value, words in cues.items():
+            for word in words or []:
+                text = str(word).strip()
+                if text and text.isascii():
+                    out.append((text.lower(), str(value)))
+    return sorted(out, key=lambda pair: -len(pair[0]))
+
+
 # --- 検証（CLI が受ける形式はここで縛る。日付の“解決”は秘書の道具の領分） -------------
 
 

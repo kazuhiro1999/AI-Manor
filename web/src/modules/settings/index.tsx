@@ -6,7 +6,8 @@ import { usePolling } from "../../app/polling";
 import { APP_NAME } from "../../app/brand";
 import { useEditingGuard } from "../../app/editing";
 import { api, apiUpload, ApiError } from "../../app/api";
-import type { DeviceInfo, FaceModelEntry, Meta, RunKindStat, RunRow, RunsData, RunStatsData, SettingsData, SetupInfo, TaskKind, UserInfo } from "../../app/types";
+import type { DeviceInfo, FaceModelEntry, FoodAliasesPayload, FoodRow, Meta, RunKindStat, RunRow, RunsData, RunStatsData, SettingsData, SetupInfo, TaskKind, UserInfo } from "../../app/types";
+import { NUTRITION_UNRESOLVED_REASON_KEY } from "../kitchen/recipeShared";
 import { useTheme, THEMES, type Theme } from "../../app/theme";
 import { fmtCost, fmtDateTime, fmtSeconds, runKindLabel } from "../../app/format";
 import { DataTable, type Column } from "../../components/DataTable";
@@ -1021,6 +1022,169 @@ function TaskKindsSection() {
   );
 }
 
+/** ADR-019 D5: 設定 →「食品の名寄せ」の節。
+ *
+ * 未解決の材料名を出る回数の多い順に並べ、成分表を名前で探して1つ選ぶと
+ * `POST /kitchen/food/aliases`（`confidence: manual`）で結ぶ。結んだ時点で
+ * サーバが全件を推定し直すので（ADR-019 D4「再計算の契機」）、画面は読み直すだけ。
+ *
+ * ポーリングを使わない（他の節と違う）——名寄せは主人が1件ずつ手で決める作業で、
+ * 5 秒ごとに一覧が入れ替わると選んでいる途中の行が消える。読み直しは操作の後だけ。
+ */
+function FoodAliasesSection() {
+  const t = useT();
+  const { show } = useToast();
+  const [data, setData] = useState<FoodAliasesPayload | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [openAlias, setOpenAlias] = useState<string | null>(null);
+
+  const reload = () => {
+    api<FoodAliasesPayload>("/kitchen/food/aliases")
+      .then((payload) => {
+        setData(payload);
+        setError(null);
+      })
+      .catch((err) => setError(err instanceof ApiError ? err.message : t("errors.genericLoadFailed")));
+  };
+
+  useEffect(() => {
+    reload();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const link = async (alias: string, food: FoodRow) => {
+    try {
+      await api("/kitchen/food/aliases", { method: "POST", body: { alias, food_code: food.food_code } });
+      show(t("settings.food.linked", { alias, food: food.name }), "ok", 3000);
+      setOpenAlias(null);
+      reload();
+    } catch (err) {
+      show(t("settings.food.linkFailed", { reason: err instanceof ApiError ? err.message : t("common.unknown") }), "error");
+    }
+  };
+
+  const unlink = async (alias: string) => {
+    try {
+      await api(`/kitchen/food/aliases/${encodeURIComponent(alias)}`, { method: "DELETE" });
+      show(t("settings.food.unlinked"), "ok", 3000);
+      reload();
+    } catch (err) {
+      show(t("settings.food.linkFailed", { reason: err instanceof ApiError ? err.message : t("common.unknown") }), "error");
+    }
+  };
+
+  return (
+    <section className="panel" id="settings-food-aliases">
+      <div className="panel-head">
+        <h2>{t("settings.food.heading")}</h2>
+      </div>
+      <p className="panel-note">{t("settings.food.hint")}</p>
+      {error && <p className="panel-note">{t("errors.loadFailed", { reason: error })}</p>}
+      {data && !data.food_table_available && <p className="panel-note">{t("settings.food.tableMissing")}</p>}
+
+      <h3 className="panel-note">{t("settings.food.unresolvedHeading")}</h3>
+      <div className="rows">
+        {data && data.unresolved.length === 0 && <p className="panel-note">{t("settings.food.unresolvedEmpty")}</p>}
+        {(data?.unresolved ?? []).map((item) => (
+          <div className="row" key={item.normalized}>
+            <div className="row-main">
+              <span className="row-title">{item.names[0] ?? item.normalized}</span>
+              <span className="panel-note">
+                {t("settings.food.unresolvedCount", { count: item.count })}
+                {" / "}
+                {t(NUTRITION_UNRESOLVED_REASON_KEY[item.reason] ?? "kitchen.nutrition.reason.no_food")}
+              </span>
+            </div>
+            <button
+              className="btn btn-small"
+              type="button"
+              onClick={() => setOpenAlias(openAlias === item.normalized ? null : item.normalized)}
+            >
+              {openAlias === item.normalized ? t("settings.food.cancel") : t("settings.food.pick")}
+            </button>
+            {openAlias === item.normalized && (
+              <FoodPicker alias={item.names[0] ?? item.normalized} onPick={(food) => link(item.names[0] ?? item.normalized, food)} />
+            )}
+          </div>
+        ))}
+      </div>
+
+      <h3 className="panel-note">{t("settings.food.aliasesHeading")}</h3>
+      <div className="rows">
+        {data && data.aliases.length === 0 && <p className="panel-note">{t("settings.food.aliasesEmpty")}</p>}
+        {(data?.aliases ?? []).map((a) => (
+          <div className="row" key={a.alias}>
+            <div className="row-main">
+              <span className="row-title">{a.alias}</span>
+              <span className="panel-note">
+                {a.food_name ?? a.food_code} / {a.food_code} / {a.confidence}
+              </span>
+            </div>
+            <button className="btn btn-small btn-danger" type="button" onClick={() => unlink(a.alias)}>
+              {t("settings.food.unlink")}
+            </button>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+/** 成分表を名前の部分一致で探し、1つ選ぶ（ADR-019 D5）。押したときだけ問い合わせる
+ *  ——1 文字ごとに投げると 2,500 行の表を何度も舐めることになる。 */
+function FoodPicker({ alias, onPick }: { alias: string; onPick: (food: FoodRow) => void }) {
+  const t = useT();
+  const [q, setQ] = useState(alias);
+  const [items, setItems] = useState<FoodRow[] | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const search = async () => {
+    setBusy(true);
+    try {
+      const res = await api<{ items: FoodRow[] }>(`/kitchen/food/search?q=${encodeURIComponent(q)}`);
+      setItems(res.items);
+    } catch {
+      setItems([]);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="detail-box" style={{ width: "100%" }}>
+      <div className="form-inline">
+        <input
+          type="text"
+          value={q}
+          placeholder={t("settings.food.searchPlaceholder")}
+          onChange={(e) => setQ(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") search();
+          }}
+        />
+        <button className="btn btn-small" type="button" onClick={search} disabled={busy}>
+          {t("settings.food.search")}
+        </button>
+      </div>
+      {items && items.length === 0 && <p className="panel-note">{t("settings.food.searchEmpty")}</p>}
+      {(items ?? []).map((food) => (
+        <div className="row" key={food.food_code}>
+          <div className="row-main">
+            <span className="row-title">{food.name}</span>
+            <span className="panel-note">
+              {food.food_code}
+              {food.kcal != null && ` / ${t("settings.food.foodKcal", { kcal: food.kcal })}`}
+            </span>
+          </div>
+          <button className="btn btn-small btn-primary" type="button" onClick={() => onPick(food)}>
+            {t("settings.food.link")}
+          </button>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 /** ADR-006 §3 D11・§6 担当C: 「稼働と費用」の節。`run` 表がまだ無い home
  * （担当A の移行前）では `available: false` になる——部下の表と同じ約束。 */
 function RunsAndCostPanel() {
@@ -1277,6 +1441,8 @@ function SettingsScreen() {
           ))}
         </div>
       </section>
+
+      <FoodAliasesSection />
 
       <RunsAndCostPanel />
 

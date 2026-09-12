@@ -14,6 +14,10 @@ dependencies = [
     # 環境マーカーは付けない——Linux/macOS では OS の辞書が優先されるので害が無く、
     # どの環境でも同じ振る舞いになる方が良い（ADR-012 §2 D4 改訂・2026-09-05）。
     "tzdata",
+    # ADR-019 D1: 食品成分表（八訂増補 2023）の Excel を読む。純 Python で、
+    # C 拡張も外部サービスも要らない（読み込みは `chef food import` のときだけ——
+    # `staff/chef/nutrition.py` が**遅延 import** するので、使わない限り読み込まれない）。
+    "openpyxl>=3.1",
 ]
 
 [project.scripts]

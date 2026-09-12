@@ -3,7 +3,7 @@ import { render, cleanup, screen, waitFor, within } from "@testing-library/react
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { settingsModule } from "./index";
-import type { DeviceInfo, FaceModelEntry, Meta, RunsData, RunStatsData, SettingsData, SetupInfo, TaskKind, UserInfo } from "../../app/types";
+import type { DeviceInfo, FaceModelEntry, FoodAliasesPayload, FoodRow, Meta, RunsData, RunStatsData, SettingsData, SetupInfo, TaskKind, UserInfo } from "../../app/types";
 import { ToastBanner, ToastProvider } from "../../components/Toast";
 
 const SettingsScreen = settingsModule.routes[0].element as JSX.Element;
@@ -89,6 +89,9 @@ function mockFetchFor(handlers: {
   // ADR-017 D5:「端末」節の見本（既定は1台も無い＝「（許可した端末はありません）」）。
   devices?: DeviceInfo[];
   faceOpen?: { opened: boolean; method?: string; reason?: string };
+  // ADR-019 D5:「食品の名寄せ」節の見本（既定は未解決なし・成分表は取り込み済み）。
+  foodAliases?: FoodAliasesPayload;
+  foodSearch?: FoodRow[];
   onFetch?: (url: string, init?: RequestInit) => void;
 }) {
   const faceModels = handlers.faceModels ?? baseFaceModels();
@@ -203,7 +206,32 @@ function mockFetchFor(handlers: {
       return { ok: true, status: 200, json: async () => ({ id }) };
     }
 
+    // /kitchen/food（ADR-019 D5）: 結ぶ・外すは body/path を映して返す。
+    if (url.includes("/kitchen/food/aliases") && method === "POST") {
+      const body = init?.body ? JSON.parse(String(init.body)) : {};
+      const food = (handlers.foodSearch ?? []).find((f) => f.food_code === body.food_code);
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          alias: { alias: body.alias, food_code: body.food_code, food_name: food?.name ?? null, confidence: "manual", updated_at: "2026-09-13T00:00:00" },
+          rebuilt: { updated: 1, skipped: 0 },
+        }),
+      };
+    }
+    if (url.includes("/kitchen/food/aliases/") && method === "DELETE") {
+      return { ok: true, status: 200, json: async () => ({ alias: "x", removed: true }) };
+    }
+
     const json = async () => {
+      if (url.includes("/kitchen/food/search")) return { items: handlers.foodSearch ?? [] };
+      if (url.includes("/kitchen/food/aliases")) {
+        return (
+          handlers.foodAliases ?? {
+            unresolved: [], unresolved_total: 0, food_table_available: true, aliases: [],
+          }
+        );
+      }
       if (url.includes("/runs/stats")) return handlers.runsStats;
       if (url.includes("/runs")) return handlers.runs;
       if (url.includes("/setup")) return baseSetupInfo();
@@ -1056,5 +1084,63 @@ describe("settings — 端末（ADR-017 D5）", () => {
       ).toBe(true)
     );
     confirmSpy.mockRestore();
+  });
+});
+
+describe("settings — 食品の名寄せ（ADR-019 D5）", () => {
+  afterEach(() => {
+    cleanup();
+  });
+
+  const EMPTY_RUNS = { runsStats: { available: false, by_kind: [], total_cost_usd: 0 }, runs: { available: false, runs: [] } };
+
+  it("未解決の材料を出る回数つきで並べ、食品を選ぶと manual で結ぶ", async () => {
+    const posted: { url: string; body: unknown }[] = [];
+    mockFetchFor({
+      ...EMPTY_RUNS,
+      foodAliases: {
+        unresolved: [
+          { normalized: "合いびき肉", names: ["合いびき肉"], reason: "no_food", count: 3, recipes: [{ recipe_id: 1, title: "ハンバーグ" }] },
+        ],
+        unresolved_total: 1,
+        food_table_available: true,
+        aliases: [],
+      },
+      foodSearch: [
+        { food_code: "11221", food_group: "11", name: "ぶた ひき肉 生", kcal: 209, protein_g: 17.7, fat_g: 17.2, carb_g: 0.1, salt_g: 0.1, refuse_pct: 0, per: "100g", source_version: "8th-2023", updated_at: "2026-09-13T00:00:00" },
+      ],
+      onFetch: (url, init) => {
+        if ((init?.method || "GET").toUpperCase() === "POST" && url.includes("/kitchen/food/aliases")) {
+          posted.push({ url, body: init?.body ? JSON.parse(String(init.body)) : null });
+        }
+      },
+    });
+
+    render(<MemoryRouter><ToastProvider><ToastBanner />{SettingsScreen}</ToastProvider></MemoryRouter>);
+
+    const panel = (await screen.findByText("食品の名寄せ")).closest(".panel") as HTMLElement;
+    await waitFor(() => expect(within(panel).getByText("合いびき肉")).toBeTruthy());
+    expect(within(panel).getByText(/3件のレシピ/)).toBeTruthy();
+
+    const user = userEvent.setup();
+    await user.click(within(panel).getByRole("button", { name: "食品を選ぶ" }));
+    await user.click(within(panel).getByRole("button", { name: "探す" }));
+    await waitFor(() => expect(within(panel).getByText("ぶた ひき肉 生")).toBeTruthy());
+    await user.click(within(panel).getByRole("button", { name: "これに結ぶ" }));
+
+    await waitFor(() => expect(posted.length).toBe(1));
+    expect(posted[0].body).toEqual({ alias: "合いびき肉", food_code: "11221" });
+  });
+
+  it("成分表をまだ取り込んでいなければ、取り込み方の案内を出す", async () => {
+    mockFetchFor({
+      ...EMPTY_RUNS,
+      foodAliases: { unresolved: [], unresolved_total: 0, food_table_available: false, aliases: [] },
+    });
+
+    render(<MemoryRouter><ToastProvider>{SettingsScreen}</ToastProvider></MemoryRouter>);
+
+    const panel = (await screen.findByText("食品の名寄せ")).closest(".panel") as HTMLElement;
+    await waitFor(() => expect(within(panel).getByText(/manor chef food import/)).toBeTruthy());
   });
 });

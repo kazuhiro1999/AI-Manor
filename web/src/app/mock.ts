@@ -13,6 +13,9 @@ import type {
   Decision,
   ExtensionDetail,
   FaceModelEntry,
+  FoodAlias,
+  FoodRow,
+  FoodUnresolvedItem,
   ExtensionManifest,
   ExtensionOption,
   ExtensionStatus,
@@ -43,6 +46,8 @@ import type {
   RecipeFacetValue,
   RecipeImportResult,
   RecipeListItem,
+  RecipeNutrition,
+  RecipeNutritionUnresolved,
   RunRow,
   RunsData,
   RunStatsData,
@@ -998,6 +1003,61 @@ function findTask(id: string): Task {
 
 // ADR-015: `recipes.validate()` を手元で真似た簡易版（見本データの整合を保つだけなので、
 // 本物の `chef/recipes.py` ほど厳密ではない。上限文字数と phases/steps の必須だけ検算する）。
+/* ---------- kitchen: 食品成分表と名寄せ（ADR-019 D5。手で触って確かめるための最小の偽データ）
+ * ここは**実際の成分表ではない**（実データはリポジトリに入れない。ADR-019 D1）。
+ * 「名寄せできていない材料 → 食品を選ぶ → 結ぶ」の導線を試せるだけの数行。 ---------- */
+const MOCK_FOODS: FoodRow[] = [
+  { food_code: "01088", food_group: "01", name: "こめ めし 精白米", kcal: 156, protein_g: 2.5, fat_g: 0.3, carb_g: 37.1, salt_g: 0, refuse_pct: 0, per: "100g", source_version: "8th-2023", updated_at: "2026-09-13T00:00:00" },
+  { food_code: "11129", food_group: "11", name: "ぶた ばら 脂身つき 生", kcal: 366, protein_g: 14.4, fat_g: 35.4, carb_g: 0.1, salt_g: 0.1, refuse_pct: 0, per: "100g", source_version: "8th-2023", updated_at: "2026-09-13T00:00:00" },
+  { food_code: "12004", food_group: "12", name: "鶏卵 全卵 生", kcal: 142, protein_g: 12.2, fat_g: 10.2, carb_g: 0.4, salt_g: 0.4, refuse_pct: 14, per: "100g", source_version: "8th-2023", updated_at: "2026-09-13T00:00:00" },
+  { food_code: "06226", food_group: "06", name: "根深ねぎ 葉 軟白 生", kcal: 35, protein_g: 1.4, fat_g: 0.1, carb_g: 8.3, salt_g: 0, refuse_pct: 40, per: "100g", source_version: "8th-2023", updated_at: "2026-09-13T00:00:00" },
+  { food_code: "17007", food_group: "17", name: "こいくちしょうゆ", kcal: 76, protein_g: 7.7, fat_g: 0, carb_g: 7.9, salt_g: 14.5, refuse_pct: 0, per: "100g", source_version: "8th-2023", updated_at: "2026-09-13T00:00:00" },
+];
+
+let mockFoodAliases: FoodAlias[] = [];
+
+/** 「まだ名寄せしていない材料名」を、登録済みの alias を除いて数える（合成）。 */
+function mockUnresolved(): FoodUnresolvedItem[] {
+  const counts = new Map<string, FoodUnresolvedItem>();
+  for (const recipe of recipes) {
+    if (archivedRecipeIds.has(recipe.id)) continue;
+    for (const ing of recipe.ingredients) {
+      if (MOCK_FOODS.some((f) => f.name.includes(ing.name))) continue;
+      if (mockFoodAliases.some((a) => a.alias === ing.name)) continue;
+      const entry = counts.get(ing.name) ?? {
+        normalized: ing.name, names: [ing.name], reason: "no_food", count: 0, recipes: [],
+      };
+      entry.count += 1;
+      if (entry.recipes.length < 5) entry.recipes.push({ recipe_id: recipe.id, title: recipe.title });
+      counts.set(ing.name, entry);
+    }
+  }
+  return [...counts.values()].sort((a, b) => b.count - a.count);
+}
+
+/** `GET /kitchen/recipes/{id}/nutrition`（保存されている5項目＋ source/coverage/unresolved）。 */
+function recipeNutritionPayload(id: number): RecipeNutrition {
+  const r = findRecipe(id);
+  const unresolved: RecipeNutritionUnresolved[] = r.ingredients
+    .filter((ing) => !MOCK_FOODS.some((f) => f.name.includes(ing.name)))
+    .filter((ing) => !mockFoodAliases.some((a) => a.alias === ing.name))
+    .map((ing) => ({ name: ing.name, normalized: ing.name, qty: ing.qty, unit: ing.unit, reason: "no_food" }));
+  const total = r.ingredients.length || 1;
+  const coverage = r.meta.nutrition_source === "estimated" ? (total - unresolved.length) / total : null;
+  return {
+    recipe_id: r.id,
+    servings: r.servings,
+    kcal: r.meta.kcal, protein_g: r.meta.protein_g, fat_g: r.meta.fat_g,
+    carb_g: r.meta.carb_g, salt_g: r.meta.salt_g,
+    source: r.meta.nutrition_source,
+    coverage: coverage == null ? null : Number(coverage.toFixed(3)),
+    coverage_min: 0.8,
+    partial: coverage != null && coverage < 0.8,
+    unresolved,
+    food_table_available: true,
+  };
+}
+
 function findRecipe(id: number): Recipe {
   const r = recipes.find((x) => x.id === id);
   if (!r) notFound(`レシピが見つかりません: ${id}`);
@@ -1585,6 +1645,52 @@ export async function mockApi<T>(path: string, options: ApiOptions = {}): Promis
     r.meta.nutrition_source = "estimated";
     return { meta: r.meta } as unknown as T;
   }
+  // ---------- kitchen: 材料からの栄養値の推定・食品の名寄せ（ADR-019 D5） ----------
+  //
+  // **`/kitchen/recipes` の一覧に落ちる前に置く**——下の一覧の分岐が
+  // `path.startsWith("/kitchen/recipes")` で拾ってしまうため。
+  if (path.match(/^\/kitchen\/recipes\/\d+\/nutrition$/) && method === "GET") {
+    return recipeNutritionPayload(Number(path.split("/")[3])) as unknown as T;
+  }
+  if (path.match(/^\/kitchen\/recipes\/\d+\/rebuild-nutrition$/) && method === "POST") {
+    const id = Number(path.split("/")[3]);
+    const r = findRecipe(id);
+    if (r.meta.nutrition_source !== "site" && r.meta.nutrition_source !== "manual") {
+      r.meta.nutrition_source = "estimated";
+    }
+    return recipeNutritionPayload(id) as unknown as T;
+  }
+  if (path.startsWith("/kitchen/food/search") && method === "GET") {
+    const q = new URLSearchParams(path.split("?")[1] || "").get("q") || "";
+    const items = q ? MOCK_FOODS.filter((f) => f.name.includes(q)) : [];
+    return { items } as unknown as T;
+  }
+  if (path === "/kitchen/food/aliases" && method === "GET") {
+    return {
+      unresolved: mockUnresolved(),
+      unresolved_total: mockUnresolved().length,
+      food_table_available: true,
+      aliases: mockFoodAliases,
+    } as unknown as T;
+  }
+  if (path === "/kitchen/food/aliases" && method === "POST") {
+    const req = body as unknown as { alias: string; food_code: string };
+    const food = MOCK_FOODS.find((f) => f.food_code === req.food_code);
+    const alias: FoodAlias = {
+      alias: req.alias,
+      food_code: req.food_code,
+      food_name: food ? food.name : null,
+      confidence: "manual",
+      updated_at: new Date().toISOString(),
+    };
+    mockFoodAliases = [alias, ...mockFoodAliases.filter((a) => a.alias !== req.alias)];
+    return { alias, rebuilt: { updated: 1, skipped: 0 } } as unknown as T;
+  }
+  if (path.startsWith("/kitchen/food/aliases/") && method === "DELETE") {
+    const alias = decodeURIComponent(path.split("/")[3]);
+    mockFoodAliases = mockFoodAliases.filter((a) => a.alias !== alias);
+    return { alias, removed: true } as unknown as T;
+  }
   if (path === "/kitchen/recipes/facets" && method === "GET") {
     return computeRecipeFacets() as unknown as T;
   }
@@ -1770,6 +1876,9 @@ export async function mockApi<T>(path: string, options: ApiOptions = {}): Promis
         band_check: bandCheck,
       },
       excluded_no_nutrition: recipes.filter((r) => !archivedRecipeIds.has(r.id) && r.meta.kcal == null).length,
+      // ADR-019 D4: 手動確認の mock では推定の解決率を持たないので 0（`partial` は出さない）。
+      excluded_partial: 0,
+      coverage_min: 0.8,
       viewing_user_id: "master",
     };
     return payload as unknown as T;

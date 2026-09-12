@@ -452,6 +452,79 @@ export interface RecipeImportResult {
 
 export type RecipeImportMode = "auto" | "claude";
 
+/* ---------- kitchen: 材料からの栄養値の推定（ADR-019 D5） ---------- */
+
+// 名寄せ・換算のできなかった材料1件。`reason` は**符牒**（文にするのは画面の仕事。
+// `kitchen.nutrition.reason.*`）——`menu.py` の理由と同じ考え方。
+export interface RecipeNutritionUnresolved {
+  name: string;
+  normalized: string;
+  qty: string;
+  unit: string;
+  grams?: number;
+  reason: string; // no_food / no_amount / unknown_unit / no_piece
+}
+
+// `GET /api/v1/kitchen/recipes/{id}/nutrition`。**保存されている5項目に
+// `source`/`coverage`/`unresolved` を足しただけ**（XR が読む形は変わらない）。
+export interface RecipeNutrition {
+  recipe_id: number;
+  servings: number | null;
+  kcal: number | null;
+  protein_g: number | null;
+  fat_g: number | null;
+  carb_g: number | null;
+  salt_g: number | null;
+  source: "" | "site" | "estimated" | "manual";
+  coverage: number | null; // 0〜1。推定のときだけ入る
+  coverage_min: number; // これを下回ると `partial`（献立の候補に入らない）
+  partial: boolean;
+  unresolved: RecipeNutritionUnresolved[];
+  food_table_available: boolean; // 成分表をまだ取り込んでいなければ false
+}
+
+// 成分表の1行（`GET /api/v1/kitchen/food/search`）。100g あたりの値（ADR-019 D1）。
+export interface FoodRow {
+  food_code: string;
+  food_group: string;
+  name: string;
+  kcal: number | null;
+  protein_g: number | null;
+  fat_g: number | null;
+  carb_g: number | null;
+  salt_g: number | null;
+  refuse_pct: number;
+  per: string;
+  source_version: string;
+  updated_at: string;
+}
+
+// 登録済みの名寄せ（`chef_food_alias`）。
+export interface FoodAlias {
+  alias: string;
+  food_code: string;
+  food_name: string | null;
+  confidence: "manual" | "rule" | "llm";
+  updated_at: string;
+}
+
+// 未解決の材料名を束ねた1行（同じ名前は何本のレシピに出ても1行）。
+export interface FoodUnresolvedItem {
+  normalized: string;
+  names: string[];
+  reason: string;
+  count: number;
+  recipes: { recipe_id: number; title: string }[];
+}
+
+// `GET /api/v1/kitchen/food/aliases`（設定 → 食品の名寄せ）。
+export interface FoodAliasesPayload {
+  unresolved: FoodUnresolvedItem[];
+  unresolved_total: number;
+  food_table_available: boolean;
+  aliases: FoodAlias[];
+}
+
 /* ---------- kitchen: 献立のおすすめ（ADR-018 D3） ---------- */
 
 // 栄養の5項目（1人分）。`RecipeMeta` の同名の欄と同じ単位。
@@ -529,6 +602,9 @@ export interface MenuRecommendation {
   combo: MenuCombo;
   // D1 で候補から外れた（栄養値が無い）レシピの件数。
   excluded_no_nutrition: number;
+  // ADR-019 D4: 推定はできたが解決率（coverage）が足りず外した件数と、その下限。
+  excluded_partial: number;
+  coverage_min: number;
   viewing_user_id: string;
 }
 

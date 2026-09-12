@@ -286,3 +286,17 @@ export function describeImportMethod(method: string, t: (key: TranslationKey, pa
   }
   return method;
 }
+
+// ADR-019 D5: 名寄せ・換算のできなかった理由の符牒 → 表示語（`staff/chef/nutrition.py` の
+// `REASON_*` と対応。サーバは文を組まない——`menu.py` の理由と同じ約束）。
+export const NUTRITION_UNRESOLVED_REASON_KEY: Record<string, TranslationKey> = {
+  no_food: "kitchen.nutrition.reason.no_food",
+  no_amount: "kitchen.nutrition.reason.no_amount",
+  unknown_unit: "kitchen.nutrition.reason.unknown_unit",
+  no_piece: "kitchen.nutrition.reason.no_piece",
+};
+
+/** 「2」＋「個」→「2個」。どちらも空なら空文字（呼び出し側が「分量なし」を出す）。 */
+export function formatIngredientAmount(qty: string, unit: string): string {
+  return `${(qty || "").trim()}${(unit || "").trim()}`.trim();
+}

@@ -28,6 +28,15 @@ ADR-018 D3 は理由を「短い日本語の定型文」と書いたが、Web �
 
 在庫は**加点のみ**（D4。無くても減点しない）。栄養値の無いレシピは候補から外す（D1）。
 嫌い・避ける食材が入っているものは候補から外す（D4）。
+
+## 栄養値の「使える／使えない」（ADR-019 D4 で D1 に足した分）
+
+D1 は当初「5項目が揃っているか」だけだったが、材料からの推定（ADR-019）が入って
+**同じ数字の並びに確度の差**が生まれた。よって候補にするのは
+`nutrition_source` が `site`／`manual`／`estimated` のいずれかで、かつ `estimated` なら
+`nutrition_coverage` が `[menu.rules].nutrition_coverage_min`（既定 0.8）以上のものだけ
+（`nutrition_status()` が唯一の判定）。足りないものは `partial` として
+`excluded_partial` に数え、画面が「名寄せへ」の導線を出せるようにする。
 """
 
 from __future__ import annotations
@@ -52,6 +61,13 @@ NUTRIENTS: tuple[str, ...] = ("kcal", "protein_g", "fat_g", "carb_g", "salt_g")
 
 #: 塩分の列名。超過だけ重みが違う（D4「塩分は超えると強く減点」）ので名前で覚えておく。
 SALT = "salt_g"
+
+#: 候補として認める `nutrition_source`（ADR-018 D1 ＋ ADR-019 D4）。空文字（出所の記録が
+#: 無い）は入れない——**数字があっても出どころが言えないものは献立の根拠にしない**。
+ELIGIBLE_SOURCES: tuple[str, ...] = ("site", "manual", "estimated")
+
+#: 栄養値の使えるかどうか（`nutrition_status`）の語彙。
+NUTRITION_OK, NUTRITION_MISSING, NUTRITION_PARTIAL = "ok", "missing", "partial"
 
 #: 枠の名（API・画面の語）。`lexicon.toml` の `[menu.slots]` が `category` の語彙へ写す。
 SLOT_KINDS: tuple[str, ...] = ("main", "side", "soup")
@@ -203,6 +219,34 @@ def nutrition_of(source: Mapping[str, Any]) -> dict[str, float] | None:
     return out
 
 
+def nutrition_status(cand: Mapping[str, Any], minimum: float) -> str:
+    """その候補の栄養値が献立の根拠に足りるか（ADR-018 D1・ADR-019 D4）。
+
+    - `missing` … 5項目が揃っていない、または出所（`nutrition_source`）が無い
+    - `partial` … 推定（`estimated`）だが解決率が `minimum` に届かない
+    - `ok` … 候補にできる
+
+    **`coverage` が `None` の推定は通す**——ADR-019 より前に入った `estimated` の行
+    （`claude -p` の推定）には解決率が無い。黙って候補から落とすと、主人の目には
+    「急にレシピが減った」としか見えないので、今より悪くしない側へ倒す
+    （`manor chef nutrition rebuild` を通せば解決率が入り、この判定に乗る）。
+    """
+    if nutrition_of(cand.get("nutrition") or {}) is None:
+        return NUTRITION_MISSING
+    source = str(cand.get("nutrition_source") or "")
+    if source not in ELIGIBLE_SOURCES:
+        return NUTRITION_MISSING
+    if source != "estimated":
+        return NUTRITION_OK
+    coverage = cand.get("nutrition_coverage")
+    if coverage is None:
+        return NUTRITION_OK
+    try:
+        return NUTRITION_OK if float(coverage) >= minimum else NUTRITION_PARTIAL
+    except (TypeError, ValueError):
+        return NUTRITION_OK
+
+
 def sum_nutrition(items: Sequence[Mapping[str, Any]]) -> dict[str, float]:
     """複数の栄養値を足す（欠けは 0 として扱う——候補は揃ったものだけなので通常は起きない）。"""
     total = {key: 0.0 for key in NUTRIENTS}
@@ -346,6 +390,7 @@ def score_candidates(
     today_str = today or util.today()
 
     history_days = int(rules.get("history_days", 7))
+    nutrition_coverage_min = float(rules.get("nutrition_coverage_min", 0.8))
     quick_minutes = float(rules.get("quick_minutes", 15))
     expiring_days = int(rules.get("expiring_days", 3))
     pantry_items_max = int(rules.get("pantry_items_max", 3))
@@ -368,8 +413,11 @@ def score_candidates(
     out: list[Scored] = []
     for cand in candidates:
         nutrition = nutrition_of(cand.get("nutrition") or {})
-        if nutrition is None:
-            continue  # D1: 栄養値の無いレシピは候補にしない
+        if nutrition_status(cand, nutrition_coverage_min) != NUTRITION_OK:
+            # D1: 栄養値の無いレシピは候補にしない。ADR-019 D4 でここに `partial`
+            # （推定の解決率が足りないもの）も加わった。
+            continue
+        assert nutrition is not None  # noqa: S101 - nutrition_status が ok なら必ず揃っている
         ingredients = [str(name) for name in (cand.get("ingredients") or []) if str(name).strip()]
         if any(ops.item_match(name, avoid) for name in ingredients for avoid in avoided):
             continue  # D4: 嫌い・避ける食材は除外
@@ -608,6 +656,8 @@ def candidate_from_recipe(row: Mapping[str, Any], *, dish_types_map: Mapping[str
         "last_cooked_at": row.get("last_cooked_at"),
         "nutrition": {key: row.get(key) for key in NUTRIENTS},
         "nutrition_source": str(row.get("nutrition_source") or ""),
+        # ADR-019 D4: 推定の解決率（`estimated` のときだけ意味を持つ。無ければ None）。
+        "nutrition_coverage": row.get("nutrition_coverage"),
         "ingredients": ingredients,
     }
 
@@ -618,6 +668,7 @@ def _all_candidates(conn: sqlite3.Connection, *, dish_types_map: Mapping[str, li
     rows = conn.execute(
         "SELECT r.id, r.title, r.hero_image, r.servings, r.total_minutes, r.body,"
         " m.kcal, m.protein_g, m.fat_g, m.carb_g, m.salt_g, m.nutrition_source,"
+        " m.nutrition_coverage,"
         " m.rating, m.favorite, m.times_cooked, m.last_cooked_at,"
         " m.category, m.main_ingredient, m.cuisine"
         " FROM chef_recipe r LEFT JOIN chef_recipe_meta m ON m.recipe_id = r.id"
@@ -737,6 +788,8 @@ def recommend(
         main_for_scoring["nutrition"] = main_nutrition or {}
 
     no_nutrition = 0
+    partial = 0
+    coverage_floor = float(rules.get("nutrition_coverage_min", 0.8))
     slots: dict[str, list[dict[str, object]]] = {}
     for kind in SLOT_KINDS:
         category = slot_categories.get(kind, "")
@@ -748,7 +801,9 @@ def recommend(
             for c in all_candidates
             if c["category"] == category and int(c["id"]) not in excluded_ids
         ]
-        no_nutrition += sum(1 for c in pool if nutrition_of(c["nutrition"]) is None)
+        statuses = [nutrition_status(c, coverage_floor) for c in pool]
+        no_nutrition += sum(1 for st in statuses if st == NUTRITION_MISSING)
+        partial += sum(1 for st in statuses if st == NUTRITION_PARTIAL)
         scored = score_candidates(
             None if kind == "main" else main_for_scoring,
             pool,
@@ -790,6 +845,10 @@ def recommend(
         "slots": slots,
         "combo": combo,
         "excluded_no_nutrition": no_nutrition,
+        # ADR-019 D4: 推定はできたが解決率が足りず候補から外したもの（画面は「名寄せへ」
+        # の導線を出せる）。
+        "excluded_partial": partial,
+        "coverage_min": coverage_floor,
     }
 
 

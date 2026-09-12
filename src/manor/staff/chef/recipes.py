@@ -228,7 +228,10 @@ def classify(recipe: dict, *, site_tags: list[str] | None = None) -> dict[str, s
     if isinstance(meta, dict):
         parts.extend(str(t) for t in (meta.get("tags") or []))
     parts.extend(str(t) for t in (site_tags or []))
-    haystack = " ".join(parts)
+    # **小文字に均す**（2026-09-13）。`lexicon.toml` の手がかり語に英語（`side dish`・
+    # `japanese`）が入り、出典サイトは `Side dish` のように大文字で書くことがある。
+    # 日本語は `lower()` で変わらないので、既存の手がかり語の当たり方は変わらない。
+    haystack = " ".join(parts).lower()
 
     return {
         "category": ops.classify_dish_type(haystack, ops.recipe_category_cues()) or "",

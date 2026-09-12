@@ -14,7 +14,7 @@ import sqlite3
 from manor import i18n, util
 from manor.errors import ManorError
 
-from . import media, menu, ops, recipe_import, recipes
+from . import media, menu, nutrition, ops, recipe_import, recipes
 
 VALID_SLOTS: tuple[str, ...] = ("breakfast", "lunch", "dinner", "snack")
 VALID_AISLES: tuple[str, ...] = ("野菜", "肉魚", "乳卵", "主食", "調味料", "その他")
@@ -482,6 +482,7 @@ def cmd_recipe_add(conn, home, args) -> object:
             params={"path": args.file, "exc": str(exc)},
         ) from exc
     recipe_id = recipes.add(conn, data)
+    nutrition.refresh(conn, recipe_id)  # ADR-019 D4「再計算の契機」: 登録
     if args.json:
         return {"id": recipe_id}
     return i18n.t("chef.recipe.add.done", id=recipe_id)
@@ -544,6 +545,7 @@ def cmd_recipe_import(conn, home, args) -> object:
     warnings = result.get("warnings") or []
     if args.save:
         recipe_id = recipes.add(conn, recipe)
+        nutrition.refresh(conn, recipe_id)  # ADR-019 D4「再計算の契機」: 登録
         if args.json:
             return {"id": recipe_id, "method": method, "warnings": warnings}
         return i18n.t("chef.recipe.import.saved", id=recipe_id)
@@ -568,6 +570,77 @@ def cmd_recipe_estimate(conn, home, args) -> object:
     if args.json:
         return updated
     return i18n.t("chef.recipe.estimate.done", id=args.id)
+
+
+# --- food / nutrition（食品成分表と推定。ADR-019 D1・D4） ---------------------------
+
+
+def cmd_food_import(conn, home, args) -> object:
+    """成分表（八訂増補 2023 の Excel か、それを CSV にしたもの）を取り込む。
+
+    **実データはリポジトリに入れない**（ADR-019 D1）——主人が公式サイトから落として
+    `home/` に置いたファイルの道を渡す（置き場は `home/ENV.md`）。冪等。
+    """
+    result = nutrition.import_food_table(conn, args.path, source_version=args.source_version)
+    if args.json:
+        return result
+    return i18n.t(
+        "chef.food.import.done",
+        rows=result["rows"], added=result["added"], updated=result["updated"], total=result["total"],
+    )
+
+
+def cmd_food_search(conn, home, args) -> object:
+    """成分表を名前の部分一致で引く（名寄せの下ごしらえ。画面の検索と同じ口）。"""
+    rows = nutrition.search_foods(conn, args.q, limit=args.limit)
+    if args.json:
+        return rows
+    if not rows:
+        return i18n.t("chef.food.search.empty")
+    return "\n".join(
+        i18n.t(
+            "chef.food.search.line",
+            food_code=r["food_code"],
+            name=r["name"],
+            kcal=r["kcal"] if r["kcal"] is not None else i18n.t("chef.common.unknown"),
+        )
+        for r in rows
+    )
+
+
+def cmd_nutrition_rebuild(conn, home, args) -> object:
+    """材料から栄養値を推定して書く（ADR-019 D4）。`--recipe` で1本だけ。
+
+    `site`（出典の表示値）・`manual`（手入力）のレシピは**上書きしない**。
+    """
+    _require_chef_recipe_table(conn)
+    result = nutrition.rebuild(conn, recipe_id=args.recipe)
+    if args.json:
+        return result
+    return i18n.t(
+        "chef.nutrition.rebuild.done",
+        updated=result["updated"], skipped=result["skipped"], unresolved=result["unresolved"],
+    )
+
+
+def cmd_nutrition_unresolved(conn, home, args) -> object:
+    """名寄せできていない材料名の一覧（ADR-019 D5 の画面と同じ中身）。"""
+    _require_chef_recipe_table(conn)
+    result = nutrition.unresolved_summary(conn)
+    if args.json:
+        return result
+    items = result["items"]
+    if not items:
+        return i18n.t("chef.nutrition.unresolved.empty")
+    return "\n".join(
+        i18n.t(
+            "chef.nutrition.unresolved.line",
+            name=it["names"][0] if it["names"] else it["normalized"],
+            normalized=it["normalized"],
+            count=it["count"],
+        )
+        for it in items  # type: ignore[union-attr]
+    )
 
 
 # --- media（動画リスト。ADR-016 D5） ------------------------------------------------
@@ -678,6 +751,10 @@ def cmd_menu(conn, home, args) -> object:
         lines.append(i18n.t("chef.menu.show.band", items="・".join(parts)))
     if payload.get("excluded_no_nutrition"):
         lines.append(i18n.t("chef.menu.show.excluded", n=payload["excluded_no_nutrition"]))
+    if payload.get("excluded_partial"):
+        # ADR-019 D4: 推定はできたが名寄せが足りず外したもの（`manor chef nutrition
+        # unresolved` で何を名寄せすれば増えるかが分かる）。
+        lines.append(i18n.t("chef.menu.show.excluded_partial", n=payload["excluded_partial"]))
     return "\n".join(lines)
 
 
@@ -870,6 +947,42 @@ def register(subparsers) -> None:
     p.add_argument("--json", action="store_true")
     p.add_argument("--no-render", action="store_true")
     p.set_defaults(func=cmd_recipe_estimate, is_write=True)
+
+    # --- food（食品成分表。ADR-019 D1） ---
+    food_p = chef_sub.add_parser("food", help=i18n.t("cli.chef.food.help"))
+    food_sub = food_p.add_subparsers(dest="food_verb")
+
+    p = food_sub.add_parser("import")
+    p.add_argument("path", help=i18n.t("cli.chef.food.import.path.help"))
+    p.add_argument(
+        "--source-version",
+        dest="source_version",
+        default=nutrition.DEFAULT_SOURCE_VERSION,
+        help=i18n.t("cli.chef.food.import.source_version.help"),
+    )
+    p.add_argument("--json", action="store_true")
+    p.add_argument("--no-render", action="store_true")
+    p.set_defaults(func=cmd_food_import, is_write=True)
+
+    p = food_sub.add_parser("search")
+    p.add_argument("q")
+    p.add_argument("--limit", type=int, default=20)
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=cmd_food_search, is_write=False)
+
+    # --- nutrition（材料からの推定。ADR-019 D4） ---
+    nutrition_p = chef_sub.add_parser("nutrition", help=i18n.t("cli.chef.nutrition.help"))
+    nutrition_sub = nutrition_p.add_subparsers(dest="nutrition_verb")
+
+    p = nutrition_sub.add_parser("rebuild")
+    p.add_argument("--recipe", type=int, help=i18n.t("cli.chef.nutrition.rebuild.recipe.help"))
+    p.add_argument("--json", action="store_true")
+    p.add_argument("--no-render", action="store_true")
+    p.set_defaults(func=cmd_nutrition_rebuild, is_write=True)
+
+    p = nutrition_sub.add_parser("unresolved")
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=cmd_nutrition_unresolved, is_write=False)
 
     # --- media（動画リスト。ADR-016 D5。読み取りだけ置く） ---
     media_p = chef_sub.add_parser("media", help=i18n.t("cli.chef.media.help"))

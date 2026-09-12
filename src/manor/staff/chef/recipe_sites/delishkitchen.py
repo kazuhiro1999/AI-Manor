@@ -21,9 +21,11 @@
 
 ## ② 分類3軸（`recipeCategory`・`recipeCuisine` が英語）
 
-`recipeCategory` が `"side dish"`、`recipeCuisine` が `"Japanese"` で、`lexicon.toml` の
-手がかり語（日本語）に当たらない。**`lexicon.toml` は触らず**（語彙を足すのは主人の
-領分で、いま別の担当が同じファイルで献立の採点を実装中）、ここで既存の語へ寄せる。
+`recipeCategory` が `"side dish"`、`recipeCuisine` が `"Japanese"` で、そのままでは
+日本語の手がかり語に当たらない。読み替えの**対応表は `lexicon.toml` にある**
+（`[recipe_category_cues]`・`[recipe_cuisine_cues]` の ASCII の手がかり語。
+`ops.recipe_tag_translations()` が集める）——2026-09-13 に、ここに写していた自前の表を
+そちらへ寄せた（ADR-019 §4）。語を足すときに直す場所を1つにするため。
 `keywords` は日本語（「副菜, おつまみ, キャベツ, …」）なのでそのままで当たる
 ——素材の軸は「キャベツ」から「野菜」が付く。
 
@@ -39,6 +41,7 @@ from __future__ import annotations
 
 import re
 
+from .. import ops
 from .. import recipe_shaping as shaping
 
 NAME = "delishkitchen"
@@ -62,25 +65,6 @@ _NUTRITION_LABELS: tuple[tuple[str, str], ...] = (
 )
 
 _NUMBER_RE = re.compile(r"[\d]+(?:\.[\d]+)?")
-
-#: サイト固有の語 → `lexicon.toml` にある語。`recipeCategory`・`recipeCuisine` の
-#: 英語だけを対象にする（`keywords` は日本語なので読み替え不要）。
-_TAG_TRANSLATIONS: tuple[tuple[str, str], ...] = (
-    ("side dish", "副菜"),
-    ("main dish", "主菜"),
-    ("main course", "主菜"),
-    ("soup", "汁物"),
-    ("rice", "ご飯もの"),
-    ("noodle", "麺"),
-    ("dessert", "デザート"),
-    ("sweets", "デザート"),
-    ("japanese", "和食"),
-    ("western", "洋食"),
-    ("chinese", "中華"),
-    ("korean", "韓国"),
-    ("italian", "洋食"),
-    ("french", "洋食"),
-)
 
 #: 本文（経路②で使う。`data-v-XXXXXXXX` は Vue の scoped 属性で、ビルドで変わるので見ない）。
 _TITLE_LEAD_RE = re.compile(r'<h1[^>]*>(.*?)</h1>', re.S)
@@ -121,11 +105,14 @@ def extract_nutrition(html: str) -> dict[str, float]:
 def _translate_tags(tags: list[str]) -> list[str]:
     """英語の分類語を `lexicon.toml` の語へ寄せる。当たらない語は落とす
     （素の語は `recipe_import._ld_site_tags` が別に渡すので、ここで返す必要はない）。
+
+    対応表の出どころは `lexicon.toml` だけ（`ops.recipe_tag_translations()`）。
     """
+    translations = ops.recipe_tag_translations()
     out: list[str] = []
     for tag in tags:
         low = str(tag).strip().lower()
-        for word, mapped in _TAG_TRANSLATIONS:
+        for word, mapped in translations:
             if low == word and mapped not in out:
                 out.append(mapped)
                 break

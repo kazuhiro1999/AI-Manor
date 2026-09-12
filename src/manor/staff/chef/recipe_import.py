@@ -40,6 +40,7 @@ from html.parser import HTMLParser
 
 from manor.errors import ManorError
 
+from . import ops
 from . import recipe_shaping as shaping
 from . import recipe_sites, recipes
 from .recipe_sites import generic as generic_mod
@@ -700,18 +701,38 @@ def _fill_missing_step_images_from_html(
 # --- 分類（ADR-015 D9）を取り込みの下書きへ添える -------------------------------------------
 
 
+def _displayable_tags(site_tags: list[str]) -> list[str]:
+    """`meta.tags`（画面に並ぶタグ）から**読み替え済みの英語の素の語を落とす**
+    （2026-09-13 の申し送り。ADR-019 §4「ついでの小さな直し」）。
+
+    出典サイトの英語の分類語（`side dish`・`Japanese`）は、アダプタが日本語へ
+    読み替えたものが既に同じ並びに入っている（`_merge_site_tags` が前に置く）。
+    素の語まで `meta.tags` に残ると、画面に「副菜」と「side dish」が並んで出る
+    ——同じことを2回言っているだけなので落とす。読み替え表は `lexicon.toml` が
+    唯一の出どころ（`ops.recipe_tag_translations()`）。
+
+    **英語なら何でも落とすのではない**——読み替え表に載っている語だけ。サイト固有の
+    英語のタグ（`#brunch` のような主人に意味のある語）は残す。
+    """
+    translated = {word for word, _ in ops.recipe_tag_translations()}
+    return [t for t in site_tags if t and t.strip().lower() not in translated]
+
+
 def _build_meta(recipe: dict[str, object], *, site_tags: list[str]) -> dict[str, object]:
     """`recipes.classify()` と出典のタグ（`site_tags`）から `meta` を組み立てる
     （ADR-015 D9「取り込み時に推定して入れる」）。ここではまだ DB に保存しない
     ——下書きに添えるだけで、`recipes.add()` が登録時に拾う（`recipes.py` の
     `add()` docstring 参照）。
+
+    分類（3軸）の推定には**素の語も含めて**渡す（英語の手がかり語も `lexicon.toml` に
+    あるので、読み替えに失敗しても分類は当たる）。`tags` からだけ素の語を落とす。
     """
     classification = recipes.classify(recipe, site_tags=site_tags)
     return {
         "category": classification["category"],
         "main_ingredient": classification["main_ingredient"],
         "cuisine": classification["cuisine"],
-        "tags": [t for t in site_tags if t],
+        "tags": _displayable_tags(site_tags),
     }
 
 

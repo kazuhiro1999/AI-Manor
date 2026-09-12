@@ -69,6 +69,8 @@ function recommendation(overrides: Partial<MenuRecommendation> = {}): MenuRecomm
       },
     },
     excluded_no_nutrition: 1,
+    excluded_partial: 0,
+    coverage_min: 0.8,
     viewing_user_id: "master",
     ...overrides,
   };

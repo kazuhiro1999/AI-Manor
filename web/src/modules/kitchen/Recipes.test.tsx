@@ -758,6 +758,85 @@ describe("kitchen recipes — 表示（ADR-015 D4）", () => {
     expect(container.querySelector(".recipe-hero-head.no-image")).toBeNull();
   });
 
+  // ADR-019 D5: 推定（材料から）の印・解決率・未解決の材料と「名寄せへ」。
+  it("推定のレシピには『推定（材料から）』の印と解決率・未解決の材料が出る", async () => {
+    const recipe = { ...chahan(), meta: baseMeta({ kcal: 520, nutrition_source: "estimated" }) };
+    globalThis.fetch = vi.fn().mockImplementation(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/api/v1/kitchen/recipes/1")) {
+        return { ok: true, status: 200, json: async () => recipe };
+      }
+      if (url.endsWith("/api/v1/kitchen/recipes/1/nutrition")) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            recipe_id: 1, servings: 2,
+            kcal: 520, protein_g: 20, fat_g: 18, carb_g: 65, salt_g: 2.1,
+            source: "estimated", coverage: 0.62, coverage_min: 0.8, partial: true,
+            unresolved: [{ name: "しょうが", normalized: "しょうが", qty: "5", unit: "g", reason: "no_food" }],
+            food_table_available: true,
+          }),
+        };
+      }
+      throw new Error("unexpected fetch: " + url);
+    }) as unknown as typeof fetch;
+
+    const { container } = render(
+      <MemoryRouter initialEntries={["/1"]}>
+        <ToastProvider>
+          <RecipesRouter />
+        </ToastProvider>
+      </MemoryRouter>
+    );
+
+    await waitFor(() => expect(container.querySelector("#recipe-nutrition-estimated")).toBeTruthy());
+    expect(screen.getByText("推定（材料から）")).toBeTruthy();
+    expect(screen.getByText("名寄せできた材料: 62%")).toBeTruthy();
+    // 解決率が下限に届かないので、献立の候補に入らない旨が出る。
+    expect(screen.getByText(/献立のおすすめには入りません/)).toBeTruthy();
+    // 未解決の材料と「名寄せへ」の導線。
+    const unresolved = container.querySelector("#recipe-nutrition-unresolved") as HTMLElement;
+    expect(within(unresolved).getByText(/しょうが（5g）/)).toBeTruthy();
+    const link = within(unresolved).getByRole("link", { name: "名寄せへ →" }) as HTMLAnchorElement;
+    expect(link.getAttribute("href")).toBe("/settings#settings-food-aliases");
+  });
+
+  it("出典サイトの値のレシピには推定の印を出さない", async () => {
+    const recipe = { ...chahan(), meta: baseMeta({ kcal: 520, nutrition_source: "site" }) };
+    globalThis.fetch = vi.fn().mockImplementation(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/api/v1/kitchen/recipes/1")) {
+        return { ok: true, status: 200, json: async () => recipe };
+      }
+      if (url.endsWith("/api/v1/kitchen/recipes/1/nutrition")) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            recipe_id: 1, servings: 2,
+            kcal: 520, protein_g: 20, fat_g: 18, carb_g: 65, salt_g: 2.1,
+            source: "site", coverage: null, coverage_min: 0.8, partial: false,
+            unresolved: [], food_table_available: true,
+          }),
+        };
+      }
+      throw new Error("unexpected fetch: " + url);
+    }) as unknown as typeof fetch;
+
+    const { container } = render(
+      <MemoryRouter initialEntries={["/1"]}>
+        <ToastProvider>
+          <RecipesRouter />
+        </ToastProvider>
+      </MemoryRouter>
+    );
+
+    await waitFor(() => expect(screen.getAllByText("パラパラ炒飯").length).toBeGreaterThan(0));
+    expect(container.querySelector("#recipe-nutrition-estimated")).toBeNull();
+    expect(container.querySelector("#recipe-nutrition-unresolved")).toBeNull();
+  });
+
   it("材料の表は qty と unit が別々の列に来ても崩れない", async () => {
     const recipe = {
       ...chahan(),

@@ -46,6 +46,27 @@ def _require_chef_media(conn) -> None:
         raise HTTPException(status_code=404, detail="料理長の動画リストが未導入です")
 
 
+def _require_chef_food(conn) -> None:
+    """ADR-019: `chef_food` が無い home 向け（`_require_chef_recipes` と同じ流儀）。"""
+    if not table_exists(conn, "chef_food"):
+        raise HTTPException(status_code=404, detail="料理長の食品成分表が未導入です")
+
+
+def _nutrition_error_to_http(exc: ManorError) -> HTTPException:
+    """ADR-019 の状態コードへ写す（`_media_error_to_http` と同じ流儀）。
+
+    取り込み・名寄せの引数の誤りは 400（`manor` の慣例は code=2 → 404 だが、画面が
+    「打ち間違い」と「無い」を区別できないと直し方が伝わらない）。
+    """
+    from ...staff.chef import nutrition as chef_nutrition
+
+    if exc.key in (chef_nutrition.ERR_FOOD_IMPORT_FAILED, chef_nutrition.ERR_FOOD_NOT_FOUND):
+        return HTTPException(status_code=400, detail=exc.message_ja)
+    if exc.key == chef_nutrition.ERR_FOOD_TABLE_MISSING:
+        return HTTPException(status_code=404, detail=exc.message_ja)
+    return manor_error_to_http(exc)
+
+
 def _media_error_to_http(exc: ManorError) -> HTTPException:
     """ADR-016 D3 の状態コードへ写す。**写し先の出どころは `chef/media.py` のキー定数**
     ——`recipes` のように「すべて code=2 → 404」にすると、400（URL が読めない）と
@@ -167,6 +188,14 @@ class MenuPlanRequest(BaseModel):
     date: str
     slot: str = "dinner"
     recipe_ids: list[int] = Field(default_factory=list)
+
+
+class FoodAliasRequest(BaseModel):
+    """ADR-019 D2。未解決の材料名に食品を選んで `manual` で結ぶ。"""
+
+    alias: str = Field(..., min_length=1)
+    food_code: str = Field(..., min_length=1)
+    confidence: Literal["manual", "rule", "llm"] = "manual"
 
 
 class CookSessionStartRequest(BaseModel):
@@ -339,12 +368,15 @@ def register(app: FastAPI, ctx: WebContext) -> None:
     @app.post("/api/v1/kitchen/recipes")
     def recipe_add(body: dict) -> dict[str, object]:
         require_writable(ctx)
+        from ...staff.chef import nutrition as chef_nutrition
         from ...staff.chef import recipes as chef_recipes
 
         with open_conn(ctx) as conn:
             _require_chef_recipes(conn)
             try:
                 recipe_id = chef_recipes.add(conn, body)
+                # ADR-019 D4「再計算の契機」: 登録。成分表が無い home では静かに何もしない。
+                chef_nutrition.refresh(conn, recipe_id)
             except ManorError as exc:
                 conn.rollback()
                 raise manor_error_to_http(exc)
@@ -355,12 +387,16 @@ def register(app: FastAPI, ctx: WebContext) -> None:
     @app.put("/api/v1/kitchen/recipes/{recipe_id}")
     def recipe_update(recipe_id: int, body: dict) -> dict[str, object]:
         require_writable(ctx)
+        from ...staff.chef import nutrition as chef_nutrition
         from ...staff.chef import recipes as chef_recipes
 
         with open_conn(ctx) as conn:
             _require_chef_recipes(conn)
             try:
                 result = chef_recipes.update(conn, recipe_id, body)
+                # ADR-019 D4「再計算の契機」: 材料の編集（本体の差し替えはここだけ）。
+                chef_nutrition.refresh(conn, recipe_id)
+                result = chef_recipes.get(conn, recipe_id)
             except ManorError as exc:
                 conn.rollback()
                 raise manor_error_to_http(exc)
@@ -468,6 +504,110 @@ def register(app: FastAPI, ctx: WebContext) -> None:
                 raise manor_error_to_http(exc)
             commit_and_render(conn, ctx)
             return updated["meta"]  # type: ignore[return-value]
+
+    # --- nutrition / food（材料からの推定と名寄せ。ADR-019 D5） ---
+    #
+    # `GET /recipes/{id}/nutrition` は**保存されている5項目に `source`/`coverage`/
+    # `unresolved` を足すだけ**——XR（kitchen-xr）が読む形は変えない（ADR-019 D5）。
+
+    @app.get("/api/v1/kitchen/recipes/{recipe_id}/nutrition")
+    def recipe_nutrition(recipe_id: int) -> dict[str, object]:
+        from ...staff.chef import nutrition as chef_nutrition
+
+        with open_conn(ctx) as conn:
+            _require_chef_recipes(conn)
+            try:
+                return chef_nutrition.nutrition_payload(conn, recipe_id)
+            except ManorError as exc:
+                raise _nutrition_error_to_http(exc)
+
+    @app.post("/api/v1/kitchen/recipes/{recipe_id}/rebuild-nutrition")
+    def recipe_rebuild_nutrition(recipe_id: int) -> dict[str, object]:
+        """材料から推定して保存する（ADR-019 D4）。`site`／`manual` は上書きしない。"""
+        require_writable(ctx)
+        from ...staff.chef import nutrition as chef_nutrition
+
+        with open_conn(ctx) as conn:
+            _require_chef_recipes(conn)
+            _require_chef_food(conn)
+            try:
+                chef_nutrition.rebuild(conn, recipe_id=recipe_id)
+                payload = chef_nutrition.nutrition_payload(conn, recipe_id)
+            except ManorError as exc:
+                conn.rollback()
+                raise _nutrition_error_to_http(exc)
+            commit_and_render(conn, ctx)
+            return payload
+
+    @app.get("/api/v1/kitchen/food/search")
+    def food_search(q: str = "", limit: int = 30) -> dict[str, object]:
+        """成分表を名前の部分一致で引く（ADR-019 D5「食品を選ぶ」）。"""
+        from ...staff.chef import nutrition as chef_nutrition
+
+        with open_conn(ctx) as conn:
+            _require_chef_food(conn)
+            try:
+                return {"items": chef_nutrition.search_foods(conn, q, limit=limit)}
+            except ManorError as exc:
+                raise _nutrition_error_to_http(exc)
+
+    @app.get("/api/v1/kitchen/food/aliases")
+    def food_aliases() -> dict[str, object]:
+        """名寄せの画面の中身（ADR-019 D5）: 未解決の一覧＋登録済みの名寄せ。"""
+        from ...staff.chef import nutrition as chef_nutrition
+
+        with open_conn(ctx) as conn:
+            _require_chef_recipes(conn)
+            _require_chef_food(conn)
+            try:
+                unresolved = chef_nutrition.unresolved_summary(conn)
+                aliases = chef_nutrition.list_aliases(conn)
+            except ManorError as exc:
+                raise _nutrition_error_to_http(exc)
+            return {
+                "unresolved": unresolved["items"],
+                "unresolved_total": unresolved["total"],
+                "food_table_available": unresolved.get("available", True),
+                "aliases": aliases,
+            }
+
+    @app.post("/api/v1/kitchen/food/aliases")
+    def food_alias_set(body: FoodAliasRequest) -> dict[str, object]:
+        """名寄せを1件入れ、**その場で全件を推定し直す**（ADR-019 D4「再計算の契機」）。"""
+        require_writable(ctx)
+        from ...staff.chef import nutrition as chef_nutrition
+
+        with open_conn(ctx) as conn:
+            _require_chef_recipes(conn)
+            _require_chef_food(conn)
+            try:
+                saved = chef_nutrition.set_alias(
+                    conn, body.alias, body.food_code, confidence=body.confidence
+                )
+                rebuilt = chef_nutrition.rebuild(conn)
+            except ManorError as exc:
+                conn.rollback()
+                raise _nutrition_error_to_http(exc)
+            commit_and_render(conn, ctx)
+            return {"alias": saved, "rebuilt": {k: rebuilt[k] for k in ("updated", "skipped")}}
+
+    @app.delete("/api/v1/kitchen/food/aliases/{alias}")
+    def food_alias_remove(alias: str) -> dict[str, object]:
+        """名寄せを1件消し、推定し直す（間違えて結んだときの戻し口）。"""
+        require_writable(ctx)
+        from ...staff.chef import nutrition as chef_nutrition
+
+        with open_conn(ctx) as conn:
+            _require_chef_recipes(conn)
+            _require_chef_food(conn)
+            try:
+                removed = chef_nutrition.remove_alias(conn, alias)
+                chef_nutrition.rebuild(conn)
+            except ManorError as exc:
+                conn.rollback()
+                raise _nutrition_error_to_http(exc)
+            commit_and_render(conn, ctx)
+            return removed
 
     # --- cook-sessions（ADR-015 D3） ---
 

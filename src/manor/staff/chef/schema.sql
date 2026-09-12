@@ -56,7 +56,10 @@ CREATE TABLE IF NOT EXISTS chef_recipe_meta (   -- うちの値。手で直し�
   -- 分類の3軸（ADR-015 D9）。語彙は lexicon.toml が唯一の出どころ。空文字＝未分類。
   category         TEXT NOT NULL DEFAULT '',
   main_ingredient  TEXT NOT NULL DEFAULT '',
-  cuisine          TEXT NOT NULL DEFAULT ''
+  cuisine          TEXT NOT NULL DEFAULT '',
+  -- 推定（ADR-019 D4）の解決率（0〜1）。`nutrition_source='estimated'` のときだけ意味を持つ。
+  -- 0.8 未満は `partial`＝献立の候補に入れない（ADR-018 D1 に足した規則）。
+  nutrition_coverage REAL
 );
 
 CREATE TABLE IF NOT EXISTS chef_cook_session (  -- XR／画面で「作り始めた」〜「作り終えた」
@@ -90,4 +93,29 @@ CREATE TABLE IF NOT EXISTS chef_media (
   created_at    TEXT NOT NULL, updated_at TEXT NOT NULL,
   -- 同じ動画を同じ人が二度入れることだけを防ぐ（同居人が同じ動画を持つのは重複ではない）。
   UNIQUE (user_id, video_id)
+);
+
+-- 食品成分表の写し（ADR-019 D1）。文部科学省「日本食品標準成分表（八訂）増補 2023 年」を
+-- `manor chef food import` が取り込む。**成分表そのものはリポジトリに入れない**——主人が
+-- 公式サイトから落として `home/` に置く（置き場は `home/ENV.md`）。100g あたりの値だけを
+-- 持つ（ビタミン等は要るときに列を足す）。
+-- 列名は `group` ではなく `food_group`——`group` は SQL の予約語で、毎回の引用符が要る。
+CREATE TABLE IF NOT EXISTS chef_food (
+  food_code      TEXT PRIMARY KEY,          -- 成分表の食品番号（例 01088）
+  food_group     TEXT NOT NULL DEFAULT '',  -- 食品群（無ければ food_code の先頭2桁）
+  name           TEXT NOT NULL,
+  kcal REAL, protein_g REAL, fat_g REAL, carb_g REAL, salt_g REAL,   -- 100g あたり
+  refuse_pct     REAL NOT NULL DEFAULT 0,   -- 廃棄率（%）
+  per            TEXT NOT NULL DEFAULT '100g',
+  source_version TEXT NOT NULL DEFAULT '8th-2023',
+  updated_at     TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_chef_food_name ON chef_food (name);
+
+-- 名寄せ（ADR-019 D2）。材料名（正規化済み）→ 食品番号。
+CREATE TABLE IF NOT EXISTS chef_food_alias (
+  alias      TEXT PRIMARY KEY,              -- 正規化済みの材料名
+  food_code  TEXT NOT NULL REFERENCES chef_food(food_code),
+  confidence TEXT NOT NULL DEFAULT 'manual' CHECK (confidence IN ('manual','rule','llm')),
+  updated_at TEXT NOT NULL
 );
