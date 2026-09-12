@@ -1,0 +1,110 @@
+<!--
+  ADR-015 D7・D8 の試験用。実物の www.sirogohan.com のレシピページ（主人の実測 URL。
+  2026-09-13 に1回だけ取得）から**構造だけ**を残し、script/style/広告/ナビ/SNS/会員用の
+  モーダルを落とし、工程の段落は各ブロック2本ずつに切り詰めた（著作物なので本文は必要最小限）。
+
+  ここで確かめたいこと:
+  - JSON-LD が**無い**ので経路②（adapter:sirogohan）が選ばれる
+  - 分量が**全角数字**（`(２人分)`）でも 2 になる
+  - 材料は `disc-list`（グループ無し）と `a-list`（グループ A）の両方から入り、
+    名前と量は全角スペース＋`…` で分かれる
+  - 工程は段落ごと。`class="note-text"` と「※」で始まる補足は工程にしない
+  - 工程写真は段落の直後の `<ul class="howto-imglist-col1">` の先頭の1枚
+  - 完成画像は `<p id="recipe-main">` の `<img itemprop="image">`
+  - 栄養価は無い（表示自体が無い）
+-->
+<html lang="ja">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="keywords" content="から揚げ,唐揚げ,鶏,レシピ,作り方,塩からあげ,塩">
+  <meta property="og:title" content="やみつきの旨さ！塩唐揚げのレシピ/作り方：白ごはん.com">
+  <meta property="og:image" content="https://www.sirogohan.com/_files/recipe/images/karaage/siokara4628.JPG">
+  <meta property="og:site_name" content="白ごはん.com：おもてなしから基本まで いちばん丁寧な和食レシピサイト">
+  <title>やみつきの旨さ！塩唐揚げのレシピ/作り方：白ごはん.com</title>
+</head>
+
+<body>
+  <div id="contents" class="inner-cont">
+    <article id="main-wrap">
+      <div id="main">
+        <section>
+          <div id="recipe-header" class="inner-main" itemscope itemtype="http://schema.org/Recipe">
+            <h1 id="recipe-name" itemprop="name">やみつきの旨さ！塩唐揚げのレシピ/作り方</h1>
+            <ul class="recipe-category">
+              <li><a href="/recipe/index/genre:C/category:C3"><span>肉のおかず</span></a></li>
+            </ul>
+            <p id="recipe-main"><img itemprop="image"
+                src="https://www.sirogohan.com/_files/recipe/images/karaage/siokara4628.JPG" width="750" height="499"
+                alt="塩唐揚げの写真"></p>
+            <div id="cooking-note">
+              <div class="cooking-note-inner">
+                <p id="cooking-time">調理時間：30分<span class="cooking-time-detail"></span></p>
+              </div>
+            </div>
+            <div class="description-wrap fbox">
+              <div class="recipe-description" itemprop="description">
+                <p>白ごはん.comの「基本の鶏の唐揚げ」は醤油味ベースですが、こちらは塩味。</p>
+              </div>
+              <div class="recipe-sns">
+                <dl class="recipe-keyword">
+                  <dt class="icon-keyword">このレシピのキーワード</dt>
+                  <dd><a href="/recipe/index/keyword:おうち居酒屋">おうち居酒屋</a></dd>
+                  <dd><a href="/recipe/index/keyword:鶏もも肉">鶏もも肉</a></dd>
+                  <dd><a href="/recipe/index/keyword:から揚げ">から揚げ</a></dd>
+                  <dd><a href="/recipe/index/keyword:メイン料理">メイン料理</a></dd>
+                </dl>
+              </div>
+            </div>
+          </div>
+          <section class="material fbox inner-main">
+            <h2 class="material-ttl recipe-sttl">塩唐揚げの材料 <span>(２人分)</span></h2>
+            <div class="material-halfbox">
+              <ul class="disc-list">
+                <li><a href="https://www.sirogohan.com/recipe/index/keyword:%E9%B6%8F%E3%82%82%E3%82%82%E8%82%89">鶏もも肉</a>　…　1枚（約350ｇ）</li>
+                <li>片栗粉　…　大さじ4</li>
+                <li>レモン　…　適宜</li>
+                <li>揚げ油　…　適量</li>
+              </ul>
+              <ul class="a-list">
+                <li>塩　…　小さじ1/2</li>
+                <li>おろしにんにく（チューブ）　…　1㎝分</li>
+                <li>生姜　…　10gほどをすりおろして</li>
+                <li>ごま油　…　大さじ1/2</li>
+                <li>酒　…　大さじ1/2</li>
+                <li>こしょう　…　少々</li>
+              </ul>
+            </div>
+          </section>
+          <section class="howto inner-main">
+            <h2 class="recipe-sttl">やみつきの旨さ！塩唐揚げのレシピ/作り方</h2>
+            <div class="howto-block">
+              <h3 class="howto-ttl icon-num01">塩唐揚げの準備と味付け</h3>
+              <p>鶏肉は芯までスムーズに火を通しやすくするため、時間に余裕があれば室温にもどしておきます。</p>
+              <p>皮ごと、3～4㎝四方くらいの食べやすい大きさにカットします。</p>
+              <ul class="howto-imglist-col1">
+                <li><img src="/_files/recipe/images/karaage/karaageb1.JPG" width="450" height="300"></li>
+              </ul>
+              <p class="note-text mb25"><span class="text13">※冷たいままの鶏肉でもじっくり揚げたらOKなので、問題はナシです。</span></p>
+            </div>
+            <div class="howto-block">
+              <h3 class="howto-ttl icon-num02">鶏の塩唐揚げの美味しい揚げ方/レシピ</h3>
+              <p>揚げ油は160～170℃に熱します。</p>
+              <ul class="howto-imglist-col1">
+                <li><img src="/_files/recipe/images/karaage/siokara6.JPG" width="450" height="300"></li>
+                <li><img src="/_files/recipe/images/karaage/siokara7.JPG" width="450" height="300"></li>
+              </ul>
+              <p>鶏肉に火が通ったら、しっかり油を切って器に盛り付けて完成です。</p>
+              <ul class="howto-imglist-col1">
+                <li><img src="/_files/recipe/images/karaage/siokara8.JPG" width="450" height="300"></li>
+              </ul>
+              <p><span class="text13">※好みで塩気が足りないようなら塩を振りかけても美味しいです。</span></p>
+            </div>
+          </section>
+        </section>
+      </div>
+    </article>
+  </div>
+</body>
+
+</html>

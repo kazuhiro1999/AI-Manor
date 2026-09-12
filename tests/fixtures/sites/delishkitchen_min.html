@@ -1,0 +1,158 @@
+<!--
+  ADR-015 D7・D8 の試験用。実物の delishkitchen.tv のレシピページ（主人の実測 URL。
+  2026-09-13 に1回だけ取得）から**構造だけ**を残し、script/style/広告/ナビ/レビュー
+  （`review` の配列）/関連レシピを落とした（著作物なので本文は必要最小限。工程は実物も2件）。
+  `data-v-xxxxxxxx` は Vue の scoped 属性で、実物と同じ形を残している。
+
+  ここで確かめたいこと:
+  - JSON-LD（`@graph` の中の `Recipe`）があるので経路①（jsonld）が選ばれる
+  - `totalTime` が `"PT600S"`（**秒**）でも 10 分になる
+  - 工程写真は `HowToStep.image` から2枚とも入る
+  - 栄養価は JSON-LD から kcal/たんぱく質/脂質/炭水化物、**食塩相当量は本文の「塩分」表示**から
+    （`sodiumContent` は全体の規則どおり無視する。アダプタが本文の対から読む）
+  - 分類3軸は `keywords`（日本語）＋アダプタが読み替えた `"side dish"`→副菜・
+    `"Japanese"`→和食 から付く
+-->
+<html lang="ja">
+
+<head>
+  <title>箸が止まらない！ 塩昆布の無限キャベツのレシピ動画・作り方 | デリッシュキッチン</title>
+  <meta data-n-head="ssr" data-hid="og:site_name" property="og:site_name" content="デリッシュキッチン">
+  <meta data-n-head="ssr" data-hid="og:image" property="og:image"
+    content="https://image.delishkitchen.tv/recipe/487319391726207399/1.jpg?version=1715871603">
+  <script type="application/ld+json">
+{
+ "@context": "http://schema.org",
+ "@graph": [
+  {
+   "@type": "Recipe",
+   "name": "箸が止まらない！ 塩昆布の無限キャベツ",
+   "description": "ポリ袋に全ての材料を入れてもみこむだけ！",
+   "keywords": "副菜, おつまみ, キャベツ, 野菜のおかず, ごま油, 和え物(野菜)",
+   "recipeYield": "2人分",
+   "recipeIngredient": [
+    "キャベツ 200g",
+    "塩昆布 大さじ1と1/2",
+    "おろしにんにく 小さじ1/3",
+    "白いりごま 小さじ1",
+    "ごま油 大さじ1/2"
+   ],
+   "recipeInstructions": [
+    {
+     "@type": "HowToStep",
+     "text": "キャベツは食べやすい大きさに切る。",
+     "url": "https://delishkitchen.tv/recipes/487319391726207399#step-video-1",
+     "image": "https://media.delishkitchen.tv/recipe/487319391726207399/steps/1.jpg?version=1715243327"
+    },
+    {
+     "@type": "HowToStep",
+     "text": "ポリ袋に全ての材料を入れ、袋の上からもむ。",
+     "url": "https://delishkitchen.tv/recipes/487319391726207399#step-video-2",
+     "image": "https://media.delishkitchen.tv/recipe/487319391726207399/steps/2.jpg?version=1715243327"
+    }
+   ],
+   "image": "https://image.delishkitchen.tv/recipe/487319391726207399/1.jpg?version=1715871603&w=920",
+   "nutrition": {
+    "@type": "NutritionInformation",
+    "calories": "65kcal",
+    "carbohydrateContent": "7.2g",
+    "fatContent": "4g",
+    "proteinContent": "2.3g",
+    "sugarContent": "4.7g",
+    "sodiumContent": "0.8g"
+   },
+   "recipeCuisine": "Japanese",
+   "recipeCategory": "side dish",
+   "cookTime": "PT600S",
+   "prepTime": "PT0M",
+   "totalTime": "PT600S"
+  }
+ ]
+}
+  </script>
+</head>
+
+<body>
+  <div class="recipe-detail">
+    <h1 data-v-3e29246d><span class="lead" data-v-3e29246d>箸が止まらない！</span><br data-v-3e29246d><span
+        class="title" data-v-3e29246d>塩昆布の無限キャベツ</span></h1>
+    <div class="delish-recipe-nutrients" data-v-a40f7ad2 data-v-3e29246d>
+      <div class="delish-recipe-nutrients-data" data-v-a40f7ad2>
+        <ul class="recipe-nutrients" data-v-a40f7ad2>
+          <li class="recipe-nutrient" data-v-a40f7ad2>
+            <div class="nutrient-name" data-v-a40f7ad2><p data-v-a40f7ad2>カロリー</p></div>
+            <div class="nutrient-amount" data-v-a40f7ad2><p data-v-a40f7ad2>65kcal</p></div>
+          </li>
+          <li class="recipe-nutrient" data-v-a40f7ad2>
+            <div class="nutrient-name" data-v-a40f7ad2><p data-v-a40f7ad2>炭水化物</p></div>
+            <div class="nutrient-amount" data-v-a40f7ad2><p data-v-a40f7ad2>7.2g</p></div>
+          </li>
+          <li class="recipe-nutrient" data-v-a40f7ad2>
+            <div class="nutrient-name" data-v-a40f7ad2><p data-v-a40f7ad2>脂質</p></div>
+            <div class="nutrient-amount" data-v-a40f7ad2><p data-v-a40f7ad2>4g</p></div>
+          </li>
+          <li class="recipe-nutrient" data-v-a40f7ad2>
+            <div class="nutrient-name" data-v-a40f7ad2><p data-v-a40f7ad2>たんぱく質</p></div>
+            <div class="nutrient-amount" data-v-a40f7ad2><p data-v-a40f7ad2>2.3g</p></div>
+          </li>
+          <li class="recipe-nutrient" data-v-a40f7ad2>
+            <div class="nutrient-name" data-v-a40f7ad2><p data-v-a40f7ad2>糖質</p></div>
+            <div class="nutrient-amount" data-v-a40f7ad2><p data-v-a40f7ad2>4.7g</p></div>
+          </li>
+          <li class="recipe-nutrient" data-v-a40f7ad2>
+            <div class="nutrient-name" data-v-a40f7ad2><p data-v-a40f7ad2>塩分</p></div>
+            <div class="nutrient-amount" data-v-a40f7ad2><p data-v-a40f7ad2>0.8g</p></div>
+          </li>
+        </ul>
+      </div>
+      <ul class="recipe-description" data-v-a40f7ad2>
+        <li data-v-a40f7ad2>※1人分あたり</li>
+      </ul>
+    </div>
+    <div class="delish-recipe-ingredients" data-v-25cf3c40 data-v-3e29246d>
+      <h2 class="ingredient-header text-h2-renewal" data-v-25cf3c40><span class="recipe-serving" data-v-25cf3c40>
+          材料 <span data-v-25cf3c40>【2人分】</span></span></h2>
+      <ul class="ingredient-list" data-v-25cf3c40>
+        <li class="ingredient" data-v-25cf3c40><a href="/categories/2699" class="ingredient-name" data-v-25cf3c40>
+            キャベツ </a><span class="ingredient-serving" data-v-25cf3c40>200g</span></li>
+        <li class="ingredient" data-v-25cf3c40><a href="/search?q=%E5%A1%A9%E6%98%86%E5%B8%83" class="ingredient-name"
+            data-v-25cf3c40> 塩昆布 </a><span class="ingredient-serving" data-v-25cf3c40>大さじ1と1/2</span></li>
+        <li class="ingredient" data-v-25cf3c40><span class="ingredient-name" data-v-25cf3c40>おろしにんにく</span><span
+            class="ingredient-serving" data-v-25cf3c40>小さじ1/3</span></li>
+        <li class="ingredient" data-v-25cf3c40><span class="ingredient-name" data-v-25cf3c40>白いりごま</span><span
+            class="ingredient-serving" data-v-25cf3c40>小さじ1</span></li>
+        <li class="ingredient" data-v-25cf3c40><span class="ingredient-name" data-v-25cf3c40>ごま油</span><span
+            class="ingredient-serving" data-v-25cf3c40>大さじ1/2</span></li>
+      </ul>
+    </div>
+    <div class="delish-recipe-steps" data-v-64495a5c data-v-3e29246d>
+      <h2 class="text-h2-renewal recipe-steps-title" data-v-64495a5c>手順</h2>
+      <ol class="steps" data-v-64495a5c>
+        <li class="step" data-v-64495a5c>
+          <div class="delish-recipe-step-item" data-v-16145fa6 data-v-64495a5c>
+            <div id="step-video-1" class="step-image-wrap" data-v-16145fa6><video preload="none"
+                poster="https://media.delishkitchen.tv/recipe/487319391726207399/steps/1.jpg?version=1715243327"
+                playsinline="true" class="video-js"></video></div>
+            <p class="step-num" data-v-16145fa6>1</p>
+            <div class="step-text-wrap" data-v-16145fa6>
+              <p class="step-desc" data-v-16145fa6>キャベツは食べやすい大きさに切る。</p>
+            </div>
+          </div>
+        </li>
+        <li class="step" data-v-64495a5c>
+          <div class="delish-recipe-step-item" data-v-16145fa6 data-v-64495a5c>
+            <div id="step-video-2" class="step-image-wrap" data-v-16145fa6><video preload="none"
+                poster="https://media.delishkitchen.tv/recipe/487319391726207399/steps/2.jpg?version=1715243327"
+                playsinline="true" class="video-js"></video></div>
+            <p class="step-num" data-v-16145fa6>2</p>
+            <div class="step-text-wrap" data-v-16145fa6>
+              <p class="step-desc" data-v-16145fa6>ポリ袋に全ての材料を入れ、袋の上からもむ。</p>
+            </div>
+          </div>
+        </li>
+      </ol>
+    </div>
+  </div>
+</body>
+
+</html>

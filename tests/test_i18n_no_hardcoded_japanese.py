@@ -336,25 +336,28 @@ LINE_ALLOWLIST: set[str] = {
     #   `_string_constant_offenders` に直接聞いて入れ替えること（手で数えない）。
     # （ADR-015 §6 追補・2026-09-12: 材料の分割・栄養価の取り込みで行数が増え、
     #   このブロック全体を `_string_constant_offenders` で洗い直した）。
+    # （2026-09-13・取り込み対象を3サイト広げたとき: JSON-LD のタグ収集・アダプタの
+    #   「補い」（`extract_hints`）を足して行数が増え、もう一度洗い直した。
+    #   ここで増えた `_LD_TAG_SPLIT_RE` の読点も「サイトの文字列を割るためのデータ」）。
     "staff/chef/recipe_import.py:129", "staff/chef/recipe_import.py:131",
     "staff/chef/recipe_import.py:133", "staff/chef/recipe_import.py:135",
-    "staff/chef/recipe_import.py:140", "staff/chef/recipe_import.py:465",
-    "staff/chef/recipe_import.py:580", "staff/chef/recipe_import.py:581",
-    "staff/chef/recipe_import.py:703", "staff/chef/recipe_import.py:704",
-    "staff/chef/recipe_import.py:736", "staff/chef/recipe_import.py:839",
-    "staff/chef/recipe_import.py:844", "staff/chef/recipe_import.py:869",
-    "staff/chef/recipe_import.py:913", "staff/chef/recipe_import.py:929",
-    "staff/chef/recipe_import.py:936", "staff/chef/recipe_import.py:938",
-    "staff/chef/recipe_import.py:940", "staff/chef/recipe_import.py:945",
-    "staff/chef/recipe_import.py:953", "staff/chef/recipe_import.py:988",
-    "staff/chef/recipe_import.py:997", "staff/chef/recipe_import.py:999",
-    "staff/chef/recipe_import.py:1002", "staff/chef/recipe_import.py:1006",
-    "staff/chef/recipe_import.py:1020", "staff/chef/recipe_import.py:1028",
-    "staff/chef/recipe_import.py:1031", "staff/chef/recipe_import.py:1054",
-    "staff/chef/recipe_import.py:1055", "staff/chef/recipe_import.py:1060",
-    "staff/chef/recipe_import.py:1061", "staff/chef/recipe_import.py:1138",
-    "staff/chef/recipe_import.py:1279", "staff/chef/recipe_import.py:1303",
-    "staff/chef/recipe_import.py:1305", "staff/chef/recipe_import.py:1341",
+    "staff/chef/recipe_import.py:140", "staff/chef/recipe_import.py:502",
+    "staff/chef/recipe_import.py:692", "staff/chef/recipe_import.py:693",
+    "staff/chef/recipe_import.py:822", "staff/chef/recipe_import.py:823",
+    "staff/chef/recipe_import.py:855", "staff/chef/recipe_import.py:974",
+    "staff/chef/recipe_import.py:979", "staff/chef/recipe_import.py:1011",
+    "staff/chef/recipe_import.py:1055", "staff/chef/recipe_import.py:1071",
+    "staff/chef/recipe_import.py:1078", "staff/chef/recipe_import.py:1080",
+    "staff/chef/recipe_import.py:1082", "staff/chef/recipe_import.py:1087",
+    "staff/chef/recipe_import.py:1095", "staff/chef/recipe_import.py:1130",
+    "staff/chef/recipe_import.py:1139", "staff/chef/recipe_import.py:1141",
+    "staff/chef/recipe_import.py:1144", "staff/chef/recipe_import.py:1148",
+    "staff/chef/recipe_import.py:1162", "staff/chef/recipe_import.py:1170",
+    "staff/chef/recipe_import.py:1173", "staff/chef/recipe_import.py:1196",
+    "staff/chef/recipe_import.py:1197", "staff/chef/recipe_import.py:1202",
+    "staff/chef/recipe_import.py:1203", "staff/chef/recipe_import.py:1280",
+    "staff/chef/recipe_import.py:1434", "staff/chef/recipe_import.py:1458",
+    "staff/chef/recipe_import.py:1460", "staff/chef/recipe_import.py:1496",
     # [データ] staff/chef/media.py（ADR-016 D2・2026-09-12）: `fetch_oembed` の
     # `reason` ——`recipe_import.fetch_page` の `reason` と同じ「共有の診断文字列」。
     # **そもそも主人には見えない**（ADR-016 D2-3 のとおり、oEmbed が落ちても登録は
@@ -370,18 +373,20 @@ LINE_ALLOWLIST: set[str] = {
     # （`_PREP_WORDS`）・既定の phase 見出し（`_PHASE_DEFS` の「下ごしらえ」「調理」
     # 「仕上げ」）は自動抽出が機械的に使う手がかり語・レシピ本体に残る見出し文字列
     # ——画面の文言ではなくデータ（`lexicon.toml` の分類語彙と同じ扱い）。
-    "staff/chef/recipe_shaping.py:25", "staff/chef/recipe_shaping.py:26",
-    "staff/chef/recipe_shaping.py:34", "staff/chef/recipe_shaping.py:35",
-    "staff/chef/recipe_shaping.py:36", "staff/chef/recipe_shaping.py:82",
+    # ⚠ 2026-09-13: アダプタ共通の小道具（`text_only`/`tag_attr`/
+    #   `image_url_from_img_tag`）をここへ移して行がずれたので洗い直した。
+    "staff/chef/recipe_shaping.py:27", "staff/chef/recipe_shaping.py:28",
+    "staff/chef/recipe_shaping.py:36", "staff/chef/recipe_shaping.py:37",
+    "staff/chef/recipe_shaping.py:38", "staff/chef/recipe_shaping.py:84",
     # [データ] staff/chef/recipe_shaping.py（ADR-015 §6 追補・2026-09-12）: 材料の
     # 分割で使う量の語彙（`_QTY_PHRASE_WORDS`/`_QTY_COUNTER_UNITS`/「大さじ」等）と、
     # その語彙を埋め込んだ正規表現（`_NUM_PART`/`_AMOUNT_TAIL_RE`の「各」等）——
     # `_PREP_WORDS` と同じ「手がかり語」の扱いで、画面の文言ではない。
-    "staff/chef/recipe_shaping.py:113", "staff/chef/recipe_shaping.py:118",
-    "staff/chef/recipe_shaping.py:119", "staff/chef/recipe_shaping.py:123",
-    "staff/chef/recipe_shaping.py:128", "staff/chef/recipe_shaping.py:132",
-    "staff/chef/recipe_shaping.py:155", "staff/chef/recipe_shaping.py:179",
-    "staff/chef/recipe_shaping.py:234",
+    "staff/chef/recipe_shaping.py:150", "staff/chef/recipe_shaping.py:155",
+    "staff/chef/recipe_shaping.py:156", "staff/chef/recipe_shaping.py:160",
+    "staff/chef/recipe_shaping.py:165", "staff/chef/recipe_shaping.py:169",
+    "staff/chef/recipe_shaping.py:192", "staff/chef/recipe_shaping.py:216",
+    "staff/chef/recipe_shaping.py:271",
     # [データ] staff/chef/recipe_sites/cookpad.py（ADR-015 D7・2026-09-12）:
     # 「作り方」「手順」はサイトの見出し語を拾うための正規表現の一部（データ）。
     "staff/chef/recipe_sites/cookpad.py:25",
@@ -389,9 +394,32 @@ LINE_ALLOWLIST: set[str] = {
     # 栄養価の表示ラベル語（「エネルギー」「たんぱく質」「脂質」「炭水化物」
     # 「食塩相当量」）——出典サイトの DOM に実在するラベル文字列を拾うための
     # 手がかり語であって、画面の文言ではない（`_NUTRITION_LABELS`）。
+    # ⚠ 2026-09-13: 共通の小道具を `recipe_shaping` へ出して行がずれた（62→60）。
+    "staff/chef/recipe_sites/nadia.py:60", "staff/chef/recipe_sites/nadia.py:61",
     "staff/chef/recipe_sites/nadia.py:62", "staff/chef/recipe_sites/nadia.py:63",
-    "staff/chef/recipe_sites/nadia.py:64", "staff/chef/recipe_sites/nadia.py:65",
-    "staff/chef/recipe_sites/nadia.py:66",
+    "staff/chef/recipe_sites/nadia.py:64",
+    # [データ] staff/chef/recipe_sites/sirogohan.py（ADR-015 D7・2026-09-13）:
+    # 分量「(２人分)」と調理時間「調理時間：30分」を本文から拾う正規表現の一部
+    # （`_SERVINGS_RE`/`_MINUTES_RE`）。出典サイトの表示に実在する文字列で、
+    # 画面の文言ではない。
+    "staff/chef/recipe_sites/sirogohan.py:61", "staff/chef/recipe_sites/sirogohan.py:62",
+    # [データ] staff/chef/recipe_sites/delishkitchen.py（ADR-015 D7・2026-09-13）:
+    # ①栄養価の表示ラベル語（`_NUTRITION_LABELS` の「カロリー」「塩分」等。nadia.py と
+    # 同じ理由）②サイト固有の分類語を `lexicon.toml` の語へ寄せる対応表
+    # （`_TAG_TRANSLATIONS` の「副菜」「和食」等——分類語彙そのもので、`lexicon.toml` の
+    # 分類語彙と同じ「データ」の扱い。⚠ 本来は lexicon 側に英語の手がかり語を足したいが、
+    # 別の担当が同じファイルを編集中のため今回は触らず、報告で挙げた）
+    # ③分量「【2人分】」を拾う正規表現（`_SERVINGS_NUM_RE`）。
+    "staff/chef/recipe_sites/delishkitchen.py:57", "staff/chef/recipe_sites/delishkitchen.py:58",
+    "staff/chef/recipe_sites/delishkitchen.py:59", "staff/chef/recipe_sites/delishkitchen.py:60",
+    "staff/chef/recipe_sites/delishkitchen.py:61", "staff/chef/recipe_sites/delishkitchen.py:69",
+    "staff/chef/recipe_sites/delishkitchen.py:70", "staff/chef/recipe_sites/delishkitchen.py:71",
+    "staff/chef/recipe_sites/delishkitchen.py:72", "staff/chef/recipe_sites/delishkitchen.py:73",
+    "staff/chef/recipe_sites/delishkitchen.py:74", "staff/chef/recipe_sites/delishkitchen.py:75",
+    "staff/chef/recipe_sites/delishkitchen.py:76", "staff/chef/recipe_sites/delishkitchen.py:77",
+    "staff/chef/recipe_sites/delishkitchen.py:78", "staff/chef/recipe_sites/delishkitchen.py:79",
+    "staff/chef/recipe_sites/delishkitchen.py:80", "staff/chef/recipe_sites/delishkitchen.py:81",
+    "staff/chef/recipe_sites/delishkitchen.py:82", "staff/chef/recipe_sites/delishkitchen.py:88",
     # [データ] staff/chef/recipe_sites/generic.py（ADR-015 D7・2026-09-12）:
     # 見出し語の手がかり（「材料」「作り方」「手順」等）——lexicon.toml の分類語彙と
     # 同じ「データ」の扱いで、画面の文言ではない。

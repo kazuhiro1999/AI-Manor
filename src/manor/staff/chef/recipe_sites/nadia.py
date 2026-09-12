@@ -14,9 +14,7 @@
 
 from __future__ import annotations
 
-import html as html_lib
 import re
-import urllib.parse
 
 from .. import recipe_shaping as shaping
 
@@ -90,24 +88,11 @@ def extract_nutrition(html: str) -> dict[str, float]:
     return out
 
 
-def _text_only(fragment: str) -> str:
-    return html_lib.unescape(re.sub(r"<[^>]+>", "", fragment or "")).strip()
-
-
-def _attr(attrs_str: str, name: str) -> str:
-    m = re.search(rf'{name}="([^"]*)"', attrs_str, re.I)
-    return html_lib.unescape(m.group(1)) if m else ""
-
-
-def _image_url_from_img_tag(attrs_str: str, base_url: str) -> str:
-    """`src` → `data-src` → `srcSet`/`srcset` の先頭候補、の順（D8「data-src/srcset も見る」）。"""
-    src = _attr(attrs_str, "src") or _attr(attrs_str, "data-src")
-    if not src:
-        srcset = _attr(attrs_str, "srcSet") or _attr(attrs_str, "srcset") or _attr(attrs_str, "data-srcset")
-        if srcset:
-            first = srcset.split(",")[0].strip()
-            src = first.split(" ")[0] if first else ""
-    return urllib.parse.urljoin(base_url, src) if src else ""
+#: 共通の小道具は `recipe_shaping` へ出してある（2026-09-13。アダプタが5つになり、
+#: 同じ3関数を各ファイルへ写していたのをやめた——`data-src`/`srcset` の癖を直すときに
+#: 1か所で済む）。名前はこのファイルの読み筋を変えないよう別名で受ける。
+_text_only = shaping.text_only
+_image_url_from_img_tag = shaping.image_url_from_img_tag
 
 
 def extract(html: str, url: str) -> dict | None:

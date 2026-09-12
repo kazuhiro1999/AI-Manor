@@ -29,8 +29,8 @@ _HERO_META_RE = re.compile(r'itemprop="image"[^>]*content="([^"]*)"')
 _CATEGORY_LINK_RE = re.compile(r'href="[^"]*/categories/[^"]*"[^>]*>([^<]*)<')
 
 
-def _text_only(fragment: str) -> str:
-    return html_lib.unescape(re.sub(r"<[^>]+>", "", fragment or "")).strip()
+#: 共通の小道具は `recipe_shaping` へ（2026-09-13。`nadia.py` と同じ理由）。
+_text_only = shaping.text_only
 
 
 def extract(html: str, url: str) -> dict | None:

@@ -10,7 +10,9 @@
 
 from __future__ import annotations
 
+import html as html_lib
 import re
+import urllib.parse
 
 #: 工程の見出しを切る区切り（句読点。ADR-015 D7「本文の先頭を句読点まで」）。
 _PUNCTUATION_RE = re.compile(r"[、。！？]")
@@ -83,6 +85,41 @@ def phases_used(steps: list[dict]) -> list[dict]:
 
 
 _HTML_COMMENT_RE = re.compile(r"<!--.*?-->", re.S)
+
+#: 正規表現ベースのアダプタ（`recipe_sites/*.py`）が共通で使う、断片 → 地の文・属性値の
+#: 取り出し（2026-09-13 に共通化。アダプタが5つになり、同じ3関数を各ファイルへ写して
+#: いたのを1つにまとめた——どのアダプタも同じ癖（`data-src`・`srcset`）を見たいので、
+#: 直すときに1か所で済む方がよい）。
+_TAG_RE = re.compile(r"<[^>]+>")
+
+
+def text_only(fragment: str) -> str:
+    """HTML の断片からタグを剥がし、エンティティを戻し、前後の空白を落とす。"""
+    return html_lib.unescape(_TAG_RE.sub("", fragment or "")).strip()
+
+
+def tag_attr(attrs_str: str, name: str) -> str:
+    """開始タグの属性文字列（`<img ...>` の `...` の部分）から属性値を1つ取る。"""
+    m = re.search(rf'{name}="([^"]*)"', attrs_str, re.I)
+    return html_lib.unescape(m.group(1)) if m else ""
+
+
+def image_url_from_img_tag(attrs_str: str, base_url: str) -> str:
+    """`src` → `data-src` → `srcSet`/`srcset` の先頭候補、の順に画像 URL を決めて
+    絶対 URL へ直す（ADR-015 D8「data-src/srcset も見る」——遅延読み込みの `<img>` は
+    `src` が空のことがある）。
+    """
+    src = tag_attr(attrs_str, "src") or tag_attr(attrs_str, "data-src")
+    if not src:
+        srcset = (
+            tag_attr(attrs_str, "srcSet")
+            or tag_attr(attrs_str, "srcset")
+            or tag_attr(attrs_str, "data-srcset")
+        )
+        if srcset:
+            first = srcset.split(",")[0].strip()
+            src = first.split(" ")[0] if first else ""
+    return urllib.parse.urljoin(base_url, src) if src else ""
 
 
 def strip_html_comments(html: str) -> str:

@@ -333,7 +333,44 @@ def _normalize_recipe_ld(obj: dict) -> dict[str, object]:
         "total_time": str(obj.get("totalTime") or ""),
         "yield": obj.get("recipeYield"),
         "nutrition": _normalize_ld_nutrition(obj.get("nutrition")),
+        "site_tags": _ld_site_tags(obj),
     }
+
+
+#: JSON-LD の分類系の鍵（2026-09-13 の実測で、どのサイトも分類の手掛かりをここに置いていた
+#: ——クラシルは `recipeCategory` が「ごはんもの,卵料理,肉,ひき肉」、DELISH KITCHEN は
+#: `keywords` が「副菜, おつまみ, キャベツ, …」。直すまで `_build_meta` へ渡す `site_tags` は
+#: JSON-LD 経路では**常に空**で、3軸は題名と材料名だけから推定していた）。
+_LD_TAG_FIELDS: tuple[str, ...] = ("recipeCategory", "recipeCuisine", "keywords")
+
+#: タグ1本の文字列を割る区切り（読点・カンマ）。`/` や `|` では割らない
+#: ——「和え物(野菜)」のような語を壊さないため（実測の語彙に区切りとして現れなかった）。
+_LD_TAG_SPLIT_RE = re.compile(r"[,、]")
+
+#: `site_tags` の上限。keywords を大量に並べるサイトがあるので、`meta.tags` が
+#: 画面で読めない長さになるのを防ぐ（当たり外れは分類の手掛かりとしては変わらない）。
+_LD_TAGS_MAX = 20
+
+
+def _ld_site_tags(obj: dict) -> list[str]:
+    """`recipeCategory`／`recipeCuisine`／`keywords` を出典のタグとして集める
+    （ADR-015 D9「サイト側のカテゴリ・keywords を `classify` へ渡してよい」）。
+    文字列（読点・カンマ区切り）でも配列でも来るので、どちらも1本の並びへ均す。
+    サイト固有の語（英語の `"side dish"` 等）の読み替えはアダプタの `extract_hints`
+    の領分——ここでは**素のまま**渡す。
+    """
+    out: list[str] = []
+    for field in _LD_TAG_FIELDS:
+        value = obj.get(field)
+        raw_items = value if isinstance(value, list) else [value]
+        for raw in raw_items:
+            if not isinstance(raw, str):
+                continue
+            for part in _LD_TAG_SPLIT_RE.split(_clean_ld_text(raw)):
+                tag = part.strip()
+                if tag and tag not in out:
+                    out.append(tag)
+    return out[:_LD_TAGS_MAX]
 
 
 #: JSON-LD の `NutritionInformation` の鍵 → 契約の `meta` の鍵（ADR-015 §6 追補）。
@@ -530,15 +567,85 @@ def _resolve_title(
     )
 
 
+# --- サイト別アダプタの「補い」（2026-09-13。取り込み対象を3サイト広げたときに足した） ------
+#
+# 経路①（JSON-LD）が本文を担っても、**完成画像・分類の手掛かり・工程写真だけは
+# サイト固有の知識が要る**ことが実測で分かった:
+#
+# - クラシル: JSON-LD の `image` が動画の小さな正方形サムネイル（`..._normal.jpg`）で、
+#   完成画像としては og:image（`..._large.jpg`・800×800）の方が良い
+# - DELISH KITCHEN: `recipeCategory` が `"side dish"`、`recipeCuisine` が `"Japanese"` と
+#   **英語**で、`lexicon.toml` の手がかり語（日本語）に当たらない
+# - DELISH KITCHEN: `sodiumContent` が本文表示の「塩分」と同値＝食塩相当量（g）
+#   ——ナトリウムとして無視する全体の規則の例外（`extract_nutrition` で補う）
+#
+# そこで任意の口 `extract_hints()` を設けた（`recipe_sites/__init__.py` の docstring が
+# 契約の正）。**アダプタが無い／持っていない／例外を投げたら空**——「壊れる前提」（D7）の
+# 約束は同じで、補いが取れなくても取り込み自体は必ず成立する。
+
+
+def _empty_hints() -> dict[str, object]:
+    return {"hero_image": "", "site_tags": [], "step_images": []}
+
+
+def _adapter_hints(
+    html: str,
+    url: str,
+    host: str,
+    *,
+    ld: dict[str, object] | None = None,
+    source: dict[str, object] | None = None,
+) -> dict[str, object]:
+    """ホストに対応するアダプタの `extract_hints()` を1回だけ呼び、形を均して返す。"""
+    matched = recipe_sites.match(host)
+    if matched is None:
+        return _empty_hints()
+    _name, module = matched
+    hook = getattr(module, "extract_hints", None)
+    if not callable(hook):
+        return _empty_hints()
+    try:
+        hints = hook(html, url, ld=ld, source=source)
+    except Exception:  # noqa: BLE001 - 「壊れる前提」（D7 と同じ約束）
+        return _empty_hints()
+    if not isinstance(hints, dict):
+        return _empty_hints()
+    return {
+        "hero_image": str(hints.get("hero_image") or ""),
+        "site_tags": [str(t) for t in (hints.get("site_tags") or []) if str(t).strip()],
+        "step_images": [str(i or "") for i in (hints.get("step_images") or [])],
+    }
+
+
+def _merge_site_tags(*groups: list[str]) -> list[str]:
+    """出典のタグを順序を保って重ねる（重複は落とす）。先に渡した並びが先に来る
+    ——`classify` は**最初に当たった語**で決まるので、アダプタが読み替えた語
+    （確度が高い）を JSON-LD の素の語より前に置きたい。
+    """
+    out: list[str] = []
+    for group in groups:
+        for tag in group:
+            t = str(tag).strip()
+            if t and t not in out:
+                out.append(t)
+    return out
+
+
 # --- 工程の写真（追補・2026-09-12）: JSON-LD に無ければ HTML 側の並びで補う ------------------
 
 
-def _html_step_image_candidates(html: str, url: str, host: str) -> list[str]:
-    """JSON-LD の `HowToStep.image` が1件も無いときの保険。ホストに対応する
-    サイト別アダプタがあればその工程写真の並びを、無ければ汎用抽出の並びを返す
-    （どちらも `data-src`/`srcset` を見る——D8 と同じ約束）。件数が本文の工程数と
-    合うかどうかは呼び出し側（`extract_auto`）が見る。
+def _html_step_image_candidates(
+    html: str, url: str, host: str, *, hints: dict[str, object] | None = None
+) -> list[str]:
+    """JSON-LD の `HowToStep.image` が1件も無いときの保険。アダプタの `extract_hints`
+    が工程写真を指していればそれを、無ければアダプタの `extract()` の並びを、
+    それも無ければ汎用抽出の並びを返す（どれも `data-src`/`srcset` を見る——D8 と
+    同じ約束）。件数が本文の工程数と合うかどうかは呼び出し側（`extract_auto`）が見る。
     """
+    hint_images = [str(i or "") for i in ((hints or {}).get("step_images") or [])]  # type: ignore[union-attr]
+    if any(hint_images):
+        return hint_images
+
     matched = recipe_sites.match(host)
     if matched is not None:
         _name, module = matched
@@ -563,7 +670,12 @@ def _html_step_image_candidates(html: str, url: str, host: str) -> list[str]:
 
 
 def _fill_missing_step_images_from_html(
-    raw_steps: list[dict[str, object]], html: str, url: str, host: str
+    raw_steps: list[dict[str, object]],
+    html: str,
+    url: str,
+    host: str,
+    *,
+    hints: dict[str, object] | None = None,
 ) -> list[str]:
     """`raw_steps` のどれにも `image` が無ければ、HTML 側の並びを工程数が一致した
     ときだけ順に当てる（追補「JSON-LD 経路だと工程の写真が付かない」）。一致しなければ
@@ -572,7 +684,7 @@ def _fill_missing_step_images_from_html(
     if any(rs.get("image") for rs in raw_steps):
         return []  # JSON-LD 自身が画像を持っていた（ここでは何もしない）
 
-    candidates = _html_step_image_candidates(html, url, host)
+    candidates = _html_step_image_candidates(html, url, host, hints=hints)
     if not candidates:
         return []  # HTML 側にも手がかりが無い（工程写真の無いページの可能性がある）
     if len(candidates) != len(raw_steps):
@@ -658,12 +770,19 @@ def _merge_nutrition(
 
 
 def _iso8601_minutes(duration: str) -> int | None:
-    """`PT10M`/`PT1H30M` のような ISO8601 duration を分に変換する。読めなければ `None`。"""
-    m = re.match(r"P(?:T)?(?:(\d+)H)?(?:(\d+)M)?", (duration or "").strip())
+    """`PT10M`/`PT1H30M`/`PT600S` のような ISO8601 duration を分に変換する。
+    読めなければ `None`。
+
+    **秒も見る**——DELISH KITCHEN は `totalTime` を `"PT600S"`（＝10分）で書く
+    （2026-09-13 の実測。直すまで秒だけの duration は丸ごと読めず、調理時間が
+    空のまま取り込まれていた）。秒は分へ繰り上げる（`PT90S` → 2分）——調理時間は
+    目安で、短く見せるより長く見せる方が安全。
+    """
+    m = re.match(r"P(?:T)?(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?", (duration or "").strip())
     if not m or not any(m.groups()):
         return None
-    hours, minutes = int(m.group(1) or 0), int(m.group(2) or 0)
-    total = hours * 60 + minutes
+    hours, minutes, seconds = int(m.group(1) or 0), int(m.group(2) or 0), int(m.group(3) or 0)
+    total = hours * 60 + minutes + -(-seconds // 60)
     return total or None
 
 
@@ -762,12 +881,21 @@ def extract_auto(html: str, url: str) -> dict[str, object]:
 
         # ① JSON-LD の Recipe
         ld = source.get("json_ld_recipe")
+        # アダプタの「補い」は3経路すべてで使う（`_adapter_hints` の節を参照）。
+        # アダプタが無ければ空なので、既存の2サイトの振る舞いは変わらない。
+        hints = _adapter_hints(html, url, host, ld=ld if isinstance(ld, dict) else None, source=source)
+        hint_hero = [str(hints.get("hero_image") or "")]
+        hint_tags = list(hints.get("site_tags") or [])  # type: ignore[arg-type]
+        ld_tags = list(ld.get("site_tags") or []) if isinstance(ld, dict) else []  # type: ignore[arg-type]
+
         if isinstance(ld, dict) and ld.get("instructions") and ld.get("ingredients"):
             raw_steps = [
                 {"instruction": s["text"], "image": s.get("image")}  # type: ignore[index]
                 for s in ld["instructions"]  # type: ignore[union-attr]
             ]
-            image_warnings = _fill_missing_step_images_from_html(raw_steps, html, url, host)
+            image_warnings = _fill_missing_step_images_from_html(
+                raw_steps, html, url, host, hints=hints
+            )
             recipe, warnings = _build_auto_draft(
                 title=_resolve_title(source, host=host, ld=ld),
                 servings=_parse_yield(ld.get("yield")),
@@ -779,11 +907,11 @@ def extract_auto(html: str, url: str) -> dict[str, object]:
                 ],
                 tools=[],
                 raw_steps=raw_steps,
-                hero_candidates=ld_images,
+                hero_candidates=hint_hero + ld_images,
                 source=source,
             )
             recipe["source_site"] = host  # ADR-015「ついで」: 下書きに必ずホスト名を入れる
-            recipe["meta"] = _build_meta(recipe, site_tags=[])
+            recipe["meta"] = _build_meta(recipe, site_tags=_merge_site_tags(hint_tags, ld_tags))
             _merge_nutrition(recipe, ld=ld, html=html, host=host)
             return {
                 "ok": True, "recipe": recipe, "method": "jsonld",
@@ -802,7 +930,7 @@ def extract_auto(html: str, url: str) -> dict[str, object]:
                 adapted = None
 
         if adapted is not None:
-            hero_candidates = [str(adapted.get("hero_image") or "")] + ld_images
+            hero_candidates = [str(adapted.get("hero_image") or "")] + hint_hero + ld_images
             recipe, warnings = _build_auto_draft(
                 title=_resolve_title(source, host=host, override=str(adapted.get("title") or "")),
                 servings=adapted.get("servings"),  # type: ignore[arg-type]
@@ -814,7 +942,14 @@ def extract_auto(html: str, url: str) -> dict[str, object]:
                 source=source,
             )
             recipe["source_site"] = host  # ADR-015「ついで」: 下書きに必ずホスト名を入れる
-            recipe["meta"] = _build_meta(recipe, site_tags=list(adapted.get("site_tags") or []))  # type: ignore[arg-type]
+            recipe["meta"] = _build_meta(
+                recipe,
+                site_tags=_merge_site_tags(
+                    list(adapted.get("site_tags") or []),  # type: ignore[arg-type]
+                    hint_tags,
+                    ld_tags,
+                ),
+            )
             _merge_nutrition(recipe, ld=ld, html=html, host=host)
             return {
                 "ok": True, "recipe": recipe, "method": f"adapter:{adapter_name}",
@@ -845,7 +980,7 @@ def extract_auto(html: str, url: str) -> dict[str, object]:
                 "（Claude での抽出・整形もお試しください）"
             )
 
-        hero_candidates = [str(generic_draft.get("hero_image") or "")] + ld_images
+        hero_candidates = [str(generic_draft.get("hero_image") or "")] + hint_hero + ld_images
         recipe, warnings = _build_auto_draft(
             title=_resolve_title(source, host=host, override=str(generic_draft.get("title") or "")),
             servings=generic_draft.get("servings"),  # type: ignore[arg-type]
@@ -857,7 +992,14 @@ def extract_auto(html: str, url: str) -> dict[str, object]:
             source=source,
         )
         recipe["source_site"] = host  # ADR-015「ついで」: 下書きに必ずホスト名を入れる
-        recipe["meta"] = _build_meta(recipe, site_tags=list(generic_draft.get("site_tags") or []))  # type: ignore[arg-type]
+        recipe["meta"] = _build_meta(
+            recipe,
+            site_tags=_merge_site_tags(
+                list(generic_draft.get("site_tags") or []),  # type: ignore[arg-type]
+                hint_tags,
+                ld_tags,
+            ),
+        )
         _merge_nutrition(recipe, ld=ld, html=html, host=host)
         return {
             "ok": True, "recipe": recipe, "method": "generic",
@@ -1259,9 +1401,22 @@ def import_from_url(
     recipe["source_site"] = urllib.parse.urlsplit(final_url).hostname or ""
     # D8: og:image だけでなく JSON-LD の image も見る（「Nadia の完成画像が取れなかった
     # 原因」の節・本ファイル冒頭の `_resolve_hero_image` docstring を参照）。
-    hero_image, hero_warnings = _resolve_hero_image(source, candidates=_ld_image_candidates(source))
+    host = str(recipe["source_site"])
+    ld_for_hints = source.get("json_ld_recipe")
+    hints = _adapter_hints(
+        html, final_url, host, ld=ld_for_hints if isinstance(ld_for_hints, dict) else None, source=source
+    )
+    hero_image, hero_warnings = _resolve_hero_image(
+        source, candidates=[str(hints.get("hero_image") or "")] + _ld_image_candidates(source)
+    )
     recipe["hero_image"] = hero_image
-    recipe["meta"] = _build_meta(recipe, site_tags=[])
+    recipe["meta"] = _build_meta(
+        recipe,
+        site_tags=_merge_site_tags(
+            list(hints.get("site_tags") or []),  # type: ignore[arg-type]
+            list(ld_for_hints.get("site_tags") or []) if isinstance(ld_for_hints, dict) else [],  # type: ignore[arg-type]
+        ),
+    )
     _merge_nutrition(
         recipe, ld=source.get("json_ld_recipe"), html=html, host=str(recipe["source_site"])
     )

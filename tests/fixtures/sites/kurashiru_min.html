@@ -1,0 +1,80 @@
+<!--
+  ADR-015 D7・D8 の試験用。実物の www.kurashiru.com のレシピページ（主人の実測 URL。
+  2026-09-13 に1回だけ取得）から**構造だけ**を残し、script/style/広告/ナビ/たべれぽ/
+  関連レシピを落とし、工程は5件のうち先頭2件に切り詰めた（著作物なので本文は必要最小限）。
+  class 名（`_8u4gzj…` 等）は vanilla-extract のハッシュで、実物と同じ形を残している。
+
+  ここで確かめたいこと:
+  - JSON-LD の `Recipe` があるので経路①（jsonld）が選ばれる
+  - `recipeYield` が `"2 servings"`（英語）でも分量が 2 になる
+  - 完成画像は **og:image**（`..._square_large.jpg`）——JSON-LD の `image`
+    （`..._square_normal.jpg`）ではない（アダプタの `extract_hints` が og:image を先に指す）
+  - `recipeCategory` の「ごはんもの,卵料理,肉,ひき肉」が分類3軸の手掛かりになる
+  - 工程写真は1枚も無い（本文の `<img>` はロゴとカテゴリのサムネイルだけ）
+-->
+<html lang="ja">
+<head>
+<title>合挽き肉でジューシー！2色のそぼろ丼 作り方・レシピ | クラシル</title>
+<meta content="クラシル" property="og:site_name" />
+<meta content="https://video.kurashiru.com/production/videos/e80338d5/compressed_thumbnail_square_large.jpg?1789223525" property="og:image" />
+<meta content="800" property="og:image:width" />
+<meta content="800" property="og:image:height" />
+<meta content="https://video.kurashiru.com/production/videos/e80338d5/original.mp4" property="og:video" />
+<script type="application/ld+json">
+{
+ "@context": "https://schema.org",
+ "@type": "Recipe",
+ "image": "https://video.kurashiru.com/production/videos/e80338d5/compressed_thumbnail_square_normal.jpg?1789223525",
+ "name": "合挽き肉でジューシー！2色のそぼろ丼",
+ "recipeIngredient": [
+  "ごはん 400g",
+  "卵 2個",
+  "顆粒和風だし 小さじ1/2",
+  "料理酒 大さじ1",
+  "みりん 大さじ1",
+  "サラダ油 小さじ2",
+  "牛豚合びき肉 200g",
+  "料理酒 大さじ2",
+  "きび砂糖 大さじ1",
+  "酒 大さじ2",
+  "しょうゆ 大さじ2",
+  "みりん 大さじ2"
+ ],
+ "recipeInstructions": [
+  {"@type": "HowToStep", "text": "ボウルに卵を入れて溶きほぐし、(A)を入れてかき混ぜます。"},
+  {"@type": "HowToStep", "text": "中火で熱したフライパンにサラダ油をひき、1を入れ、菜箸でかき混ぜながら炒めます。"}
+ ],
+ "recipeCategory": "ごはんもの,卵料理,肉,ひき肉",
+ "prepTime": "PT0M",
+ "cookTime": "PT20M",
+ "totalTime": "PT20M",
+ "recipeYield": "2 servings",
+ "video": {
+  "@type": "VideoObject",
+  "contentUrl": "https://video.kurashiru.com/production/videos/e80338d5/original.mp4",
+  "thumbnailUrl": "https://video.kurashiru.com/production/videos/e80338d5/compressed_thumbnail_square_normal.jpg?1789223525"
+ }
+}
+</script>
+</head>
+<body>
+<h1 class="zexd9f0 _1hv7nezs">合挽き肉でジューシー！2色のそぼろ丼<!-- -->　レシピ・作り方</h1>
+<img src="/production/assets/print-3a10fb1f.png" alt="" class="wq0mjo2"/>
+<img src="https://video.kurashiru.com/production/video_search_categories/2/compressed_thumbnail_small.jpg?1789068757" alt="" class="wq0mjo2"/>
+<section class="_8u4gzj0 browsi_videos_show_ingredients">
+<h2 class="zexd9f0 _1hv7nezt zexd9f6 _8u4gzj1">材料<span class="_8u4gzj2">（<!-- -->2人前<!-- -->）</span></h2>
+<ul>
+<li class="_8u4gzj4"><a href="/search?query=ごはん" class="_8u4gzjc">ごはん</a><span class="_8u4gzja">400g</span></li>
+<li class="_8u4gzj4 _8u4gzj6"><div class="_8u4gzj9">卵そぼろ</div></li>
+<li class="_8u4gzj4 _8u4gzj7"><a href="/search?query=卵" class="_8u4gzjc">卵 (Mサイズ)</a><span class="_8u4gzja">2個</span></li>
+</ul>
+</section>
+<section class="browsi_videos_show_instructions">
+<h2 class="zexd9f0 _1hv7nezt zexd9f6">手順</h2>
+<ul>
+<li class="_1ttze1q2"><div class="_1ttze1q3"><span class="_1ttze1q4">1</span>ボウルに卵を入れて溶きほぐし、(A)を入れてかき混ぜます。</div></li>
+<li class="_1ttze1q2"><div class="_1ttze1q3"><span class="_1ttze1q4">2</span>中火で熱したフライパンにサラダ油をひき、1を入れ、菜箸でかき混ぜながら炒めます。</div></li>
+</ul>
+</section>
+</body>
+</html>
