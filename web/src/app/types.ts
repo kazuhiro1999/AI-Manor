@@ -452,6 +452,86 @@ export interface RecipeImportResult {
 
 export type RecipeImportMode = "auto" | "claude";
 
+/* ---------- kitchen: 献立のおすすめ（ADR-018 D3） ---------- */
+
+// 栄養の5項目（1人分）。`RecipeMeta` の同名の欄と同じ単位。
+export interface MenuNutrition {
+  kcal: number;
+  protein_g: number;
+  fat_g: number;
+  carb_g: number;
+  salt_g: number;
+}
+
+export type MenuNutrient = keyof MenuNutrition;
+
+// 理由は**定型文の符牒**（ADR-018 §4）——文にするのは画面の仕事（`kitchen.menu.reason.*`）。
+// サーバが日本語の文を組むと英語の画面に日本語が出てしまうため。
+export interface MenuReason {
+  code: string;
+  params: Record<string, string | number>;
+}
+
+// 枠（主菜・副菜・汁物）の候補1件。
+export interface MenuCandidate {
+  recipe_id: number;
+  title: string;
+  hero_image: string;
+  total_minutes: number | null;
+  category: string;
+  main_ingredient: string;
+  cuisine: string;
+  dish_type: string;
+  score: number;
+  reasons: MenuReason[];
+  nutrition: MenuNutrition;
+}
+
+// 「この組み合わせ」の1品（採点は持たない——どの枠から来たかだけ）。
+export interface MenuComboItem {
+  recipe_id: number;
+  title: string;
+  hero_image: string;
+  total_minutes: number | null;
+  category: string;
+  main_ingredient: string;
+  cuisine: string;
+  dish_type: string;
+  slot_kind: MenuSlotKind;
+}
+
+export type MenuSlotKind = "main" | "side" | "soup";
+export type MenuBandStatus = "in" | "under" | "over";
+
+export interface MenuBandCheckEntry {
+  total: number;
+  min: number;
+  max: number;
+  status: MenuBandStatus;
+}
+
+export interface MenuCombo {
+  recipe_ids: number[];
+  items: MenuComboItem[];
+  total: MenuNutrition;
+  band_check: Record<string, MenuBandCheckEntry>;
+}
+
+// `GET /api/v1/kitchen/menu/recommend` の応答（ADR-018 D3 が正）。
+export interface MenuRecommendation {
+  slot: string;
+  people: number;
+  band: Record<string, { min: number; max: number }>;
+  applied_mood: { text: string; matched: string[]; conditions: Record<string, unknown> };
+  // 主菜を指定したときだけ入る（指定しなければ `slots.main` に候補が並ぶ）。
+  main: (MenuComboItem & { nutrition: MenuNutrition | null }) | null;
+  slots: Record<MenuSlotKind, MenuCandidate[]>;
+  combo: MenuCombo;
+  // D1 で候補から外れた（栄養値が無い）レシピの件数。
+  excluded_no_nutrition: number;
+  viewing_user_id: string;
+}
+
 /* ---------- kitchen: 動画リスト（ADR-016 D3） ---------- */
 
 // `GET /api/v1/kitchen/media` の1行。**XR（kitchen-xr）が読むのと同じ形**——ADR-016 D3 の

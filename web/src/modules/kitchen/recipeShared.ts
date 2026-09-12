@@ -15,6 +15,14 @@ export const CATEGORY_OPTIONS = ["主菜", "副菜", "汁物", "ご飯もの", "
 export const MAIN_INGREDIENT_OPTIONS = ["肉", "魚介", "卵", "野菜", "豆腐・大豆", "きのこ", "その他"] as const;
 export const CUISINE_OPTIONS = ["和食", "洋食", "中華", "韓国", "エスニック", "その他"] as const;
 
+// ADR-018（献立のおすすめ）。`staff/chef/lexicon.toml` の `[menu.slots]` が写す
+// `category` の値と、`[menu.mood]` の節の名（気分のチップ）。上の3軸と同じ理由で
+// **訳さない**——どちらもバックエンドへ送る値そのもの（`category=主菜`／`mood=さっぱり`）。
+// 気分は自由文で送るので、主人が `[menu.mood]` に節を足したときチップが古くなっても
+// 画面は壊れない（打てば効く）。
+export const MENU_SLOT_CATEGORY = { main: "主菜", side: "副菜", soup: "汁物" } as const;
+export const MENU_MOOD_CHIPS = ["さっぱり", "がっつり", "早く", "温かい", "野菜", "魚"] as const;
+
 // ADR-015 D1「うちの値」の栄養5つ——`RecipeMetaForm`（編集）・`RecipeNewPage`（登録。小さく
 // 出す版）の両方が同じ語彙・並びを使う（画面間で書き写さない）。
 export const NUTRITION_FIELDS = ["kcal", "protein_g", "fat_g", "carb_g", "salt_g"] as const;

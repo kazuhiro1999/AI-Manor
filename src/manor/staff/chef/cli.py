@@ -14,7 +14,7 @@ import sqlite3
 from manor import i18n, util
 from manor.errors import ManorError
 
-from . import media, ops, recipe_import, recipes
+from . import media, menu, ops, recipe_import, recipes
 
 VALID_SLOTS: tuple[str, ...] = ("breakfast", "lunch", "dinner", "snack")
 VALID_AISLES: tuple[str, ...] = ("野菜", "肉魚", "乳卵", "主食", "調味料", "その他")
@@ -615,6 +615,72 @@ def cmd_media_list(conn, home, args) -> object:
     )
 
 
+# --- menu（献立のおすすめ。ADR-018 D7-1） -------------------------------------------
+
+
+def _menu_reason_text(reason: dict) -> str:
+    """理由の符牒を文へ（`menu.py` は文を組まない。ADR-018 §4）。"""
+    params = {str(k): v for k, v in (reason.get("params") or {}).items()}
+    return i18n.t(f"chef.menu.reason.{reason.get('code')}", **params)
+
+
+def cmd_menu(conn, home, args) -> object:
+    """確認用（ADR-018 D7-1）。**決めるのは Web の仕事**——CLI は「規則がどう並べたか」を
+    その場で見るための口で、`--json` は API と同じ形をそのまま出す。
+    """
+    _require_chef_recipe_table(conn)
+    payload = menu.recommend(
+        conn,
+        main_recipe_id=args.main,
+        people=args.people,
+        mood=args.mood or "",
+        slot=args.slot,
+        exclude=[int(v) for v in _split_csv(args.exclude or "")],
+    )
+    if args.json:
+        return payload
+
+    lines: list[str] = []
+    main = payload.get("main")
+    if isinstance(main, dict):
+        lines.append(i18n.t("chef.menu.show.main_fixed", title=main["title"]))
+    applied = payload.get("applied_mood") or {}
+    if isinstance(applied, dict) and applied.get("matched"):
+        lines.append(i18n.t("chef.menu.show.mood", mood="・".join(applied["matched"])))
+    slots = payload.get("slots") or {}
+    for kind in menu.SLOT_KINDS:
+        rows = slots.get(kind) or []  # type: ignore[union-attr]
+        if kind == "main" and isinstance(main, dict):
+            continue
+        lines.append(i18n.t(f"chef.menu.slot.{kind}"))
+        if not rows:
+            lines.append(i18n.t("chef.menu.show.empty_slot"))
+            continue
+        for rank, row in enumerate(rows, start=1):
+            lines.append(
+                i18n.t(
+                    "chef.menu.show.line",
+                    rank=rank,
+                    title=row["title"],
+                    score=row["score"],
+                    reasons="・".join(_menu_reason_text(r) for r in row["reasons"]),
+                )
+            )
+    combo = payload.get("combo") or {}
+    total = combo.get("total") or {}  # type: ignore[union-attr]
+    if total:
+        lines.append(i18n.t("chef.menu.show.combo", **{k: total[k] for k in menu.NUTRIENTS}))
+        checks = combo.get("band_check") or {}  # type: ignore[union-attr]
+        parts = [
+            i18n.t("chef.menu.nutrient." + key) + " " + i18n.t("chef.menu.band." + str(value["status"]))
+            for key, value in checks.items()
+        ]
+        lines.append(i18n.t("chef.menu.show.band", items="・".join(parts)))
+    if payload.get("excluded_no_nutrition"):
+        lines.append(i18n.t("chef.menu.show.excluded", n=payload["excluded_no_nutrition"]))
+    return "\n".join(lines)
+
+
 # --- パーサ組み立て -----------------------------------------------------------------
 
 
@@ -813,3 +879,13 @@ def register(subparsers) -> None:
     p.add_argument("--user", help=i18n.t("cli.chef.media.list.user.help"))
     p.add_argument("--json", action="store_true")
     p.set_defaults(func=cmd_media_list, is_write=False)
+
+    # --- menu（献立のおすすめ。ADR-018 D7-1。下位の動詞を持たない葉のコマンド） ---
+    p = chef_sub.add_parser("menu", help=i18n.t("cli.chef.menu.help"))
+    p.add_argument("--main", type=int, help=i18n.t("cli.chef.menu.main.help"))
+    p.add_argument("--people", type=int, default=2, help=i18n.t("cli.chef.menu.people.help"))
+    p.add_argument("--mood", default="", help=i18n.t("cli.chef.menu.mood.help"))
+    p.add_argument("--slot", default="dinner", help=i18n.t("cli.chef.menu.slot.help"))
+    p.add_argument("--exclude", default="")
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=cmd_menu, is_write=False)

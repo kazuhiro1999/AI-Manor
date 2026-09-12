@@ -622,3 +622,58 @@ table.grid td.col-wide, table.grid th.col-wide { min-width: 220px; }
   .media-thumb { flex-basis: 100px; }
   .media-actions { flex-direction: row; }
 }
+
+/* ---------- kitchen: 献立のおすすめ（ADR-018 D6） ---------- */
+/* 候補は「写真・題名・数値・理由」の横一列——動画リストと同じ形にしてある（同じ持ち場の
+   別ページなので、目の移り方を変えない）。押すとレシピの詳細へ飛ぶので、行ごと <a>。 */
+.menu-field { display: flex; align-items: center; gap: 6px; }
+.menu-field-label { font-size: 11.5px; color: var(--text-dim); white-space: nowrap; }
+.menu-mood-chip { cursor: pointer; }
+.menu-mood-chip[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
+
+.menu-cands { display: flex; flex-direction: column; gap: 8px; }
+.menu-cand {
+  display: flex; gap: 12px; align-items: flex-start; padding: 9px 10px;
+  border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg-panel-2);
+  text-decoration: none; color: inherit;
+}
+.menu-cand:hover { border-color: var(--accent); }
+.menu-cand-thumb {
+  flex: 0 0 92px; display: block; aspect-ratio: 4 / 3; border-radius: var(--radius);
+  overflow: hidden; background: var(--bg-panel);
+}
+.menu-cand-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.menu-cand-thumb-placeholder {
+  display: block; width: 100%; height: 100%; border: 1px dashed var(--border); border-radius: var(--radius);
+}
+.menu-cand-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.menu-cand-title { font-weight: 700; }
+.menu-cand-nums { display: flex; gap: 8px; align-items: center; font-size: 11.5px; color: var(--text-dim); }
+.menu-cand-chip { padding: 1px 7px; font-size: 10.5px; }
+.menu-cand-reasons { display: flex; flex-wrap: wrap; gap: 6px; }
+.menu-reason {
+  font-size: 11px; color: var(--text-dim); background: var(--bg-panel);
+  border: 1px solid var(--border); border-radius: 999px; padding: 1px 8px;
+}
+
+/* 帯との比較。帯内＝緑・不足＝橙・超過＝赤（ADR-018 D6「色で」）。 */
+.menu-band { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.menu-band-cell {
+  display: flex; flex-direction: column; gap: 1px; min-width: 92px; padding: 6px 9px;
+  border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg-panel-2);
+}
+.menu-band-label { font-size: 10.5px; color: var(--text-faint); }
+.menu-band-value { font-size: 15px; font-weight: 700; }
+.menu-band-range { font-size: 10.5px; color: var(--text-faint); }
+.menu-band-status { font-size: 10.5px; font-weight: 700; }
+.menu-band-cell.band-in { border-color: var(--ok); background: var(--ok-bg); }
+.menu-band-cell.band-in .menu-band-status { color: var(--ok); }
+.menu-band-cell.band-under { border-color: var(--warn); background: var(--warn-bg); }
+.menu-band-cell.band-under .menu-band-status { color: var(--warn); }
+.menu-band-cell.band-over { border-color: var(--danger); background: var(--danger-bg); }
+.menu-band-cell.band-over .menu-band-status { color: var(--danger); }
+
+@media (max-width: 620px) {
+  .menu-cand { flex-wrap: wrap; }
+  .menu-cand-thumb { flex-basis: 72px; }
+}

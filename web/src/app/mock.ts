@@ -26,6 +26,10 @@ import type {
   LogData,
   Meal,
   MediaItem,
+  MenuBandStatus,
+  MenuCandidate,
+  MenuReason,
+  MenuRecommendation,
   Meta,
   MoneyData,
   MoneyExpense,
@@ -1656,6 +1660,128 @@ export async function mockApi<T>(path: string, options: ApiOptions = {}): Promis
     findRecipe(id);
     archivedRecipeIds.add(id);
     return { id } as unknown as T;
+  }
+
+  // ---------- kitchen: 献立のおすすめ（ADR-018 D3） ----------
+  // 採点の本体はバックエンド（`staff/chef/menu.py`）。ここは**画面を組むための形**だけを
+  // 返す合成——kcal の大きい順に並べ、理由は符牒を2つ添える（画面が符牒→文の変換を
+  // 正しくできているかを `?mock=1` で目で確かめられるようにするため）。
+  if (path.startsWith("/kitchen/menu/recommend") && method === "GET") {
+    const params = new URLSearchParams(path.includes("?") ? path.slice(path.indexOf("?")) : "");
+    const mainId = params.get("main_recipe_id");
+    const moodText = params.get("mood") || "";
+    const excluded = new Set((params.get("exclude") || "").split(",").filter(Boolean).map(Number));
+    const withNutrition = recipes.filter(
+      (r) => !archivedRecipeIds.has(r.id) && r.meta.kcal != null && r.meta.salt_g != null && !excluded.has(r.id)
+    );
+    const mainRecipe = mainId ? findRecipe(Number(mainId)) : null;
+    const pick = (category: string): MenuCandidate[] =>
+      withNutrition
+        .filter((r) => r.meta.category === category && r.id !== mainRecipe?.id)
+        .slice(0, 5)
+        .map((r, i) => ({
+          recipe_id: r.id,
+          title: r.title,
+          hero_image: r.hero_image || "",
+          total_minutes: r.total_minutes,
+          category: r.meta.category,
+          main_ingredient: r.meta.main_ingredient,
+          cuisine: r.meta.cuisine,
+          dish_type: "",
+          score: Number((2.5 - i * 0.4).toFixed(3)),
+          reasons: [
+            { code: "main_ingredient_differs", params: { main: "肉", cand: r.meta.main_ingredient || "野菜" } },
+            { code: "keeps_salt_low", params: { value: r.meta.salt_g as number } },
+          ] as MenuReason[],
+          nutrition: {
+            kcal: r.meta.kcal as number,
+            protein_g: (r.meta.protein_g ?? 0) as number,
+            fat_g: (r.meta.fat_g ?? 0) as number,
+            carb_g: (r.meta.carb_g ?? 0) as number,
+            salt_g: r.meta.salt_g as number,
+          },
+        }));
+    const slots = { main: mainRecipe ? [] : pick("主菜"), side: pick("副菜"), soup: pick("汁物") };
+    const comboSources = [
+      ...(mainRecipe
+        ? [{ recipe: mainRecipe, kind: "main" as const }]
+        : slots.main[0]
+          ? [{ recipe: findRecipe(slots.main[0].recipe_id), kind: "main" as const }]
+          : []),
+      ...(slots.side[0] ? [{ recipe: findRecipe(slots.side[0].recipe_id), kind: "side" as const }] : []),
+      ...(slots.soup[0] ? [{ recipe: findRecipe(slots.soup[0].recipe_id), kind: "soup" as const }] : []),
+    ];
+    const total = { kcal: 0, protein_g: 0, fat_g: 0, carb_g: 0, salt_g: 0 };
+    for (const { recipe } of comboSources) {
+      total.kcal += recipe.meta.kcal ?? 0;
+      total.protein_g += recipe.meta.protein_g ?? 0;
+      total.fat_g += recipe.meta.fat_g ?? 0;
+      total.carb_g += recipe.meta.carb_g ?? 0;
+      total.salt_g += recipe.meta.salt_g ?? 0;
+    }
+    const band: Record<string, { min: number; max: number }> = {
+      kcal: { min: 600, max: 900 }, protein_g: { min: 20, max: 35 }, fat_g: { min: 15, max: 30 },
+      carb_g: { min: 75, max: 130 }, salt_g: { min: 0, max: 2.5 },
+    };
+    const bandCheck: Record<string, { total: number; min: number; max: number; status: MenuBandStatus }> = {};
+    for (const [key, range] of Object.entries(band)) {
+      const value = Number((total[key as keyof typeof total] as number).toFixed(1));
+      bandCheck[key] = {
+        total: value, min: range.min, max: range.max,
+        status: value < range.min ? "under" : value > range.max ? "over" : "in",
+      };
+    }
+    const payload: MenuRecommendation = {
+      slot: params.get("slot") || "dinner",
+      people: Number(params.get("people") || 2),
+      band,
+      applied_mood: {
+        text: moodText,
+        matched: ["さっぱり", "がっつり", "早く", "温かい", "野菜", "魚"].filter((m) => moodText.includes(m)),
+        conditions: {},
+      },
+      main: mainRecipe
+        ? {
+            recipe_id: mainRecipe.id, title: mainRecipe.title, hero_image: mainRecipe.hero_image || "",
+            total_minutes: mainRecipe.total_minutes, category: mainRecipe.meta.category,
+            main_ingredient: mainRecipe.meta.main_ingredient, cuisine: mainRecipe.meta.cuisine,
+            dish_type: "", slot_kind: "main",
+            nutrition: mainRecipe.meta.kcal == null ? null : {
+              kcal: mainRecipe.meta.kcal, protein_g: mainRecipe.meta.protein_g ?? 0,
+              fat_g: mainRecipe.meta.fat_g ?? 0, carb_g: mainRecipe.meta.carb_g ?? 0,
+              salt_g: mainRecipe.meta.salt_g ?? 0,
+            },
+          }
+        : null,
+      slots,
+      combo: {
+        recipe_ids: comboSources.map(({ recipe }) => recipe.id),
+        items: comboSources.map(({ recipe, kind }) => ({
+          recipe_id: recipe.id, title: recipe.title, hero_image: recipe.hero_image || "",
+          total_minutes: recipe.total_minutes, category: recipe.meta.category,
+          main_ingredient: recipe.meta.main_ingredient, cuisine: recipe.meta.cuisine,
+          dish_type: "", slot_kind: kind,
+        })),
+        total: {
+          kcal: Number(total.kcal.toFixed(1)), protein_g: Number(total.protein_g.toFixed(1)),
+          fat_g: Number(total.fat_g.toFixed(1)), carb_g: Number(total.carb_g.toFixed(1)),
+          salt_g: Number(total.salt_g.toFixed(1)),
+        },
+        band_check: bandCheck,
+      },
+      excluded_no_nutrition: recipes.filter((r) => !archivedRecipeIds.has(r.id) && r.meta.kcal == null).length,
+      viewing_user_id: "master",
+    };
+    return payload as unknown as T;
+  }
+  if (path === "/kitchen/menu/plan" && method === "POST") {
+    const ids = (body.recipe_ids as number[]) || [];
+    if (!ids.length) badRequest("recipe_ids が空です");
+    for (const id of ids) findRecipe(id);
+    return {
+      date: String(body.date || ""), slot: String(body.slot || "dinner"), planned: true,
+      items: ids.map((id, i) => ({ id: i + 1, recipe_id: id, dish: findRecipe(id).title })),
+    } as unknown as T;
   }
 
   // ---------- kitchen: 動画リスト（ADR-016 D3） ----------

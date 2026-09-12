@@ -190,7 +190,11 @@ export function RecipeList() {
           <Link className="btn btn-primary btn-small" to="/kitchen/recipes/new" style={{ marginLeft: "auto" }}>
             {t("kitchen.recipes.addButton")}
           </Link>
-          {/* ADR-016 D4: 動画リストへの行き来（料理長の持ち場の中で2枚を往復する）。 */}
+          {/* ADR-016 D4・ADR-018 D6: 動画リストと献立への行き来（料理長の持ち場の中で
+              何枚かを往復する。どちらも別ページなので、行き来はここに並べて置く）。 */}
+          <Link className="btn btn-small" to="/kitchen/menu">
+            {t("kitchen.menu.link")}
+          </Link>
           <Link className="btn btn-small" to="/kitchen/media">
             {t("kitchen.recipes.mediaLink")}
           </Link>

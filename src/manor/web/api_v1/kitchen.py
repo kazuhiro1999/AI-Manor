@@ -60,6 +60,19 @@ def _media_error_to_http(exc: ManorError) -> HTTPException:
     return manor_error_to_http(exc)
 
 
+def _menu_error_to_http(exc: ManorError) -> HTTPException:
+    """ADR-018 の状態コードへ写す（`_media_error_to_http` と同じ流儀——写し先の出どころは
+    `chef/menu.py` のキー定数）。引数の誤りは 400、レシピが無いのは 404。
+    """
+    from ...staff.chef import menu as chef_menu
+
+    if exc.key == chef_menu.ERR_BAD_REQUEST:
+        return HTTPException(status_code=400, detail=exc.message_ja)
+    if exc.key == chef_menu.ERR_RECIPE_NOT_FOUND:
+        return HTTPException(status_code=404, detail=exc.message_ja)
+    return manor_error_to_http(exc)
+
+
 class PantryAddRequest(BaseModel):
     item: str = Field(..., min_length=1)
     qty: str = "不明"
@@ -146,6 +159,14 @@ class MediaUpdateRequest(BaseModel):
 
 class MediaReorderRequest(BaseModel):
     ids: list[str] = Field(default_factory=list)
+
+
+class MenuPlanRequest(BaseModel):
+    """ADR-018 D6「この献立にする」。`recipe_ids` は主菜・副菜・汁物の id（順序は自由）。"""
+
+    date: str
+    slot: str = "dinner"
+    recipe_ids: list[int] = Field(default_factory=list)
 
 
 class CookSessionStartRequest(BaseModel):
@@ -503,6 +524,64 @@ def register(app: FastAPI, ctx: WebContext) -> None:
             except ManorError as exc:
                 conn.rollback()
                 raise manor_error_to_http(exc)
+            commit_and_render(conn, ctx)
+            return result
+
+    # --- menu（献立のおすすめ。ADR-018 D6） ---
+    #
+    # `viewing_user_id`（ADR-014 D3）を解決して応答に載せるが、**絞りには使わない**
+    # ——台所は共通（ADR-014 D4）なので、誰が開いても同じおすすめが出るのが正
+    # （動画リストが利用者ごとだったのとは逆の判断。ADR-018 §4 に明記）。
+    # 端末鍵の範囲（`web/net.py` の `/api/v1/kitchen`）にそのまま入る。
+
+    @app.get("/api/v1/kitchen/menu/recommend")
+    def menu_recommend(
+        request: Request,
+        main_recipe_id: int | None = None,
+        people: int = 2,
+        mood: str = "",
+        slot: str = "dinner",
+        exclude: str = "",
+    ) -> dict[str, object]:
+        """枠ごとの候補を採点順に返す（ADR-018 D3）。`exclude` はカンマ区切りの id。"""
+        from ...staff.chef import menu as chef_menu
+
+        try:
+            excluded = [int(part) for part in exclude.split(",") if part.strip()]
+        except ValueError:
+            raise HTTPException(status_code=400, detail="exclude はカンマ区切りの id です")
+        with open_conn(ctx) as conn:
+            _require_chef_recipes(conn)
+            try:
+                result = chef_menu.recommend(
+                    conn,
+                    main_recipe_id=main_recipe_id,
+                    people=people,
+                    mood=mood,
+                    slot=slot,
+                    exclude=excluded,
+                )
+            except ManorError as exc:
+                raise _menu_error_to_http(exc)
+            result["viewing_user_id"] = viewing_user_id(request, conn)
+            return result
+
+    @app.post("/api/v1/kitchen/menu/plan")
+    def menu_plan(body: MenuPlanRequest) -> dict[str, object]:
+        """「この献立にする」（ADR-018 D6）。`chef_meal` に `planned=1` で行を書く。"""
+        require_writable(ctx)
+        from ...staff.chef import menu as chef_menu
+
+        with open_conn(ctx) as conn:
+            _require_chef_recipes(conn)
+            _require_chef(conn)
+            try:
+                result = chef_menu.plan(
+                    conn, date=body.date, slot=body.slot, recipe_ids=body.recipe_ids
+                )
+            except ManorError as exc:
+                conn.rollback()
+                raise _menu_error_to_http(exc)
             commit_and_render(conn, ctx)
             return result
 
