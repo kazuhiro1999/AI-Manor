@@ -99,3 +99,15 @@ def test_sirogohan_has_no_nutrition() -> None:
     meta = _extract()["recipe"]["meta"]
     assert "kcal" not in meta
     assert "nutrition_source" not in meta
+
+
+def test_sirogohan_steps_get_the_ingredients_they_use() -> None:
+    """ADR-015 §3: 材料表は「鶏もも肉」、工程の文は「鶏肉」——部位の書き分けを吸収する。
+
+    2番目の工程（「皮ごと、3〜4㎝四方くらいに…」）は材料名を1つも言っていないので
+    空のまま。**言っていないものを足さない**のがこの推定の約束。
+    """
+    steps = _extract()["recipe"]["steps"]
+    assert [s["ingredients_used"] for s in steps] == [
+        ["鶏もも肉"], [], ["揚げ油"], ["鶏もも肉"],
+    ]

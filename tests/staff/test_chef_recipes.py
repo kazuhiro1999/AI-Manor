@@ -485,3 +485,144 @@ def test_validate_does_not_mutate_input(conn, home: Path, sample_recipe: dict) -
     original = copy.deepcopy(sample_recipe)
     recipes.add(conn, sample_recipe)
     assert sample_recipe == original
+
+
+# --- ingredients_used の推定（ADR-015 §3・2026-09-13） -------------------------------------
+#
+# 主人「取り込んだレシピでハイライトが消えた」。XR の材料の板は
+# `steps[].ingredients_used` を見て光らせるので、空だと何も光らない。
+
+
+def test_validate_fills_empty_ingredients_used(conn, home: Path) -> None:
+    """空の工程は登録のときに推定で埋まる（取り込みも手入力も `validate` を通る）。"""
+    recipe = _minimal_recipe()
+    recipe["steps"][0]["ingredients_used"] = []
+    recipe_id = recipes.add(conn, recipe)
+    assert recipes.get(conn, recipe_id)["steps"][0]["ingredients_used"] == ["水"]
+
+
+def test_validate_keeps_ingredients_used_from_source(conn, home: Path) -> None:
+    """出典（や主人）が入れた値は**上書きしない**——推定は空欄の穴埋めにすぎない。"""
+    recipe = _minimal_recipe()
+    recipe["ingredients"] = [{"name": "水"}, {"name": "昆布"}]
+    recipe["steps"][0]["ingredients_used"] = ["昆布"]  # 文は「水を沸かす。」だが出典は昆布と言う
+    recipe_id = recipes.add(conn, recipe)
+    assert recipes.get(conn, recipe_id)["steps"][0]["ingredients_used"] == ["昆布"]
+
+
+def test_update_fills_empty_ingredients_used(conn, home: Path) -> None:
+    """画面からの編集（本体の丸ごと差し替え）でも空の工程は埋まる。"""
+    recipe = _minimal_recipe()
+    recipe_id = recipes.add(conn, recipe)
+    edited = _minimal_recipe()
+    edited["steps"][0]["instruction"] = "鍋に水を入れて沸かす。"
+    edited["steps"][0]["ingredients_used"] = []
+    result = recipes.update(conn, recipe_id, edited)
+    assert result["steps"][0]["ingredients_used"] == ["水"]
+
+
+# --- relink（既存レシピの埋め直し。`manor chef recipe relink`） ----------------------------
+
+
+def _store_with_empty_ingredients_used(conn, recipe: dict) -> int:
+    """取り込みが埋めるようになる**前**に入ったレシピを作る（`ingredients_used` が空のまま）。
+    `add()` は今や埋めてしまうので、入れた後に直接空へ戻す。
+    """
+    recipe_id = recipes.add(conn, recipe)
+    row = conn.execute("SELECT body FROM chef_recipe WHERE id = ?", (recipe_id,)).fetchone()
+    body = json.loads(row["body"])
+    for step in body["steps"]:
+        step["ingredients_used"] = []
+    conn.execute(
+        "UPDATE chef_recipe SET body = ? WHERE id = ?",
+        (json.dumps(body, ensure_ascii=False), recipe_id),
+    )
+    return recipe_id
+
+
+def test_relink_dry_run_reports_without_writing(conn, home: Path, sample_recipe: dict) -> None:
+    recipe_id = _store_with_empty_ingredients_used(conn, sample_recipe)
+    result = recipes.relink_ingredients_used(conn, dry_run=True)
+
+    assert result["dry_run"] is True
+    assert result["scanned"] == 1
+    assert result["updated"] == 1
+    assert result["filled_steps"] >= 1
+    assert result["recipes"][0]["id"] == recipe_id
+    # 下見は1文字も書かない。
+    stored = recipes.get(conn, recipe_id)
+    assert all(step["ingredients_used"] == [] for step in stored["steps"])
+
+
+def test_relink_writes_when_not_dry_run(conn, home: Path, sample_recipe: dict) -> None:
+    recipe_id = _store_with_empty_ingredients_used(conn, sample_recipe)
+    result = recipes.relink_ingredients_used(conn)
+
+    assert result["updated"] == 1
+    steps = recipes.get(conn, recipe_id)["steps"]
+    assert any(step["ingredients_used"] for step in steps)
+    # 見本の炒飯は「卵を溶きほぐす」「ご飯を加える」のような文が並ぶ。
+    by_index = {step["index"]: step["ingredients_used"] for step in steps}
+    assert "卵" in by_index[3]
+
+
+def test_relink_leaves_filled_steps_alone(conn, home: Path, sample_recipe: dict) -> None:
+    """既に入っている工程は触らない（＝2度目の relink は何も変えない）。"""
+    recipes.add(conn, sample_recipe)
+    result = recipes.relink_ingredients_used(conn)
+    assert result["updated"] == 0
+    assert result["recipes"] == []
+
+
+def test_relink_skips_archived_recipes(conn, home: Path, sample_recipe: dict) -> None:
+    recipe_id = _store_with_empty_ingredients_used(conn, sample_recipe)
+    recipes.archive(conn, recipe_id)
+    result = recipes.relink_ingredients_used(conn)
+    assert result["scanned"] == 0
+    assert result["updated"] == 0
+
+
+def test_relink_can_target_one_recipe(conn, home: Path, sample_recipe: dict) -> None:
+    first = _store_with_empty_ingredients_used(conn, sample_recipe)
+    _store_with_empty_ingredients_used(conn, sample_recipe)
+    result = recipes.relink_ingredients_used(conn, recipe_id=first)
+    assert result["scanned"] == 1
+    assert [item["id"] for item in result["recipes"]] == [first]
+
+
+def test_recipe_relink_cli_dry_run_writes_nothing(
+    home_path: Path, capsys: pytest.CaptureFixture, sample_recipe: dict
+) -> None:
+    """`manor chef recipe relink --dry-run` は差分を出すだけ（`is_write` も落とす）。"""
+    from manor import cli
+    from manor import db as db_mod
+
+    assert cli.main(["init"]) == 0
+    capsys.readouterr()
+
+    conn = db_mod.connect(home_path)
+    try:
+        recipe_id = _store_with_empty_ingredients_used(conn, sample_recipe)
+        conn.commit()
+    finally:
+        conn.close()
+
+    assert cli.main(["chef", "recipe", "relink", "--dry-run", "--json"]) == 0
+    result = json.loads(capsys.readouterr().out)
+    assert result["dry_run"] is True
+    assert result["updated"] == 1
+
+    conn = db_mod.connect(home_path)
+    try:
+        assert all(s["ingredients_used"] == [] for s in recipes.get(conn, recipe_id)["steps"])
+    finally:
+        conn.close()
+
+    # 下見でないときは書く。
+    assert cli.main(["chef", "recipe", "relink", "--json"]) == 0
+    assert json.loads(capsys.readouterr().out)["updated"] == 1
+    conn = db_mod.connect(home_path)
+    try:
+        assert any(s["ingredients_used"] for s in recipes.get(conn, recipe_id)["steps"])
+    finally:
+        conn.close()

@@ -395,6 +395,18 @@ LINE_ALLOWLIST: set[str] = {
     "staff/chef/recipe_shaping.py:166", "staff/chef/recipe_shaping.py:170",
     "staff/chef/recipe_shaping.py:211", "staff/chef/recipe_shaping.py:235",
     "staff/chef/recipe_shaping.py:319",
+    # [データ] staff/chef/recipe_shaping.py（ADR-015 §3・2026-09-13）:
+    # `infer_ingredients_used()`（工程が使う材料の推定）が使う**言語の手がかり**
+    # ——材料表ぜんぶを指す言い回し（「全ての材料」）、短い材料名の前に来てよい助詞、
+    # 量の言い回し（「大さじ」等。`_QTY_PHRASE_WORDS` の使い回し）、平仮名・漢字・
+    # カタカナの文字クラス、末尾の揺れ（「肉」「類」）。`_PREP_WORDS` と同じ
+    # 「手がかり語」の扱いで、画面の文言ではない。
+    # ⚠ この節は**ファイルの末尾に足した**——先頭に入れると上の行番号が全部ずれる。
+    "staff/chef/recipe_shaping.py:373", "staff/chef/recipe_shaping.py:384",
+    "staff/chef/recipe_shaping.py:388", "staff/chef/recipe_shaping.py:392",
+    "staff/chef/recipe_shaping.py:393", "staff/chef/recipe_shaping.py:424",
+    "staff/chef/recipe_shaping.py:435", "staff/chef/recipe_shaping.py:440",
+    "staff/chef/recipe_shaping.py:442",
     # [データ] staff/chef/recipe_sites/kurashiru.py（ADR-015 §7 追補・2026-09-13）:
     # 材料一覧の節を本文から探す保険の正規表現に入る見出し語「材料」
     # （`_INGREDIENT_SECTION_FALLBACK_RE`）。出典サイトの表示に実在する文字列で、

@@ -355,3 +355,202 @@ def normalize_food_name(name: str) -> str:
     text = _PARENS_RE.sub("", text)
     text = _NAME_SPACE_RE.sub("", text)
     return text.strip(_NAME_TRIM_CHARS).lower()
+
+
+# --- 工程が使う材料の推定（ADR-015 §3 `steps[].ingredients_used`・2026-09-13） -----------
+#
+# XR の材料の板は `steps[].ingredients_used` を見て、いま使う行を黄色く光らせる。
+# ところが出典サイトが「この工程で使う材料」を明示していることはまず無く、取り込んだ
+# レシピでは空のままだった（主人「取り込んだレシピでハイライトが消えた」）。
+#
+# ここでやるのは**工程の文と材料表だけ**からの機械的な照合で、食材の辞書は持たない
+# （この module の約束）。使うのは「日本語の語の切れ目」の見当だけ——語彙は毎回
+# 材料表そのものから作る。当たらなければ空を返す（＝今より悪くしない）。
+
+#: 材料表ぜんぶを指す言い回し（実測: DELISH の「ポリ袋に全ての材料を入れ、袋の上からもむ」）。
+#: グループ参照の親戚——「材料表という集合」への参照なので、同じ場所で扱う。
+_ALL_INGREDIENTS_PHRASES: tuple[str, ...] = (
+    "全ての材料", "すべての材料", "全材料", "材料全て", "材料すべて", "材料全部",
+)
+
+#: この長さ以下の材料名（塩・油・水・酒・卵・米…）は、**語として現れたときだけ**当てる。
+#: 素の部分一致にすると「油」が「ごま油」「油揚げ」に、「酒」が「料理酒」に当たる。
+_SHORT_NAME_MAX = 2
+
+#: 短い材料名の**直前**に来てよい平仮名（助詞と活用語尾）。ここに無い平仮名が前にあれば、
+#: その材料名は長い語の尻尾（「ごま油」の「油」・「揚げ油」の「油」）と見なして落とす。
+#: ⚠ 「ま」「ぎ」「ゆ」「ん」等は入れない——食材名の末尾によく出る（ごま・ねぎ・
+#: しょうゆ・みりん）ので、入れると誤爆の穴になる。
+_PARTICLE_CHARS = frozenset("をはがにでとやもへからばしてただりるきくいえずつ")
+
+#: 短い材料名の**直後**が漢字でも、そこから量が始まるなら語の切れ目とみなす
+#: （「塩少々をふる」「酒大さじ1を加える」）。`_QTY_PHRASE_WORDS` の使い回し。
+_QTY_LEAD_WORDS: tuple[str, ...] = _QTY_PHRASE_WORDS + ("大さじ", "小さじ", "カップ", "各")
+
+#: 語が続いているとみなす文字（漢字・カタカナ・長音・々）。平仮名は助詞のことが多いので
+#: 含めない（前側だけ `_PARTICLE_CHARS` で細かく見る）。
+_WORD_CHAR_RE = re.compile(r"[々㐀-䶿一-鿿゠-ヿｦ-ﾟ]")
+_HIRAGANA_RE = re.compile(r"[ぁ-ゟ]")
+
+#: グループ記号が `A`・`B` のような半角英数のときに使う「語としての」照合。
+#: `(A)`・`（Ａ）`（NFKC で `(A)` になる）・`調味料B`・`B の材料`・素の `Ｂ` を
+#: これ1本で拾う——前後が英数字でなければよい。
+def _group_token_re(token: str) -> re.Pattern[str]:
+    return re.compile(rf"(?<![0-9a-z]){re.escape(token)}(?![0-9a-z])")
+
+
+def _normalize_instruction(text: str) -> str:
+    """工程の文を照合用に均す。NFKC → 空白を詰める → 小文字。
+
+    **括弧は落とさない**——`normalize_food_name()` と違い、ここでは `(A)` が
+    グループ参照という意味を持つ（落とすと参照ごと消える）。
+    """
+    return _NAME_SPACE_RE.sub("", unicodedata.normalize("NFKC", text or "")).lower()
+
+
+def _name_variants(name: str) -> list[str]:
+    """材料名 → 照合に使う表記の候補。
+
+    1. 正規化した名前そのもの（`normalize_food_name`）
+    2. 末尾の「肉」「類」を落としたもの（「きのこ類」→「きのこ」）
+
+    部位の書き分け（「豚バラ薄切り肉」↔「豚バラ肉」）は工程の文を見ないと作れないので
+    `_meat_cut_matches()` が別に見る。
+    """
+    base = normalize_food_name(name)
+    if not base:
+        return []
+    out = [base]
+    for suffix in ("肉", "類"):
+        if base.endswith(suffix) and len(base) >= 3:
+            out.append(base[:-1])
+    return list(dict.fromkeys(out))
+
+
+#: **部位の書き分け**を吸収する（材料表「豚バラ薄切り肉」↔ 工程の文「豚バラ肉」、
+#: 材料表「鶏もも肉」↔ 工程の文「鶏肉」。主人の炒飯・塩唐揚げの実測）。材料名の
+#: **先頭1文字で始まり「肉」で終わる短い語**を工程の文から拾う——同じ生き物の、
+#: 書き方違いの肉とみなす。間に助詞・読点は挟ませない（「豚バラと鶏肉」を
+#: まとめて1語にしないため）。`{0,4}?` は控えめ（非貪欲）に、最初の「肉」で止める。
+_MEAT_CUT_GAP = r"[^、。,.・（）()とやをはがにでもの]{0,4}?"
+
+
+def _meat_cut_matches(base: str, text: str) -> list[str]:
+    """工程の文から、この材料と同じ肉を指していそうな語を拾う（上の節を参照）。"""
+    if not base.endswith("肉") or len(base) < 2:
+        return []
+    pattern = re.compile(rf"{re.escape(base[0])}{_MEAT_CUT_GAP}肉")
+    return list(dict.fromkeys(m.group() for m in pattern.finditer(text)))
+
+
+def _prev_is_boundary(text: str, start: int) -> bool:
+    """短い材料名の**直前**が語の切れ目か（長い語の尻尾ではないか）。"""
+    if start == 0:
+        return True
+    prev = text[start - 1]
+    if _WORD_CHAR_RE.match(prev):
+        return False  # 「料理酒」の「酒」・「サラダ油」の「油」
+    if _HIRAGANA_RE.match(prev) and prev not in _PARTICLE_CHARS:
+        return False  # 「ごま油」の「油」・「揚げ油」の「油」
+    return True
+
+
+def _looks_like_word(text: str, start: int, end: int) -> bool:
+    """短い材料名が、長い語の一部ではなく**語として**そこに現れているか。"""
+    if not _prev_is_boundary(text, start):
+        return False
+    rest = text[end:]
+    if rest and _WORD_CHAR_RE.match(rest[0]) and not rest.startswith(_QTY_LEAD_WORDS):
+        return False  # 「油揚げ」「卵焼き」「塩昆布」。ただし「塩少々」「酒大さじ1」は語の切れ目
+    return True
+
+
+def _group_referenced(text: str, group: str) -> bool:
+    """正規化済みの工程の文が、この材料グループを指しているか。
+
+    `A`・`B` のような半角英数の記号は**語として**（前後が英数字でない）照合し、
+    `卵そぼろ`・`合わせ調味料` のような語は素の部分一致で見る
+    （工程の文が「合わせ調味料を加える」でグループ名が「調味料」でも当たる）。
+    """
+    token = _normalize_instruction(group)
+    if not token:
+        return False
+    if token.isascii() and token.isalnum():
+        return bool(_group_token_re(token).search(text))
+    return token in text
+
+
+def infer_ingredients_used(instruction: str, ingredients: list[dict]) -> list[str]:
+    """工程の文から、その工程で使う材料名を推定する（ADR-015 §3）。
+
+    `ingredients` は契約 §3 の材料表（`{"name","qty","unit","prep","group"}` の並び。
+    `name` と `group` だけ見る）。戻り値は**材料表の並び**で、重複なし。当たらなければ空。
+
+    当て方は2つ:
+
+    - **名前が文に含まれる**: 材料名を正規化（NFKC・空白と括弧書きの除去・末尾の
+      「肉」「類」と部位の揺れ）して照合する。**長い材料名から**当て、当たった箇所は
+      消費するので「ごま油」を当てた後の「油」は二重に当たらない。1〜2文字の名前は
+      さらに語の切れ目を見る（`_looks_like_word`）
+    - **グループ参照**: `(A)`・`（Ａ）`・`調味料B`・`Bの材料`・`卵そぼろ`・
+      `合わせ調味料` が文にあれば、そのグループの材料をすべて足す。
+      「全ての材料」なら材料表ぜんぶ
+    """
+    text = _normalize_instruction(instruction)
+
+    names: list[str] = []                     # 材料表の並び（重複なし）
+    groups_of: dict[str, set[str]] = {}       # 名前 → その名前が属するグループ
+    for ing in ingredients or []:
+        if not isinstance(ing, dict):
+            continue
+        name = str(ing.get("name") or "").strip()
+        if not name:
+            continue
+        if name not in groups_of:
+            names.append(name)
+            groups_of[name] = set()
+        group = str(ing.get("group") or "").strip()
+        if group:
+            groups_of[name].add(group)
+
+    if not text or not names:
+        return []
+
+    if any(phrase in text for phrase in _ALL_INGREDIENTS_PHRASES):
+        return list(names)
+
+    referenced = {
+        group
+        for groups in groups_of.values()
+        for group in groups
+        if _group_referenced(text, group)
+    }
+
+    # 長い表記から当て、当たった範囲を消費する（「長い材料名から照合し」）。
+    # `strict` は「短い語として語の切れ目まで見るか」——肉の書き分け（`_meat_cut_matches`）は
+    # 「肉」で終わる語を丸ごと拾っているので、直後まで見ると「鶏肉全体に」を落としてしまう。
+    candidates: list[tuple[int, int, int, str, str, bool]] = []
+    for index, name in enumerate(names):
+        variants = _name_variants(name)
+        for order, variant in enumerate(variants):
+            candidates.append((-len(variant), order, index, variant, name, True))
+        base = variants[0] if variants else ""
+        for order, variant in enumerate(_meat_cut_matches(base, text), start=len(variants)):
+            candidates.append((-len(variant), order, index, variant, name, False))
+    candidates.sort()
+
+    matched: set[str] = set()
+    consumed: list[tuple[int, int]] = []
+    for _length, _order, _index, variant, name, strict in candidates:
+        for m in re.finditer(re.escape(variant), text):
+            start, end = m.span()
+            if any(start < c_end and c_start < end for c_start, c_end in consumed):
+                continue
+            if len(variant) <= _SHORT_NAME_MAX:
+                ok = _looks_like_word(text, start, end) if strict else _prev_is_boundary(text, start)
+                if not ok:
+                    continue
+            consumed.append((start, end))
+            matched.add(name)
+
+    return [n for n in names if n in matched or (groups_of[n] & referenced)]

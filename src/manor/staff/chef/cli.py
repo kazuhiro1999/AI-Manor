@@ -521,6 +521,46 @@ def cmd_recipe_set(conn, home, args) -> object:
     return i18n.t("chef.recipe.set.done", id=args.id)
 
 
+def cmd_recipe_relink(conn, home, args) -> object:
+    """既存レシピの「この工程で使う材料」を推定で埋め直す（ADR-015 §3）。
+
+    `--dry-run` は差分だけを出して**1文字も書かない**。射影も作り直さない
+    （`is_write` を落とす——レシピ帳は射影に出ないので、書かない回に `render` まで
+    走らせる意味がない）。
+    """
+    _require_chef_recipe_table(conn)
+    if args.dry_run:
+        args.is_write = False
+    result = recipes.relink_ingredients_used(
+        conn, recipe_id=args.recipe, dry_run=bool(args.dry_run)
+    )
+    if args.json:
+        return result
+
+    changed = result["recipes"]
+    if not changed:
+        return i18n.t("chef.recipe.relink.empty", scanned=result["scanned"])
+    lines: list[str] = []
+    for item in changed:  # type: ignore[union-attr]
+        lines.append(i18n.t("chef.recipe.relink.recipe", id=item["id"], title=item["title"]))
+        for step in item["steps"]:
+            lines.append(
+                i18n.t(
+                    "chef.recipe.relink.step",
+                    index=step["index"],
+                    title=step["title"],
+                    names="・".join(step["ingredients_used"]),
+                )
+            )
+    lines.append(
+        i18n.t(
+            "chef.recipe.relink.done_dry_run" if args.dry_run else "chef.recipe.relink.done",
+            scanned=result["scanned"], updated=result["updated"], steps=result["filled_steps"],
+        )
+    )
+    return "\n".join(lines)
+
+
 def cmd_recipe_archive(conn, home, args) -> object:
     _require_chef_recipe_table(conn)
     recipes.archive(conn, args.id)
@@ -966,6 +1006,14 @@ def register(subparsers) -> None:
     p.add_argument("--json", action="store_true")
     p.add_argument("--no-render", action="store_true")
     p.set_defaults(func=cmd_recipe_set, is_write=True)
+
+    p = recipe_sub.add_parser("relink")
+    p.add_argument("--recipe", type=int, help=i18n.t("cli.chef.recipe.relink.recipe.help"))
+    p.add_argument("--dry-run", action="store_true", dest="dry_run",
+                   help=i18n.t("cli.chef.recipe.relink.dry_run.help"))
+    p.add_argument("--json", action="store_true")
+    p.add_argument("--no-render", action="store_true")
+    p.set_defaults(func=cmd_recipe_relink, is_write=True)
 
     p = recipe_sub.add_parser("archive")
     p.add_argument("id", type=int)

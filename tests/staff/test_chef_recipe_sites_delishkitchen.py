@@ -114,3 +114,12 @@ def test_delishkitchen_adapter_reads_the_body_when_jsonld_is_gone() -> None:
     assert adapted["raw_steps"][0]["image"] == (
         "https://media.delishkitchen.tv/recipe/487319391726207399/steps/1.jpg?version=1715243327"
     )
+
+
+def test_delishkitchen_steps_get_the_ingredients_they_use() -> None:
+    """ADR-015 §3: 「全ての材料を入れ」は材料表ぜんぶへの参照として展開する。"""
+    steps = recipe_import.extract_auto(_html(), URL)["recipe"]["steps"]
+    assert steps[0]["ingredients_used"] == ["キャベツ"]
+    assert steps[1]["ingredients_used"] == [
+        "キャベツ", "塩昆布", "おろしにんにく", "白いりごま", "ごま油",
+    ]

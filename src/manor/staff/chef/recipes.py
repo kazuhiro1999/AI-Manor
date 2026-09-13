@@ -29,6 +29,7 @@ from manor import util
 from manor.errors import ManorError
 
 from . import ops
+from . import recipe_shaping as shaping
 
 #: `steps[].completion` の語彙（ADR-015 §3）。
 VALID_COMPLETION: tuple[str, ...] = ("manual", "auto", "confirm")
@@ -169,9 +170,33 @@ def _validate_step(step: object, index: int, phase_ids: set[str]) -> dict[str, o
     }
 
 
+def fill_ingredients_used(steps: list[dict], ingredients: list[dict]) -> int:
+    """`steps[].ingredients_used` が**空の工程だけ**を推定で埋め、埋めた工程数を返す
+    （ADR-015 §3。`steps` をその場で書き換える）。
+
+    出典が明示していれば（＝既に何か入っていれば）**触らない**——推定は「無いよりまし」の
+    穴埋めであって、出典や主人が手で入れたものより強くはない。
+    """
+    filled = 0
+    for step in steps:
+        if step.get("ingredients_used"):
+            continue
+        guess = shaping.infer_ingredients_used(str(step.get("instruction") or ""), ingredients)
+        if guess:
+            step["ingredients_used"] = guess
+            filled += 1
+    return filled
+
+
 def validate(recipe: dict) -> dict:
     """契約 §3 の形を検算し、正規化した dict を返す（`id`・`meta` は含まない——
     `id` は DB が振り、`meta` は `chef_recipe_meta`/`set_meta` の領分なのでここでは扱わない）。
+
+    **`steps[].ingredients_used` が空の工程はここで推定して埋める**（ADR-015 §3・
+    2026-09-13）。取り込み（JSON-LD・各アダプタ・汎用・Claude）も手入力の登録・編集も、
+    最後はすべてこの関数を通る——**1か所で埋めれば全部の経路が埋まる**ので、経路ごとに
+    同じ呼び出しを撒かない（`recipe_import._validate_with_overflow_allowed()` も
+    ここを呼んでいる）。既存のレシピは `manor chef recipe relink` が同じ規則で埋め直す。
     """
     if not isinstance(recipe, dict):
         raise ManorError("レシピは JSON オブジェクトである必要があります", code=2)
@@ -204,6 +229,7 @@ def validate(recipe: dict) -> dict:
             f"steps.index は1からの連番である必要があります（受け取った値: {indices}）", code=2
         )
     norm_steps.sort(key=lambda s: s["index"])
+    fill_ingredients_used(norm_steps, norm_ingredients)
 
     return {
         "title": title,
@@ -513,6 +539,81 @@ def update(conn: sqlite3.Connection, recipe_id: int, recipe: dict) -> dict[str, 
         ),
     )
     return get(conn, recipe_id)
+
+
+def relink_ingredients_used(
+    conn: sqlite3.Connection, *, recipe_id: int | None = None, dry_run: bool = False
+) -> dict[str, object]:
+    """既存レシピの `steps[].ingredients_used` を埋め直す（ADR-015 §3・2026-09-13）。
+
+    取り込みが `ingredients_used` を埋めるようになる**前に**入ったレシピは空のままで、
+    XR の材料の板が光らない。`recipe_id` を省けば畳んでいない全件が対象。
+    埋めるのは**空の工程だけ**（`fill_ingredients_used` の約束）。
+
+    `dry_run=True` なら**1文字も書かず**に差分だけ返す。
+
+    `update()`（＝`validate()`）を通さずに `body` を直接書き換える——既存のレシピには
+    文字数の上限を超えた工程が実際にある（ADR-015 D2-3「切らずにそのまま返す」ので、
+    取り込みで入った 100 字超えがそのまま保存されている）。検算を通すとそこで落ちて、
+    埋め直しが**上限超えのレシピだけ落ちる**という分かりにくい失敗になる。ここが
+    触るのは `ingredients_used` だけなので、他の欄は読んだまま書き戻す。
+
+    戻り値: `{"scanned","updated","filled_steps","dry_run","recipes":[{"id","title",
+    "steps":[{"index","title","ingredients_used"}]}]}`（`recipes` は**変わったものだけ**）。
+    """
+    if recipe_id is None:
+        rows = conn.execute(
+            "SELECT id, title, body FROM chef_recipe WHERE archived_at IS NULL ORDER BY id"
+        ).fetchall()
+    else:
+        _recipe_row(conn, recipe_id)
+        rows = conn.execute(
+            "SELECT id, title, body FROM chef_recipe WHERE id = ?", (recipe_id,)
+        ).fetchall()
+
+    now = util.now()
+    changed: list[dict[str, object]] = []
+    filled_total = 0
+    for row in rows:
+        body = json.loads(row["body"])
+        steps = body.get("steps") or []
+        ingredients = body.get("ingredients") or []
+        # 埋める前に空だった工程を控えておく（報告に出すのは**今回埋めた分だけ**。
+        # 既に入っていた工程まで並べると、何が変わるのか読めなくなる）。
+        was_empty = {i for i, s in enumerate(steps) if not s.get("ingredients_used")}
+        filled = fill_ingredients_used(steps, ingredients)
+        if not filled:
+            continue
+        filled_total += filled
+        changed.append(
+            {
+                "id": row["id"],
+                "title": row["title"],
+                "steps": [
+                    {
+                        "index": s.get("index"),
+                        "title": s.get("title"),
+                        "ingredients_used": list(s.get("ingredients_used") or []),
+                    }
+                    for i, s in enumerate(steps)
+                    if i in was_empty and s.get("ingredients_used")
+                ],
+            }
+        )
+        if not dry_run:
+            body["steps"] = steps
+            conn.execute(
+                "UPDATE chef_recipe SET body = ?, updated_at = ? WHERE id = ?",
+                (json.dumps(body, ensure_ascii=False), now, row["id"]),
+            )
+
+    return {
+        "scanned": len(rows),
+        "updated": len(changed),
+        "filled_steps": filled_total,
+        "dry_run": dry_run,
+        "recipes": changed,
+    }
 
 
 def set_meta(

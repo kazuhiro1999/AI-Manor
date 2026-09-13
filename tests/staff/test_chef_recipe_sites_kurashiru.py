@@ -110,3 +110,15 @@ def test_kurashiru_has_no_nutrition() -> None:
     meta = _extract()["recipe"]["meta"]
     assert "kcal" not in meta
     assert "nutrition_source" not in meta
+
+
+def test_kurashiru_steps_get_the_ingredients_they_use() -> None:
+    """ADR-015 §3: 取り込みの時点で `ingredients_used` が埋まる（XR の材料の板が光る）。
+
+    クラシルはグループ記号を材料名に埋め込む（`(A)しょうゆ`）ので、工程の
+    「(A)を入れて」がグループの展開になる——名前の一致（「卵」「サラダ油」）と
+    グループ参照の両方がここで確かめられる。
+    """
+    steps = _extract()["recipe"]["steps"]
+    assert steps[0]["ingredients_used"] == ["卵", "顆粒和風だし", "料理酒", "みりん"]
+    assert steps[1]["ingredients_used"] == ["サラダ油"]

@@ -150,6 +150,11 @@ XR クライアント（Unity）の認証は**既存の口**で足りる: `POST 
 }
 ```
 
+`steps[].ingredients_used`（その工程で使う材料名）は**取り込み時に推定で埋める**
+（出典に明示があれば尊重。空の工程だけ。規則は `recipe_shaping.infer_ingredients_used`
+——材料名の一致とグループ参照。既存のレシピは `manor chef recipe relink` で埋め直す）。
+**XR 側も空なら同じ規則で補う。**
+
 ## 4. 段取り
 
 | 段 | 何を | 済みの印 |
