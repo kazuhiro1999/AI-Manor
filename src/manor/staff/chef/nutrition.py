@@ -99,6 +99,24 @@ _COOKED_WORDS: tuple[str, ...] = (
 #: 名寄せの種（ADR-019 §4）。`lexicon.toml` と同じ「語彙はファイルに置く」流儀。
 _SEED_PATH = Path(__file__).with_name("food_aliases_seed.toml")
 
+#: 同梱の正規化 CSV（ADR-019 §4 追補・2026-09-13）。Excel の全角空白・結合セルを
+#: 毎回解くのは無駄という主人のご指摘で、`home/manor.db`（実物 2,538 行）から一度
+#: `manor chef food export` で書き出し、リポジトリに同梱した。`manor chef food import`
+#: を引数なしで打つとこれを読む（`manor init` も表が空ならこれを静かに取り込む）。
+DEFAULT_FOOD_CSV_PATH = Path(__file__).with_name("data") / "food_composition_8th_2023.csv"
+
+#: 同梱 CSV の列（この順で書き出し、この見出しで「同梱 CSV そのものか」を見分ける）。
+#: `source_version`・`per` は持たない——どちらも版で決まる1つの値なので、列にせず
+#: `import_food_table()` の引数（既定 `DEFAULT_SOURCE_VERSION`）・`PER_100G` で足す。
+COMPACT_CSV_FIELDS: tuple[str, ...] = (
+    "food_code", "food_group", "name", "kcal", "protein_g", "fat_g", "carb_g", "salt_g", "refuse_pct",
+)
+
+#: 同梱 CSV へ書き出すときの食品名の空白畳み込み（全角空白混じりの連続を半角1つに）。
+#: 成分表の取り込みは NFKC で全角空白を半角にするが、まれに空白が連続する行が残る
+#: （実物 2,538 行中 1 行「こむぎ [中華めん類] 蒸し中華めん  ソテー」で実測）。
+_EXPORT_NAME_SPACE_RE = re.compile(r"[\s　]+")
+
 
 # --- lexicon（換算の物差しの唯一の出どころ。ここは読むだけ） -----------------------------
 
@@ -776,11 +794,51 @@ def _as_float(text: str) -> float | None:
         return None
 
 
+def _read_compact_csv(rows: Sequence[Sequence[Any]]) -> list[dict[str, Any]] | None:
+    """同梱 CSV（`COMPACT_CSV_FIELDS` の見出しそのまま）なら高速に読む。
+
+    見出しが一致しなければ `None` を返し、呼び出し側は従来どおり
+    `find_columns()`（八訂の本表・それを素直に CSV へ変換したものの見出し探し）へ
+    フォールバックする——**2つの CSV の形を1つの関数で受ける**（ADR-019 §4 追補）。
+    同梱 CSV は既に正規化済みなので、ここでは NFKC 等を掛け直さない
+    （`manor chef food export` が書き出す形をそのまま信じる）。
+    """
+    if not rows:
+        return None
+    header = [str(c or "").strip() for c in rows[0]]
+    if header != list(COMPACT_CSV_FIELDS):
+        return None
+    out: list[dict[str, Any]] = []
+    for row in rows[1:]:
+        if not row or all(_cell(row, i) == "" for i in range(len(row))):
+            continue  # 末尾の空行
+        cells = {key: _cell(row, i) for i, key in enumerate(COMPACT_CSV_FIELDS)}
+        code, name = cells["food_code"], cells["name"]
+        if not code or not name:
+            continue
+        out.append(
+            {
+                "food_code": code,
+                "food_group": cells["food_group"] or code[:2],
+                "name": name,
+                "kcal": _as_float(cells["kcal"]),
+                "protein_g": _as_float(cells["protein_g"]),
+                "fat_g": _as_float(cells["fat_g"]),
+                "carb_g": _as_float(cells["carb_g"]),
+                "salt_g": _as_float(cells["salt_g"]),
+                "refuse_pct": _as_float(cells["refuse_pct"]) or 0.0,
+            }
+        )
+    return out
+
+
 def read_food_rows(path: Path) -> list[dict[str, Any]]:
-    """Excel（`.xlsx`）または CSV から成分表の行を読む（ADR-019 D1）。
+    """Excel（`.xlsx`）または CSV から成分表の行を読む（ADR-019 D1・§4 追補）。
 
     `openpyxl` は**ここで遅延 import** する——取り込みのときだけ要るライブラリなので、
-    `manor` の起動のたびに読み込まない（試験も CSV の偽データで済む）。
+    `manor` の起動のたびに読み込まない（試験も CSV の偽データで済む）。CSV は2つの形を
+    受ける: ①同梱 CSV そのままの見出し（`_read_compact_csv` が高速に読む）、②本表・
+    それを素直に変換した CSV（従来どおり `find_columns` が日本語の見出しを探す）。
     """
     path = Path(path)
     if not path.is_file():
@@ -811,33 +869,35 @@ def read_food_rows(path: Path) -> list[dict[str, Any]]:
         with path.open("r", encoding="utf-8-sig", newline="") as f:
             rows = [list(r) for r in csv.reader(f)]
 
-    start, columns = find_columns(rows)
-    out: list[dict[str, Any]] = []
-    for row in rows[start:]:
-        code = _cell(row, columns["food_code"])
-        name = _cell(row, columns["name"])
-        if not code or not name:
-            continue
-        if not unicodedata.normalize("NFKC", code).replace("-", "").isdigit():
-            continue  # 単位の行・食品群の見出し行
-        group = _cell(row, columns["food_group"]) if "food_group" in columns else ""
-        out.append(
-            {
-                "food_code": unicodedata.normalize("NFKC", code),
-                "food_group": group or unicodedata.normalize("NFKC", code)[:2],
-                "name": unicodedata.normalize("NFKC", name),
-                "kcal": _as_float(_cell(row, columns["kcal"])),
-                "protein_g": _as_float(_cell(row, columns["protein_g"])),
-                "fat_g": _as_float(_cell(row, columns["fat_g"])),
-                "carb_g": _as_float(_cell(row, columns["carb_g"])),
-                "salt_g": _as_float(_cell(row, columns["salt_g"])),
-                "refuse_pct": (
-                    _as_float(_cell(row, columns["refuse_pct"])) or 0.0
-                    if "refuse_pct" in columns
-                    else 0.0
-                ),
-            }
-        )
+    out = _read_compact_csv(rows)
+    if out is None:
+        start, columns = find_columns(rows)
+        out = []
+        for row in rows[start:]:
+            code = _cell(row, columns["food_code"])
+            name = _cell(row, columns["name"])
+            if not code or not name:
+                continue
+            if not unicodedata.normalize("NFKC", code).replace("-", "").isdigit():
+                continue  # 単位の行・食品群の見出し行
+            group = _cell(row, columns["food_group"]) if "food_group" in columns else ""
+            out.append(
+                {
+                    "food_code": unicodedata.normalize("NFKC", code),
+                    "food_group": group or unicodedata.normalize("NFKC", code)[:2],
+                    "name": unicodedata.normalize("NFKC", name),
+                    "kcal": _as_float(_cell(row, columns["kcal"])),
+                    "protein_g": _as_float(_cell(row, columns["protein_g"])),
+                    "fat_g": _as_float(_cell(row, columns["fat_g"])),
+                    "carb_g": _as_float(_cell(row, columns["carb_g"])),
+                    "salt_g": _as_float(_cell(row, columns["salt_g"])),
+                    "refuse_pct": (
+                        _as_float(_cell(row, columns["refuse_pct"])) or 0.0
+                        if "refuse_pct" in columns
+                        else 0.0
+                    ),
+                }
+            )
     if not out:
         raise ManorError(
             "成分表に読める行がありませんでした（本表のシートを渡してください）",
@@ -862,11 +922,20 @@ def require_food_table(conn: sqlite3.Connection) -> None:
 
 
 def import_food_table(
-    conn: sqlite3.Connection, path: Path, *, source_version: str = DEFAULT_SOURCE_VERSION
+    conn: sqlite3.Connection,
+    path: Path | str | None = None,
+    *,
+    source_version: str = DEFAULT_SOURCE_VERSION,
 ) -> dict[str, object]:
-    """成分表を `chef_food` へ取り込む。**冪等**（同じ `food_code` は上書き）。"""
+    """成分表を `chef_food` へ取り込む。**冪等**（同じ `food_code` は上書き）。
+
+    `path` を省略すると**同梱 CSV**（`DEFAULT_FOOD_CSV_PATH`）を読む（ADR-019 §4 追補。
+    主人「日本語の Excel データは面倒、他の扱いやすいデータ形式に移しておくのは
+    どうか」）。版を上げるときだけ、主人が公式サイトから落とした `.xlsx` を明示的に渡す。
+    """
     require_food_table(conn)
-    rows = read_food_rows(Path(path))
+    resolved = Path(path) if path is not None else DEFAULT_FOOD_CSV_PATH
+    rows = read_food_rows(resolved)
     now = util.now()
     before = int(conn.execute("SELECT COUNT(*) AS n FROM chef_food").fetchone()["n"])
     for row in rows:
@@ -889,13 +958,43 @@ def import_food_table(
         )
     after = int(conn.execute("SELECT COUNT(*) AS n FROM chef_food").fetchone()["n"])
     return {
-        "path": str(path),
+        "path": str(resolved),
         "rows": len(rows),
         "added": after - before,
         "updated": len(rows) - (after - before),
         "total": after,
         "source_version": source_version,
     }
+
+
+def export_food_table(conn: sqlite3.Connection, path: Path | str | None = None) -> dict[str, object]:
+    """`chef_food` を正規化した CSV へ書き出す（ADR-019 §4 追補）。**DB は読むだけ**。
+
+    同梱 CSV（`DEFAULT_FOOD_CSV_PATH`）を作り直すときに使う——版を上げて `.xlsx` を
+    取り込み直した後、この関数でもう一度書き出せば同梱 CSV が更新できる。列は
+    `COMPACT_CSV_FIELDS` の9つだけ。名前は空白の連続を半角1つに畳む
+    （`_EXPORT_NAME_SPACE_RE`。実物 2,538 行で1行だけ空白が連続していた実測に基づく）。
+    UTF-8・LF（`lineterminator="\\n"`）で書く——Windows の既定（CRLF）にしない。
+    """
+    require_food_table(conn)
+    out_path = Path(path) if path is not None else DEFAULT_FOOD_CSV_PATH
+    rows = conn.execute(
+        "SELECT food_code, food_group, name, kcal, protein_g, fat_g, carb_g, salt_g, refuse_pct"
+        " FROM chef_food ORDER BY food_code"
+    ).fetchall()
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    with out_path.open("w", encoding="utf-8", newline="") as f:
+        writer = csv.writer(f, lineterminator="\n")
+        writer.writerow(COMPACT_CSV_FIELDS)
+        for row in rows:
+            values: list[Any] = []
+            for key in COMPACT_CSV_FIELDS:
+                v = row[key]
+                if key == "name":
+                    v = _EXPORT_NAME_SPACE_RE.sub(" ", str(v)).strip()
+                values.append("" if v is None else v)
+            writer.writerow(values)
+    return {"path": str(out_path), "rows": len(rows)}
 
 
 # --- 成分表・名寄せの読み書き（DB を触る層） ----------------------------------------------

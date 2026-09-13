@@ -200,6 +200,29 @@ def _migrate_chef_recipe_meta_nutrition_source_site(conn: sqlite3.Connection) ->
     )
 
 
+def _seed_chef_food_if_empty(conn: sqlite3.Connection) -> None:
+    """`chef_food` が空なら同梱 CSV を静かに取り込む（ADR-019 §4 追補・2026-09-13）。
+
+    表が無い home（chef 部下を導入していない）では何もしない（`_add_column_if_missing`
+    と同じ判断）。**`migrate_core()` には置かない**——あちらは「部下のスキーマを
+    当ててはいけない」（表の有無で導入判定するため）が約束で、`chef_food` へ書くのは
+    同じ理由でここ（`init()`。部下のスキーマ適用の後）だけに留める。空チェックは
+    COUNT 1本なので2回目以降はコストが無く、初回も同梱2,538行の取り込みで約30ms
+    （実測）——`manor init` の他の移行と同じ「数百msの余地」に収まる。
+    """
+    exists = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'chef_food'"
+    ).fetchone()
+    if exists is None:
+        return
+    count = conn.execute("SELECT COUNT(*) AS n FROM chef_food").fetchone()["n"]
+    if count:
+        return
+    from .staff.chef import nutrition as chef_nutrition
+
+    chef_nutrition.import_food_table(conn)
+
+
 def migrate_core(home: Path) -> None:
     """**中核の表・列だけ**を冪等に当てる（部下のスキーマには触れない）。
 
@@ -280,13 +303,28 @@ def migrate_core(home: Path) -> None:
         conn.close()
 
 
-def init(home: Path) -> list[str]:
+def init(home: Path, *, seed_chef_food: bool = False) -> list[str]:
     """DB と `home/` の骨を作る。冪等。適用した部下の名前の一覧を返す。
 
     ADR-005 §7 の移行: `rule` 表は core.sql の `CREATE TABLE IF NOT EXISTS` が
     毎回の `init()` で再適用されるので、既存 DB にも自然に足される（追加のコードは要らない）。
     `steward_expense.import_hash` は既存の表に列を足す必要があるため（`CREATE TABLE IF NOT
     EXISTS` では既存の表の列は増えない）、部下のスキーマを当てる前に明示的に移行する。
+
+    `seed_chef_food`（既定 **False**）: ADR-019 §4 追補「`chef_food` が空なら同梱 CSV を
+    静かに取り込む」の on/off。**CLI の `manor init`（`cli._run_init`）だけ True で呼ぶ**。
+    既定を True にすると `db.init()` の素の呼び出し（`tests/conftest.py` の `home`
+    フィクスチャ・`web.create_app`・他の担当の試験が使う `db_mod.init(home_path)` 一式）
+    すべてに実物2,538行が静かに入ってしまう——チェフの試験は「`init()` 直後は
+    `chef_food` が空」という前提で5行の偽データ・149行の抜粋を取り込んで検算する
+    （ADR-019 D6「成分表の実データは試験に入れない」）ため部分一致の検索等が汚染されて
+    壊れ、`web.create_app` 経由では実物データが web の試験（レシピ登録の
+    `nutrition.refresh()` 自動発火 等）にまで波及する（2026-09-13 実測）。主人の指示
+    （ADR-019 §4 追補）は「遅ければ CLI だけにして報告」を許しており、実際には
+    速さではなく**この汚染**が理由で CLI 限定にした——`web.create_app` は `db.init()` を
+    素で呼ぶので、web からの新規 home でも表は空のまま（初回の `manor chef food import`
+    かCLIの`manor init`を待つ。既存の「成分表を入れていない home では refresh() が
+    静かに何もしない」という上書きしない約束はそのまま活きる）。
     """
     home = Path(home)
     home.mkdir(parents=True, exist_ok=True)
@@ -388,6 +426,14 @@ def init(home: Path) -> list[str]:
         # ——`_migrate_chef_recipe_meta_nutrition_source_site` は現在の列をそのまま
         # 新しい表へコピーするので、先に足すとコピー先に無い列を指してしまう。
         _add_column_if_missing(conn, "chef_recipe_meta", "nutrition_coverage", "REAL")
+        # ADR-019 §4 追補（2026-09-13）: `chef_food` が空なら同梱 CSV を静かに取り込む
+        # （主人「Excel は面倒、扱いやすいデータ形式に移しておくのはどうか」）。
+        # **部下のスキーマ適用の後**（`chef_food` 自体が chef のスキーマで作られる）。
+        # 空チェックは COUNT 1本なので、2回目以降の `init()` はコストが無い
+        # （実測: 2,538行の取り込みは約30ms。数百msの余地の中に収まる）。
+        # `seed_chef_food=False`（`init()` の docstring 参照）ならここを丸ごと飛ばす。
+        if seed_chef_food:
+            _seed_chef_food_if_empty(conn)
 
         if conn.execute("SELECT value FROM meta WHERE key='schema_version'").fetchone() is None:
             conn.execute("INSERT INTO meta (key, value) VALUES ('schema_version', '1')")

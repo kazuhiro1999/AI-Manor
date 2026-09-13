@@ -576,12 +576,11 @@ def cmd_recipe_estimate(conn, home, args) -> object:
 
 
 def cmd_food_import(conn, home, args) -> object:
-    """成分表（八訂増補 2023 の Excel か、それを CSV にしたもの）を取り込む。
-
-    **実データはリポジトリに入れない**（ADR-019 D1）——主人が公式サイトから落として
-    `home/` に置いたファイルの道を渡す（置き場は `home/ENV.md`）。冪等。
+    """成分表を取り込む。**引数を省略すると同梱 CSV**（ADR-019 §4 追補）——版を上げる
+    ときだけ、主人が公式サイトから落とした `.xlsx`（または CSV）の道を渡す。冪等。
     """
-    result = nutrition.import_food_table(conn, args.path, source_version=args.source_version)
+    path = args.path if args.path else None
+    result = nutrition.import_food_table(conn, path, source_version=args.source_version)
     # 取り込んだ直後に名寄せの種を入れる（ADR-019 §4）——`nutrition rebuild` の前に
     # 済ませておかないと、初回の推定が「長ねぎ」「片栗粉」を丸ごと取りこぼす。
     seeded = nutrition.seed_aliases(conn)
@@ -595,6 +594,18 @@ def cmd_food_import(conn, home, args) -> object:
         ),
         _seed_line(seeded),
     ])
+
+
+def cmd_food_export(conn, home, args) -> object:
+    """`chef_food` を正規化 CSV へ書き出す（ADR-019 §4 追補）。引数省略で同梱 CSV の場所。
+
+    **DB は読むだけ**——同梱 CSV を版上げ後に作り直すときや、検分用に使う。
+    """
+    path = args.path if args.path else None
+    result = nutrition.export_food_table(conn, path)
+    if args.json:
+        return result
+    return i18n.t("chef.food.export.done", rows=result["rows"], path=result["path"])
 
 
 def _seed_line(seeded: dict) -> str:
@@ -983,7 +994,7 @@ def register(subparsers) -> None:
     food_sub = food_p.add_subparsers(dest="food_verb")
 
     p = food_sub.add_parser("import")
-    p.add_argument("path", help=i18n.t("cli.chef.food.import.path.help"))
+    p.add_argument("path", nargs="?", default=None, help=i18n.t("cli.chef.food.import.path.help"))
     p.add_argument(
         "--source-version",
         dest="source_version",
@@ -993,6 +1004,11 @@ def register(subparsers) -> None:
     p.add_argument("--json", action="store_true")
     p.add_argument("--no-render", action="store_true")
     p.set_defaults(func=cmd_food_import, is_write=True)
+
+    p = food_sub.add_parser("export", help=i18n.t("cli.chef.food.export.help"))
+    p.add_argument("path", nargs="?", default=None, help=i18n.t("cli.chef.food.export.path.help"))
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=cmd_food_export, is_write=False)
 
     p = food_sub.add_parser("seed", help=i18n.t("cli.chef.food.seed.help"))
     p.add_argument("--json", action="store_true")

@@ -1327,7 +1327,9 @@ def build_parser() -> argparse.ArgumentParser:
 def _run_init(args: argparse.Namespace) -> int:
     home = Path(args.home) if getattr(args, "home", None) else util.manor_home()
     try:
-        applied = db.init(home)
+        # ADR-019 §4 追補: `manor init` のときだけ、`chef_food` が空なら同梱の成分表
+        # CSV を静かに取り込む（`db.init` の docstring 参照——既定 False で、CLI 限定）。
+        applied = db.init(home, seed_chef_food=True)
     except ManorError as exc:
         print(exc.localized_message())
         return exc.code
