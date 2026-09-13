@@ -305,6 +305,16 @@ def density_of(normalized: str, tables: UnitTables) -> float:
 
 
 _UNIT_SUFFIX = re.compile(r"(分|ほど|程度|くらい|ぐらい|強|弱|ずつ)$")
+_INLINE_GRAMS = re.compile(r"[（(]\s*約?\s*([0-9]+(?:\.[0-9]+)?)\s*(kg|g|ml|cc)\s*[）)]")
+
+
+def _leading_unit(unit: str, tables: UnitTables) -> str:
+    """単位の文字列の**先頭**にある既知の単位（長いものから）。無ければ空。"""
+    known = set(tables.weight_g) | set(tables.volume_ml) | set(tables.piece) | set(tables.pinch)
+    for word in sorted(known, key=len, reverse=True):
+        if word and unit.startswith(word):
+            return word
+    return ""
 
 
 def to_grams(
@@ -325,6 +335,18 @@ def to_grams(
     # （NFKC で ㎝ は cm になる。実物の Nadia のレシピが「㎝分」だった）。
     unit = _UNIT_SUFFIX.sub("", unit)
     number = parse_number(qty)
+
+    # ①' 括弧の中に重さが書いてあれば、それが一番確か（「1枚（約350g）」）。
+    inline = _INLINE_GRAMS.search(unit)
+    if inline:
+        per = float(inline.group(1)) * (1000.0 if inline.group(2) == "kg" else 1.0)
+        return (number if number is not None else 1.0) * per, ""
+
+    # ①'' 単位の後ろに文が続く（「10gほどをすりおろして」）。先頭の知っている単位だけ読む。
+    if unit and unit not in tables.pinch and unit not in tables.weight_g             and unit not in tables.volume_ml and unit not in tables.piece:
+        head = _leading_unit(unit, tables)
+        if head:
+            unit = head
 
     # ① 数字を伴わない量（少々・ひとつまみ）。食品ごとの固定値があればそれ、無ければ 0。
     if unit in tables.pinch:

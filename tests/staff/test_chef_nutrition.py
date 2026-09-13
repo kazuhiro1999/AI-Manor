@@ -401,3 +401,12 @@ def test_unresolved_summary_groups_by_name(conn) -> None:
     assert item["count"] == 2
     assert item["names"] == ["ナンプラー"]
     assert {r["title"] for r in item["recipes"]} == {"一品目", "二品目"}
+
+
+def test_括弧の中の重さと先頭の単位を読む(tables: nutrition.UnitTables) -> None:
+    # 白ごはん.com「鶏もも肉 1枚（約350ｇ）」— 括弧のグラムが一番確か
+    assert nutrition.to_grams("1", "枚（約350g）", "鶏もも肉", tables)[0] == pytest.approx(350.0)
+    # 「生姜 10gほどをすりおろして」— 先頭の g だけ読む
+    assert nutrition.to_grams("10", "gほどをすりおろして", "しょうが", tables)[0] == pytest.approx(10.0)
+    # 括弧が無ければ枚の目安重量
+    assert nutrition.to_grams("1", "枚", "鶏もも肉", tables)[0] == pytest.approx(250.0)
