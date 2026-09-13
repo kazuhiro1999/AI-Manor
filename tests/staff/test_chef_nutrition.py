@@ -106,7 +106,8 @@ def test_number_parsing_handles_fractions_and_ranges() -> None:
 
 
 def test_unknown_unit_is_unresolved(tables: nutrition.UnitTables) -> None:
-    assert nutrition.to_grams("3", "cm", "長ねぎ", tables) == (None, nutrition.REASON_UNKNOWN_UNIT)
+    assert nutrition.to_grams("3", "ヤード", "長ねぎ", tables) == (None, nutrition.REASON_UNKNOWN_UNIT)
+    assert nutrition.to_grams("20", "㎝分", "長ねぎ", tables)[0] == pytest.approx(50.0)  # ㎝→cm・「分」は落とす
     assert nutrition.to_grams("", "", "長ねぎ", tables) == (None, nutrition.REASON_NO_AMOUNT)
 
 
@@ -203,7 +204,7 @@ def test_coverage_is_weight_ratio_and_unknown_units_count_only_in_denominator(
         [
             {"name": "豚ひき肉", "qty": "100", "unit": "g"},   # 解決（100g）
             {"name": "ナンプラー", "qty": "100", "unit": "g"},  # 分量は分かるが成分表に無い
-            {"name": "青じそ", "qty": "3", "unit": "cm"},       # 換算できない（目安重量で分母へ）
+            {"name": "青じそ", "qty": "3", "unit": "ヤード"},   # 換算できない（目安重量で分母へ）
             {"name": "水", "qty": "", "unit": "適量"},          # 数えない（分母にも入らない）
         ],
         servings=1,

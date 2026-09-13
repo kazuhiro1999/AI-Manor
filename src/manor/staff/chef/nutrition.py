@@ -304,6 +304,9 @@ def density_of(normalized: str, tables: UnitTables) -> float:
     return 1.0 if value is None else value
 
 
+_UNIT_SUFFIX = re.compile(r"(分|ほど|程度|くらい|ぐらい|強|弱|ずつ)$")
+
+
 def to_grams(
     qty: str, unit: str, normalized: str, tables: UnitTables
 ) -> tuple[float | None, str]:
@@ -318,6 +321,9 @@ def to_grams(
     `normalized` は `normalize_name()` を通した材料名（比重・目安重量を引くのに使う）。
     """
     unit = unicodedata.normalize("NFKC", str(unit or "")).strip()
+    # 「20㎝分」「1本ほど」のように単位の後ろに付く語は量の一部ではないので落とす
+    # （NFKC で ㎝ は cm になる。実物の Nadia のレシピが「㎝分」だった）。
+    unit = _UNIT_SUFFIX.sub("", unit)
     number = parse_number(qty)
 
     # ① 数字を伴わない量（少々・ひとつまみ）。食品ごとの固定値があればそれ、無ければ 0。
