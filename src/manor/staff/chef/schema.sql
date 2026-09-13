@@ -119,3 +119,17 @@ CREATE TABLE IF NOT EXISTS chef_food_alias (
   confidence TEXT NOT NULL DEFAULT 'manual' CHECK (confidence IN ('manual','rule','llm')),
   updated_at TEXT NOT NULL
 );
+
+-- 混ぜ物の名寄せ（ADR-019 §4 追補・2026-09-13）。**1つの材料名 → 複数の食品を重みで混ぜる**。
+-- なぜ別の表か: 「合いびき肉」は成分表に無く（`うし ひき肉 生` と `ぶた ひき肉 生` が
+-- 別々にあるだけ）、`chef_food_alias` の「alias 1行＝食品1つ」では表せない。alias に列を
+-- 足す（JSON を1列に詰める）よりも、**行で持って合計 1.0 を検算できる**ほうが素直。
+-- 引く順は `chef_food_alias`（人が決めた1対1）が先で、無ければここ（`nutrition.resolve_food`）。
+-- 推定は重みつきの加重平均で「仮想の食品1行」を組み立てる（`nutrition.blend_row`）。
+CREATE TABLE IF NOT EXISTS chef_food_blend (
+  alias      TEXT NOT NULL,                 -- 正規化済みの材料名（同じ alias が複数行）
+  food_code  TEXT NOT NULL REFERENCES chef_food(food_code),
+  weight     REAL NOT NULL DEFAULT 1,       -- 混ぜる比（同じ alias の中で足して 1 になる想定）
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY (alias, food_code)
+);

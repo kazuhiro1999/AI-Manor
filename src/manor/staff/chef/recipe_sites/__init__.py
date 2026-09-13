@@ -27,7 +27,10 @@ def extract_nutrition(html: str) -> dict[str, float]   # 任意
 def extract_hints(html, url, *, ld=None, source=None) -> dict   # 任意
 ```
 **JSON-LD 経路でも効く補い**（2026-09-13 に追加）。`{"hero_image": str,
-"site_tags": list[str], "step_images": list[str]}` の取れた分だけ返す。`ld` は
+"site_tags": list[str], "step_images": list[str], "ingredient_groups": list[str]}` の
+取れた分だけ返す。`ingredient_groups` は**材料1件ごとのグループ名**を本文の並びの順に
+並べたもの（JSON-LD の `recipeIngredient` と同じ順・同じ件数になる前提。件数が合わなければ
+`recipe_import` が当てずに `warnings` を出す）。`ld` は
 `recipe_import._normalize_recipe_ld` が均した JSON-LD（`site_tags` を含む）、
 `source` は `extract_text()` の戻り（`og_image`・`images`・`title`）——どちらも
 `None` があり得るので参照する側で守る。**なぜ要るか**は

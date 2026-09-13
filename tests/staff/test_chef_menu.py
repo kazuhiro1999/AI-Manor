@@ -280,9 +280,11 @@ def test_estimated_recipe_below_the_coverage_floor_is_dropped() -> None:
     ranked = _score([good, poor])
     assert [s.recipe_id for s in ranked] == [2]
     assert menu.nutrition_status(poor, 0.8) == menu.NUTRITION_PARTIAL
-    # 解決率を持たない古い推定（ADR-019 より前の行）は落とさない——今より悪くしない。
+    # 解決率を持たない古い推定（ADR-019 より前に `claude -p` が入れた行）も `partial`。
+    # 2026-09-13 に改めた——LLM に栄養値を言わせる経路ごと畳んだので、根拠の無い数字を
+    # 献立の候補に残す理由が無くなった（`manor chef nutrition rebuild` で入れ直せる）。
     legacy = _cand(4, "解決率の無い古い推定", nutrition_source="estimated", nutrition_coverage=None)
-    assert menu.nutrition_status(legacy, 0.8) == menu.NUTRITION_OK
+    assert menu.nutrition_status(legacy, 0.8) == menu.NUTRITION_PARTIAL
 
 
 def test_recommend_counts_partial_separately(conn: sqlite3.Connection, stocked: dict[str, int]) -> None:

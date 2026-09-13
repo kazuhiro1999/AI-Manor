@@ -182,6 +182,24 @@ _GROUP_PREFIX_RE = re.compile(
 _NAME_SPLIT_RE = re.compile(r"[、,・]")
 
 
+def split_group_prefix(name: str) -> tuple[str, str]:
+    """材料名の先頭のグループ記号を切り離して `(グループ, 残りの名前)` を返す。
+
+    `(A)しょうゆ` → `("A", "しょうゆ")`、`★みりん` → `("★", "みりん")`、
+    記号が無ければ `("", 元の名前)`。**名前と量が DOM で既に分かれている**サイト
+    （クラシルは `<a>` の中に `(A)` を書く）でも同じ規則で拾えるように、
+    `parse_ingredient_line()` の中に埋もれていた判定をここへ出した（2026-09-13）。
+    """
+    text = (name or "").strip()
+    if not text:
+        return "", ""
+    m = _GROUP_PREFIX_RE.match(text)
+    if not m:
+        return "", text
+    group = next((g for g in m.groups() if g), "")
+    return group, text[m.end():].strip()
+
+
 def _split_amount_text(amount: str) -> tuple[str, str]:
     """量の文字列を `(qty, unit)` へ分ける。「大さじ2と1/2」→`("2と1/2","大さじ")`、
     「300g」→`("300","g")`、「少々」のような数字を伴わない語→`("","少々")`
@@ -238,6 +256,39 @@ def split_grouped_ingredient(name: str, amount: str, *, group: str = "") -> list
     ]
 
 
+#: `ingredient_groups_in_order()` が受ける行の種別。
+ROW_HEADING, ROW_INGREDIENT = "heading", "ingredient"
+
+
+def ingredient_groups_in_order(rows: list[tuple[str, str]]) -> list[str]:
+    """材料一覧の**並び**からグループ名を割り出す（ADR-015 §7 追補・2026-09-13）。
+
+    `rows` は `("heading"|"ingredient", 文字列)` の並び（DOM に出てきた順）。
+    戻り値は **`ingredient` の行だけ**に対応するグループ名の並び。
+
+    決め方は2つで、**材料名そのものに付いた記号が優先**:
+
+    1. 材料名の先頭の `(A)`・`【A】`・`★`（`split_group_prefix`）→ そのグループ
+    2. 直前に現れた見出し（「卵そぼろ」）→ その見出し語
+
+    記号を優先するのは、XR の工程の板が「(B)＝しょうゆ 大さじ1・…」と**短く**
+    添えられるため（主人の目的）。クラシルは見出しと記号が**入れ子**で付く
+    （「肉そぼろ」の中に `(B)` と `(C)` がある）ので、どちらか一方では足りない。
+
+    class 名がハッシュでも使える——**順序だけ**を見て、見出しか材料かの区別は
+    呼び出し側（アダプタ）が DOM の形から決める。
+    """
+    out: list[str] = []
+    current = ""
+    for kind, text in rows:
+        if kind == ROW_HEADING:
+            current = (text or "").strip()
+            continue
+        marker, _rest = split_group_prefix(text)
+        out.append(marker or current)
+    return out
+
+
 def parse_ingredient_line(line: str) -> list[dict[str, str]]:
     """「ご飯 300g」「塩、にんにくチューブ 各小さじ1/2」のような1行（名前と量が
     まだ1本の文字列のまま）を `[{"name","qty","unit","group"}, ...]` へ分ける
@@ -252,13 +303,9 @@ def parse_ingredient_line(line: str) -> list[dict[str, str]]:
     if not text:
         return []
 
-    group = ""
-    gm = _GROUP_PREFIX_RE.match(text)
-    if gm:
-        group = next((g for g in gm.groups() if g), "")
-        text = text[gm.end():].strip()
-        if not text:
-            return [{"name": "", "qty": "", "unit": "", "group": group}]
+    group, text = split_group_prefix(text)
+    if group and not text:
+        return [{"name": "", "qty": "", "unit": "", "group": group}]
 
     m = _AMOUNT_TAIL_RE.search(text)
     if not m:
@@ -280,8 +327,11 @@ def parse_ingredient_line(line: str) -> list[dict[str, str]]:
 # （続きは `staff/chef/nutrition.py`）——この module の約束（「判断を持たない機械的な
 # 変換だけ」）を保つため、語彙をここに書かない。
 
-#: 括弧書き（「玉ねぎ（中）」「豚肉(こま切れ)」）。成分表の食品名には現れないので落とす。
-_PARENS_RE = re.compile(r"[（(\[【][^）)\]】]*[）)\]】]")
+#: 括弧書き（「玉ねぎ（中）」「豚肉(こま切れ)」）と、成分表の食品群の見出し（`<調味料類>`）。
+#: 前者は材料名の飾り、後者は食品の分類の札で、どちらも**食品名そのものではない**。
+#: ⚠ `<…>` を落とし始めたのは 2026-09-13——落とす前は「水」が
+#: 「`<水産練り製品>` だて巻」に部分一致して当たっていた（主人のクラシルの実測で発覚）。
+_PARENS_RE = re.compile(r"[（(\[【<][^）)\]】>]*[）)\]】>]")
 
 #: 空白（全角も）。材料名の中の空白は意味を持たないので詰める。
 _NAME_SPACE_RE = re.compile(r"[\s　]+")
@@ -301,9 +351,7 @@ def normalize_food_name(name: str) -> str:
     仕事で、ここは辞書を持たない（この module の docstring の約束）。
     """
     text = unicodedata.normalize("NFKC", name or "").strip()
-    gm = _GROUP_PREFIX_RE.match(text)
-    if gm:
-        text = text[gm.end():].strip()
+    _group, text = split_group_prefix(text)
     text = _PARENS_RE.sub("", text)
     text = _NAME_SPACE_RE.sub("", text)
     return text.strip(_NAME_TRIM_CHARS).lower()

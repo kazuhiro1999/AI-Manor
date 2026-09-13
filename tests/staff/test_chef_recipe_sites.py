@@ -361,6 +361,25 @@ def test_jsonld_route_splits_each_grouped_ingredient() -> None:
     assert by_name["にんにくチューブ"]["unit"] == "小さじ"
 
 
+def test_jsonld_route_fills_ingredient_groups_from_the_body() -> None:
+    """罠4: 材料のグループ（`IngredientsList_group` の「A」）は JSON-LD に無い
+    （ADR-015 §7 追補）。実ページでも DOM の並びと `recipeIngredient` の並びが一致する
+    （2026-09-13 に確認。どちらも12件で後ろ4件が `A`）ので、アダプタの `extract_hints`
+    が行番号で当てる。
+
+    「塩、にんにくチューブ」は1行が2件に割れるが、**割れた両方**に同じグループが付く。
+    """
+    result = _extract_nadia_jsonld()
+    by_name = {ing["name"]: ing for ing in result["recipe"]["ingredients"]}
+
+    assert by_name["豚バラ肉"]["group"] == ""
+    assert by_name["醤油"]["group"] == ""
+    assert by_name["鶏ガラスープの素"]["group"] == "A"
+    assert by_name["塩"]["group"] == "A"
+    assert by_name["にんにくチューブ"]["group"] == "A"
+    assert by_name["粗挽き黒胡椒"]["group"] == "A"
+
+
 # --- 栄養価をサイトから取り込む（ADR-015 §6 追補） ----------------------------------------
 
 

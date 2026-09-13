@@ -425,31 +425,3 @@ def test_refine_with_claude_reports_reason_when_claude_missing(monkeypatch: pyte
     assert result["ok"] is False
     assert "claude" in result["reason"]
 
-
-# --- estimate_nutrition ---------------------------------------------------------------
-
-
-def test_estimate_nutrition_success(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("shutil.which", lambda name: "claude")
-    monkeypatch.setattr(
-        "subprocess.run",
-        lambda argv, input, **kw: _claude_json_process(
-            _outer(json.dumps({"kcal": 650, "protein_g": 20, "fat_g": 25, "carb_g": 80, "salt_g": 3}))
-        ),
-    )
-    recipe = {"title": "テスト炒飯", "servings": 2, "ingredients": [{"name": "卵", "qty": "3", "unit": "個"}]}
-
-    result = recipe_import.estimate_nutrition(recipe)
-
-    assert result["ok"] is True
-    assert result["nutrition"]["kcal"] == 650.0
-    assert result["nutrition"]["salt_g"] == 3.0
-
-
-def test_estimate_nutrition_reports_502_shaped_failure_when_claude_missing(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr("shutil.which", lambda name: None)
-    result = recipe_import.estimate_nutrition({"title": "テスト", "ingredients": []})
-    assert result["ok"] is False
-    assert "claude" in result["reason"]

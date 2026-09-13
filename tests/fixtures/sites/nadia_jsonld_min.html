@@ -7,6 +7,8 @@
     1. recipeInstructions[].text にタグが混ざる（<a href="...">みじん切り</a>）
     2. <title> にサイト名の尾が付く（JSON-LD の name は綺麗なまま）
     3. JSON-LD の HowToStep に image が無い（本文側の CookingProcess に工程数と同じ枚数がある）
+    4. 材料のグループ（A）が本文の IngredientsList_group にだけあり JSON-LD に無い
+       （ADR-015 §7 追補。実ページも同じ形で、DOM の並びと recipeIngredient の並びが一致する）
 -->
 <html>
 <head><title>豚バラの生姜焼き | レシピサイトNadia風</title>
@@ -39,6 +41,9 @@
 <li><div class="IngredientsList_group__kmzYa"></div><div class="IngredientsList_ingredient__DYoCy">玉ねぎ</div><div class="IngredientsList_amount__uQJk8">1/2個</div></li>
 <li><div class="IngredientsList_group__kmzYa"></div><div class="IngredientsList_ingredient__DYoCy">生姜</div><div class="IngredientsList_amount__uQJk8">1かけ</div></li>
 <li><div class="IngredientsList_group__kmzYa"></div><div class="IngredientsList_ingredient__DYoCy">醤油</div><div class="IngredientsList_amount__uQJk8">大さじ1</div></li>
+<li><div class="IngredientsList_group__kmzYa"><span>A</span></div><div class="IngredientsList_ingredient__DYoCy">鶏ガラスープの素</div><div class="IngredientsList_amount__uQJk8">小さじ1</div></li>
+<li><div class="IngredientsList_group__kmzYa"><span>A</span></div><div class="IngredientsList_ingredient__DYoCy">塩、にんにくチューブ</div><div class="IngredientsList_amount__uQJk8">各小さじ1/2</div></li>
+<li><div class="IngredientsList_group__kmzYa"><span>A</span></div><div class="IngredientsList_ingredient__DYoCy">粗挽き黒胡椒</div><div class="IngredientsList_amount__uQJk8">小さじ1/4</div></li>
 </ul>
 
 <!-- 栄養価の表示（ADR-015 §6 追補）。JSON-LD の nutrition には無い食塩相当量

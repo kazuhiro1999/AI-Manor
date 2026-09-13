@@ -75,6 +75,15 @@ _INGREDIENT_LI_RE = re.compile(
     r'<span[^>]*class="ingredient-serving"[^>]*>(.*?)</span>',
     re.S,
 )
+#: 材料一覧（`<ul class="ingredient-list">`）と、その中の行。グループの小見出しは
+#: `ingredient-group__header`（実ページの CSS に
+#: `.ingredient-list .ingredient-group__header` の規則があり、素の class 名なので
+#: ビルドで変わらない）。主人の実測 URL のレシピはグループが1つも無い回だった
+#: ——グループのある回で初めて効くので、**空を返しても取り込みは今までどおり**。
+_INGREDIENT_LIST_RE = re.compile(r'<ul[^>]*class="[^"]*\bingredient-list\b[^"]*"[^>]*>(.*?)</ul>', re.S)
+_INGREDIENT_ROW_RE = re.compile(r"<li\b([^>]*)>(.*?)</li>", re.S)
+_GROUP_HEADER_CLASS = "ingredient-group__header"
+
 #: 工程は `<li class="step">` ごとに、写真（`<video poster="…">`）と本文（`p.step-desc`）。
 _STEP_LI_RE = re.compile(r'<li class="step"[^>]*>(.*?)</li>', re.S)
 _STEP_DESC_RE = re.compile(r'class="step-desc"[^>]*>(.*?)</p>', re.S)
@@ -128,9 +137,39 @@ def extract_hints(
 ) -> dict:
     """英語の `recipeCategory`／`recipeCuisine` を日本語の手がかり語へ読み替える
     （モジュール docstring ②）。完成画像・工程写真は JSON-LD のままで良いので触らない。
+
+    材料のグループも本文の並びから補う（ADR-015 §7 追補）——JSON-LD の
+    `recipeIngredient` はグループを持たない。
     """
     ld_tags = list((ld or {}).get("site_tags") or [])
-    return {"site_tags": _translate_tags([str(t) for t in ld_tags])}
+    return {
+        "site_tags": _translate_tags([str(t) for t in ld_tags]),
+        "ingredient_groups": extract_ingredient_groups(html),
+    }
+
+
+def extract_ingredient_groups(html: str) -> list[str]:
+    """材料一覧の**並び**から、材料1件ごとのグループ名を返す（ADR-015 §7 追補）。
+
+    `<ul class="ingredient-list">` の中は `<li class="ingredient">`（材料）と
+    `<li class="ingredient-group__header">`（小見出し）の並び。優先の規則は
+    `recipe_shaping.ingredient_groups_in_order()`（材料名に付いた `(A)` が勝つ）。
+    """
+    m = _INGREDIENT_LIST_RE.search(shaping.strip_html_comments(html or ""))
+    if not m:
+        return []
+    rows: list[tuple[str, str]] = []
+    for attrs, inner in _INGREDIENT_ROW_RE.findall(m.group(1)):
+        if _GROUP_HEADER_CLASS in shaping.tag_attr(attrs, "class"):
+            heading = shaping.text_only(inner)
+            if heading:
+                rows.append((shaping.ROW_HEADING, heading))
+            continue
+        name_m = _INGREDIENT_LI_RE.search(inner)
+        if name_m is None:
+            continue
+        rows.append((shaping.ROW_INGREDIENT, shaping.text_only(name_m.group(1))))
+    return shaping.ingredient_groups_in_order(rows)
 
 
 def extract(html: str, url: str) -> dict | None:

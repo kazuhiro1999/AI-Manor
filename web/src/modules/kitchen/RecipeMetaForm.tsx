@@ -6,7 +6,7 @@
  * 栄養の数値欄は**触った欄だけ** PUT の body に乗せる（`chef_recipe.set_meta` が「渡した欄
  * だけ」書き換える partial update のため）。触っていない欄まで毎回送ると、`kcal` 等を
  * 1つでも渡した扱いになって `nutrition_source` が自動で `manual` に落ちてしまい——
- * 「栄養を推定」の直後に無関係な評価だけ直して保存しても `estimated` が消えてしまう
+ * 材料から推定した直後に無関係な評価だけ直して保存しても `estimated` が消えてしまう
  * （`chef/recipes.py` の `set_meta` の docstring 参照）。`baselineRef` に「今サーバに
  * 乗っている値」を持ち、そこから変わった欄だけを検算する。
  */
@@ -89,7 +89,6 @@ export function RecipeMetaForm({ recipe, onUpdated }: { recipe: Recipe; onUpdate
   const [category, setCategory] = useState(recipe.meta.category);
   const [mainIngredient, setMainIngredient] = useState(recipe.meta.main_ingredient);
   const [cuisine, setCuisine] = useState(recipe.meta.cuisine);
-  const [estimating, setEstimating] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -101,22 +100,9 @@ export function RecipeMetaForm({ recipe, onUpdated }: { recipe: Recipe; onUpdate
   };
   const removeTag = (v: string) => setTags(tags.filter((x) => x !== v));
 
-  const estimate = async () => {
-    setError(null);
-    setEstimating(true);
-    try {
-      const res = await api<{ meta: Recipe["meta"] }>(`/kitchen/recipes/${recipe.id}/estimate-nutrition`, { method: "POST" });
-      const next = toStrings(res.meta);
-      setNutrition(next);
-      baselineRef.current = next; // 直後の保存で無関係な欄まで manual へ落とさないため
-      setNutritionSource(res.meta.nutrition_source);
-      onUpdated({ ...recipe, meta: { ...recipe.meta, ...res.meta } });
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : t("errors.saveFailed", { reason: t("common.unknown") }));
-    } finally {
-      setEstimating(false);
-    }
-  };
+  // 「栄養を推定」（`POST /recipes/{id}/estimate-nutrition`＝`claude -p`）のボタンは
+  // 2026-09-13 に畳んだ（ADR-019 §5「LLM に栄養値を言わせない」）。材料からの推定は
+  // 設定 →「食品の名寄せ」を直したときと `manor chef nutrition rebuild` で走る。
 
   const submit = async () => {
     setError(null);
@@ -185,12 +171,6 @@ export function RecipeMetaForm({ recipe, onUpdated }: { recipe: Recipe; onUpdate
           </div>
         ))}
       </div>
-      <div className="form-actions">
-        <button type="button" className="btn btn-small" disabled={estimating} onClick={estimate}>
-          {t("kitchen.recipes.estimateButton")}
-        </button>
-      </div>
-
       <div className="form-row" style={{ marginTop: 10 }}>
         <label htmlFor="meta-rating">{t("kitchen.recipes.ratingLabel")}</label>
         <input id="meta-rating" className="form-input" style={{ maxWidth: 90 }} type="number" min={1} max={5} value={rating} onChange={(e) => setRating(e.target.value)} />

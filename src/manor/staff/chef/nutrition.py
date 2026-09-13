@@ -72,7 +72,8 @@ PER_100G = "100g"
 VALID_CONFIDENCE: tuple[str, ...] = ("manual", "rule", "llm")
 
 #: 名寄せがどの段で当たったか（ADR-019 D2）。`""` は未解決。
-STAGE_ALIAS, STAGE_NAME, STAGE_PARTIAL = "alias", "name", "partial"
+#: `blend` は混ぜ物（成分表に1行では無い食品を、重みつきで混ぜた仮想の1行。§4 追補）。
+STAGE_ALIAS, STAGE_BLEND, STAGE_NAME, STAGE_PARTIAL = "alias", "blend", "name", "partial"
 
 #: 未解決の理由（画面が文へ直す符牒。`nutrition.py` は文を組まない——`menu.py` の
 #: 「理由は定型文の符牒で返す」と同じ判断）。
@@ -133,6 +134,8 @@ class UnitTables:
     unresolved_grams: float = 30.0
     drop_words: tuple[str, ...] = ()
     synonyms: tuple[tuple[str, str], ...] = ()
+    #: 栄養を持たない材料（水・湯・氷）。**どちらにも数えない**（`[food_normalize].not_counted`）。
+    not_counted: frozenset[str] = frozenset()
 
 
 def _float_map(raw: Any) -> dict[str, float]:
@@ -164,6 +167,12 @@ def load_unit_tables(path: Path | None = None) -> UnitTables:
         )
     )
     drop_words = tuple(sorted((str(w) for w in (normalize.get("drop_words") or [])), key=lambda w: -len(w)))
+    # 「数えない材料」は**機械的な均しだけ**を掛けて持つ（`normalize_name` は同義語・
+    # 下ごしらえ語を当てるが、ここは「水」のような素の語しか並ばないので要らない。
+    # 呼ぶと `load_unit_tables()` の中で自分自身が要る循環にもなる）。
+    not_counted = frozenset(
+        w for w in (shaping.normalize_food_name(str(x)) for x in (normalize.get("not_counted") or [])) if w
+    )
     return UnitTables(
         volume_ml=_float_map(units.get("volume_ml")),
         weight_g=_float_map(units.get("weight_g")),
@@ -173,6 +182,7 @@ def load_unit_tables(path: Path | None = None) -> UnitTables:
         unresolved_grams=unresolved,
         drop_words=drop_words,
         synonyms=synonyms,
+        not_counted=not_counted,
     )
 
 
@@ -464,16 +474,67 @@ def _partial_sort_key(
     return _match_tier(query, words), rank, length, str(row.get("food_code") or "")
 
 
+def blend_row(
+    alias: str, parts: Sequence[Mapping[str, Any]], index: FoodIndex
+) -> dict[str, Any] | None:
+    """混ぜ物の**仮想の食品1行**を重みつきの加重平均で組み立てる（ADR-019 §4 追補）。
+
+    `parts` は `[{"food_code", "weight"}, …]`。成分表に無い食品番号は黙って飛ばし、
+    残った重みで割り直す（版が変わって番号が動いた回に、混ぜ物ごと落とさない）。
+    1つも残らなければ `None`。
+
+    栄養の5項目も廃棄率も**同じ重みで**混ぜる——「合いびき肉 200g」は牛 100g と豚 100g を
+    買ったのと同じことなので、可食部の出し方（`grams × (1 − 廃棄率/100)`）を変えずに済む。
+    `food_code` は混ぜた番号を `+` で繋いだ札（`11089+11163`）にする——`chef_food` には
+    無い番号だが、画面と `resolved[]` が「何と何を混ぜたか」を言えるようにするため。
+    """
+    weighted: list[tuple[float, Mapping[str, Any]]] = []
+    for part in parts:
+        row = index.by_code.get(str(part.get("food_code") or ""))
+        if row is None:
+            continue
+        try:
+            weight = float(part.get("weight") or 0.0)
+        except (TypeError, ValueError):
+            weight = 0.0
+        if weight > 0:
+            weighted.append((weight, row))
+    total = sum(w for w, _ in weighted)
+    if not weighted or total <= 0:
+        return None
+
+    out: dict[str, Any] = {
+        "food_code": "+".join(str(r.get("food_code") or "") for _w, r in weighted),
+        "food_group": str(weighted[0][1].get("food_group") or ""),
+        "name": " + ".join(str(r.get("name") or "") for _w, r in weighted),
+        "per": PER_100G,
+    }
+    for key in (*NUTRIENTS, "refuse_pct"):
+        acc = 0.0
+        for weight, row in weighted:
+            try:
+                acc += float(row.get(key) or 0.0) * weight
+            except (TypeError, ValueError):
+                continue
+        out[key] = round(acc / total, 4)
+    return out
+
+
 def resolve_food(
     name: str,
     index: FoodIndex,
     aliases: Mapping[str, str] | None = None,
     tables: UnitTables | None = None,
+    blends: Mapping[str, Sequence[Mapping[str, Any]]] | None = None,
 ) -> dict[str, Any] | None:
     """材料名 → 成分表の1行（ADR-019 D2 の4段）。当たらなければ `None`。
 
     戻り値には `_stage`（どの段で当たったか）と `_normalized`（正規化した名前）を添える
     ——画面が「どうしてこの食品になったか」を見せられるようにする。
+
+    `blends` は**混ぜ物**（`chef_food_blend`。「合いびき肉」→ うし0.5＋ぶた0.5）。
+    ①の後・②の前に見る——1対1の名寄せ（主人が手で決めたものを含む）が先で、
+    無ければ混ぜ物、という順にする。
     """
     tables = tables or load_unit_tables()
     aliases = dict(aliases or {})
@@ -486,6 +547,15 @@ def resolve_food(
         code = aliases.get(key)
         if code and code in index.by_code:
             return {**index.by_code[code], "_stage": STAGE_ALIAS, "_normalized": norm}
+
+    # ①' 混ぜ物（成分表に1行では無い食品。加重平均で仮想の1行を作る）
+    for key in (shaping.normalize_food_name(name), norm):
+        parts = (blends or {}).get(key)
+        if not parts:
+            continue
+        row = blend_row(key, parts, index)
+        if row is not None:
+            return {**row, "_stage": STAGE_BLEND, "_normalized": norm}
 
     # ② 正規化して成分表の食品名と完全一致
     exact = index.by_name.get(norm)
@@ -554,6 +624,7 @@ def estimate_nutrition(
     index: FoodIndex,
     aliases: Mapping[str, str] | None = None,
     tables: UnitTables | None = None,
+    blends: Mapping[str, Sequence[Mapping[str, Any]]] | None = None,
 ) -> Estimate:
     """材料と分量から1人前の栄養値を推定する（ADR-019 D4）。**DB も外部も触らない。**
 
@@ -583,8 +654,12 @@ def estimate_nutrition(
         if not name:
             continue
         norm = normalize_name(name, tables)
+        if norm in tables.not_counted:
+            # 水・湯・氷。栄養を持たないので**どちらにも数えない**（`[food_normalize].
+            # not_counted`）——分母に入れると「水を使うほど coverage が下がる」ことになる。
+            continue
         grams, reason = to_grams(str(ing.get("qty") or ""), str(ing.get("unit") or ""), norm, tables)
-        food = resolve_food(name, index, aliases, tables)
+        food = resolve_food(name, index, aliases, tables, blends)
 
         if grams is None:
             # 換算できない。分母にだけ目安重量で数える（分からないほど coverage が下がる）。
@@ -1016,6 +1091,28 @@ def alias_map(conn: sqlite3.Connection) -> dict[str, str]:
     }
 
 
+def blend_map(conn: sqlite3.Connection) -> dict[str, list[dict[str, Any]]]:
+    """`chef_food_blend` の `alias → [{"food_code","weight"}, …]`（ADR-019 §4 追補）。
+
+    表がまだ無い home（`manor init` を通していない）では**空**を返す——混ぜ物は後から
+    足した仕組みなので、無いことを理由に推定全体を失敗させない。
+    """
+    require_food_table(conn)
+    row = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'chef_food_blend'"
+    ).fetchone()
+    if row is None:
+        return {}
+    out: dict[str, list[dict[str, Any]]] = {}
+    for r in conn.execute(
+        "SELECT alias, food_code, weight FROM chef_food_blend ORDER BY alias, food_code"
+    ).fetchall():
+        out.setdefault(str(r["alias"]), []).append(
+            {"food_code": str(r["food_code"]), "weight": float(r["weight"] or 0.0)}
+        )
+    return out
+
+
 def search_terms(q: str, tables: UnitTables | None = None) -> list[str]:
     """検索語 → LIKE に掛ける語の並び（ADR-019 §4）。**正規化の前と後の両方**を返す。
 
@@ -1131,8 +1228,12 @@ def load_alias_seed(
 ) -> list[dict[str, Any]]:
     """`food_aliases_seed.toml` を読む（試験は `path` に合成データを渡せる）。
 
-    戻り値は `[{"food_code", "name", "aliases": [正規化した材料名, …]}, …]`。
+    戻り値は `[{"food_code", "codes", "name", "aliases": [正規化した材料名, …]}, …]`。
     **DB は触らない**——実在の検算（食品番号が `chef_food` にあるか）は `seed_aliases()`。
+
+    1つの `[[food]]` は `code`（1対1）か `codes`（混ぜ物。`[{code=…, weight=…}, …]`）の
+    どちらかを持つ。混ぜ物は `food_code` が空で `codes` が入る——`chef_food_blend` へ
+    行で入る（ADR-019 §4 追補。「合いびき肉」は成分表に1行では無い）。
     """
     tables = tables or load_unit_tables()
     p = Path(path) if path is not None else _SEED_PATH
@@ -1151,7 +1252,18 @@ def load_alias_seed(
         if not isinstance(raw, Mapping):
             continue
         code = str(raw.get("code") or "").strip()
-        if not code:
+        codes: list[dict[str, Any]] = []
+        for part in raw.get("codes") or []:
+            if not isinstance(part, Mapping):
+                continue
+            part_code = str(part.get("code") or "").strip()
+            try:
+                weight = float(part.get("weight", 1))
+            except (TypeError, ValueError):
+                weight = 0.0
+            if part_code and weight > 0:
+                codes.append({"food_code": part_code, "weight": weight})
+        if not code and not codes:
             continue
         aliases: list[str] = []
         for alias in raw.get("aliases") or []:
@@ -1160,7 +1272,14 @@ def load_alias_seed(
                 aliases.append(norm)
         if not aliases:
             continue
-        out.append({"food_code": code, "name": str(raw.get("name") or ""), "aliases": aliases})
+        out.append(
+            {
+                "food_code": code,
+                "codes": codes,
+                "name": str(raw.get("name") or ""),
+                "aliases": aliases,
+            }
+        )
     return out
 
 
@@ -1175,6 +1294,12 @@ def seed_aliases(
     `chef_food` に無い食品番号は**黙って飛ばし**（`missing` に数える）、例外にしない
     ——成分表を入れていない home や、版が違って番号が動いた行のために、種の1行で
     取り込み全体を失敗させたくない。
+
+    **混ぜ物**（`codes = [{code, weight}, …]`）は `chef_food_blend` へ入れる
+    （ADR-019 §4 追補）。同じ alias の古い行はいったん消してから入れ直す——種から
+    1つ減らしたときに古い行が残ると、重みの合計が変わって黙って値がずれる。
+    `chef_food_alias` に**人が決めた同じ alias があればそちらが勝つ**ので、混ぜ物を
+    入れても主人の判断は塗り替わらない（`resolve_food` が ① → ①' の順に引く）。
     """
     require_food_table(conn)
     tables = tables or load_unit_tables()
@@ -1186,11 +1311,38 @@ def seed_aliases(
         str(r["alias"]): str(r["confidence"])
         for r in conn.execute("SELECT alias, confidence FROM chef_food_alias").fetchall()
     }
+    has_blend_table = (
+        conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'chef_food_blend'"
+        ).fetchone()
+        is not None
+    )
     now = util.now()
     added = updated = kept = 0
+    blended = 0
     missing: list[str] = []
     seen: set[str] = set()
     for entry in entries:
+        parts = [p for p in entry.get("codes") or [] if str(p["food_code"]) in known]
+        if entry.get("codes"):
+            missing.extend(
+                str(p["food_code"]) for p in entry["codes"] if str(p["food_code"]) not in known
+            )
+            if not parts or not has_blend_table:
+                continue
+            for alias in entry["aliases"]:
+                if alias in seen:
+                    continue
+                seen.add(alias)
+                conn.execute("DELETE FROM chef_food_blend WHERE alias = ?", (alias,))
+                for part in parts:
+                    conn.execute(
+                        "INSERT INTO chef_food_blend (alias, food_code, weight, updated_at)"
+                        " VALUES (?, ?, ?, ?)",
+                        (alias, str(part["food_code"]), float(part["weight"]), now),
+                    )
+                blended += 1
+            continue
         code = str(entry["food_code"])
         if code not in known:
             missing.append(code)
@@ -1219,6 +1371,7 @@ def seed_aliases(
         "added": added,
         "updated": updated,
         "kept_manual": kept,
+        "blends": blended,
         "missing": missing,
     }
 
@@ -1258,6 +1411,7 @@ def estimate_for_recipe(
     index: FoodIndex | None = None,
     aliases: Mapping[str, str] | None = None,
     tables: UnitTables | None = None,
+    blends: Mapping[str, Sequence[Mapping[str, Any]]] | None = None,
 ) -> Estimate:
     """1 レシピを推定する（**書かない**）。画面・API の「見せるだけ」用。"""
     tables = tables or load_unit_tables()
@@ -1265,8 +1419,10 @@ def estimate_for_recipe(
         index = build_index(food_rows(conn), tables)
     if aliases is None:
         aliases = alias_map(conn)
+    if blends is None:
+        blends = blend_map(conn)
     recipe = recipes.get(conn, recipe_id)
-    return estimate_nutrition(recipe, index, aliases, tables)
+    return estimate_nutrition(recipe, index, aliases, tables, blends)
 
 
 def rebuild(
@@ -1277,6 +1433,10 @@ def rebuild(
     `recipe_id` を省けば畳んでいないレシピ全部。**`site`／`manual` は上書きしない**
     ——人が確かめた数字を機械が塗り替えない（ADR-019 D4）。1つも解決できなかった
     レシピは**空欄のまま**にする（0 を書くと「栄養値がある」ことになってしまう）。
+
+    `estimated` は**すべて上書きしてよい**——`nutrition_coverage` が NULL のものも含む。
+    それは ADR-019 より前に `claude -p` が入れた行（2026-09-13 に経路ごと畳んだ。
+    ADR-019 §5）で、根拠を言えない数字だから、成分表からの推定で置き換えるのが正しい。
 
     `quiet=True` は表が無い home で静かに何もしない（登録・編集の経路に差し込むときに
     使う——成分表を入れていない主人のレシピ登録を、推定の都合で失敗させない）。
@@ -1290,6 +1450,7 @@ def rebuild(
     tables = load_unit_tables()
     index = build_index(food_rows(conn), tables)
     aliases = alias_map(conn)
+    blends = blend_map(conn)
     minimum = coverage_min()
 
     updated = 0
@@ -1302,7 +1463,9 @@ def rebuild(
             skipped += 1
             items.append({"recipe_id": rid, "skipped": source})
             continue
-        est = estimate_for_recipe(conn, rid, index=index, aliases=aliases, tables=tables)
+        est = estimate_for_recipe(
+            conn, rid, index=index, aliases=aliases, tables=tables, blends=blends
+        )
         if not est.ok:
             skipped += 1
             items.append({"recipe_id": rid, "skipped": "no_match", "unresolved": len(est.unresolved)})
@@ -1365,7 +1528,9 @@ def nutrition_payload(conn: sqlite3.Connection, recipe_id: int) -> dict[str, obj
     live_coverage: float | None = None
     if available and int(conn.execute("SELECT COUNT(*) AS n FROM chef_food").fetchone()["n"]) > 0:
         tables = load_unit_tables()
-        est = estimate_nutrition(recipe, build_index(food_rows(conn), tables), alias_map(conn), tables)
+        est = estimate_nutrition(
+            recipe, build_index(food_rows(conn), tables), alias_map(conn), tables, blend_map(conn)
+        )
         unresolved = est.unresolved
         live_coverage = est.coverage
     else:
@@ -1404,10 +1569,11 @@ def unresolved_summary(conn: sqlite3.Connection) -> dict[str, object]:
     tables = load_unit_tables()
     index = build_index(food_rows(conn), tables)
     aliases = alias_map(conn)
+    blends = blend_map(conn)
     groups: dict[str, dict[str, Any]] = {}
     for rid in _recipe_ids(conn, None):
         recipe = recipes.get(conn, rid)
-        est = estimate_nutrition(recipe, index, aliases, tables)
+        est = estimate_nutrition(recipe, index, aliases, tables, blends)
         for item in est.unresolved:
             key = str(item.get("normalized") or item.get("name") or "")
             entry = groups.setdefault(

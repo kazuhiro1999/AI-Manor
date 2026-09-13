@@ -95,6 +95,44 @@ _text_only = shaping.text_only
 _image_url_from_img_tag = shaping.image_url_from_img_tag
 
 
+def extract_hints(
+    html: str,
+    url: str,
+    *,
+    ld: dict | None = None,
+    source: dict | None = None,
+) -> dict:
+    """材料のグループだけを補う（ADR-015 §7 追補・2026-09-13）。
+
+    Nadia の実ページには JSON-LD があるので取り込みは経路①が選ばれ、
+    **`extract()`（＝グループを読む側）は呼ばれない**——`recipeIngredient` は
+    「鶏ガラスープの素 小さじ1」のような1本の文字列で、`(A)` の印を持たない。
+    本文の `IngredientsList_group` の並びは `recipeIngredient` と同じ順・同じ件数
+    （2026-09-13 に実ページで確認: どちらも12件で、後ろ4件が `A`）なので、
+    ここから補う。
+    """
+    return {"ingredient_groups": extract_ingredient_groups(html)}
+
+
+def extract_ingredient_groups(html: str) -> list[str]:
+    """材料1件ごとのグループ名を本文の並びの順に返す（`extract_hints` の docstring 参照）。
+
+    Nadia は**行ごとに**グループの欄（`IngredientsList_group`。無印は空）を持つので、
+    見出し行から引き継ぐ形（`recipe_shaping.ingredient_groups_in_order`）ではなく
+    そのまま読む。材料名に `(A)` が書いてある回はそちらを優先する。
+    """
+    out: list[str] = []
+    for group_html, name_html, _amount_html in _INGREDIENT_LI_RE.findall(
+        shaping.strip_html_comments(html or "")
+    ):
+        name = _text_only(name_html)
+        if not name:
+            continue  # `extract()` と同じ規則で飛ばす（並びを `recipeIngredient` に揃える）
+        marker, _rest = shaping.split_group_prefix(name)
+        out.append(marker or _text_only(group_html))
+    return out
+
+
 def extract(html: str, url: str) -> dict | None:
     html = shaping.strip_html_comments(html or "")
     ingredient_matches = _INGREDIENT_LI_RE.findall(html)

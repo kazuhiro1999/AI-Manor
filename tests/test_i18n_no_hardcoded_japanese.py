@@ -348,25 +348,24 @@ LINE_ALLOWLIST: set[str] = {
     # （2026-09-13・取り込み対象を3サイト広げたとき: JSON-LD のタグ収集・アダプタの
     #   「補い」（`extract_hints`）を足して行数が増え、もう一度洗い直した。
     #   ここで増えた `_LD_TAG_SPLIT_RE` の読点も「サイトの文字列を割るためのデータ」）。
-    "staff/chef/recipe_import.py:130", "staff/chef/recipe_import.py:132",
     "staff/chef/recipe_import.py:134", "staff/chef/recipe_import.py:136",
-    "staff/chef/recipe_import.py:141", "staff/chef/recipe_import.py:503",
-    "staff/chef/recipe_import.py:693", "staff/chef/recipe_import.py:694",
-    "staff/chef/recipe_import.py:843", "staff/chef/recipe_import.py:844",
-    "staff/chef/recipe_import.py:876", "staff/chef/recipe_import.py:995",
-    "staff/chef/recipe_import.py:1000", "staff/chef/recipe_import.py:1032",
-    "staff/chef/recipe_import.py:1076", "staff/chef/recipe_import.py:1092",
-    "staff/chef/recipe_import.py:1099", "staff/chef/recipe_import.py:1101",
-    "staff/chef/recipe_import.py:1103", "staff/chef/recipe_import.py:1108",
-    "staff/chef/recipe_import.py:1116", "staff/chef/recipe_import.py:1151",
-    "staff/chef/recipe_import.py:1160", "staff/chef/recipe_import.py:1162",
-    "staff/chef/recipe_import.py:1165", "staff/chef/recipe_import.py:1169",
-    "staff/chef/recipe_import.py:1183", "staff/chef/recipe_import.py:1191",
-    "staff/chef/recipe_import.py:1194", "staff/chef/recipe_import.py:1217",
-    "staff/chef/recipe_import.py:1218", "staff/chef/recipe_import.py:1223",
-    "staff/chef/recipe_import.py:1224", "staff/chef/recipe_import.py:1301",
-    "staff/chef/recipe_import.py:1455", "staff/chef/recipe_import.py:1479",
-    "staff/chef/recipe_import.py:1481", "staff/chef/recipe_import.py:1517",
+    "staff/chef/recipe_import.py:138", "staff/chef/recipe_import.py:140",
+    "staff/chef/recipe_import.py:145", "staff/chef/recipe_import.py:507",
+    "staff/chef/recipe_import.py:698", "staff/chef/recipe_import.py:699",
+    "staff/chef/recipe_import.py:728", "staff/chef/recipe_import.py:729",
+    "staff/chef/recipe_import.py:886", "staff/chef/recipe_import.py:887",
+    "staff/chef/recipe_import.py:919", "staff/chef/recipe_import.py:1036",
+    "staff/chef/recipe_import.py:1041", "staff/chef/recipe_import.py:1073",
+    "staff/chef/recipe_import.py:1117", "staff/chef/recipe_import.py:1133",
+    "staff/chef/recipe_import.py:1140", "staff/chef/recipe_import.py:1142",
+    "staff/chef/recipe_import.py:1144", "staff/chef/recipe_import.py:1149",
+    "staff/chef/recipe_import.py:1157", "staff/chef/recipe_import.py:1192",
+    "staff/chef/recipe_import.py:1201", "staff/chef/recipe_import.py:1203",
+    "staff/chef/recipe_import.py:1206", "staff/chef/recipe_import.py:1210",
+    "staff/chef/recipe_import.py:1224", "staff/chef/recipe_import.py:1232",
+    "staff/chef/recipe_import.py:1235", "staff/chef/recipe_import.py:1258",
+    "staff/chef/recipe_import.py:1259", "staff/chef/recipe_import.py:1264",
+    "staff/chef/recipe_import.py:1265", "staff/chef/recipe_import.py:1342",
     # [データ] staff/chef/media.py（ADR-016 D2・2026-09-12）: `fetch_oembed` の
     # `reason` ——`recipe_import.fetch_page` の `reason` と同じ「共有の診断文字列」。
     # **そもそも主人には見えない**（ADR-016 D2-3 のとおり、oEmbed が落ちても登録は
@@ -394,8 +393,13 @@ LINE_ALLOWLIST: set[str] = {
     "staff/chef/recipe_shaping.py:151", "staff/chef/recipe_shaping.py:156",
     "staff/chef/recipe_shaping.py:157", "staff/chef/recipe_shaping.py:161",
     "staff/chef/recipe_shaping.py:166", "staff/chef/recipe_shaping.py:170",
-    "staff/chef/recipe_shaping.py:193", "staff/chef/recipe_shaping.py:217",
-    "staff/chef/recipe_shaping.py:272",
+    "staff/chef/recipe_shaping.py:211", "staff/chef/recipe_shaping.py:235",
+    "staff/chef/recipe_shaping.py:319",
+    # [データ] staff/chef/recipe_sites/kurashiru.py（ADR-015 §7 追補・2026-09-13）:
+    # 材料一覧の節を本文から探す保険の正規表現に入る見出し語「材料」
+    # （`_INGREDIENT_SECTION_FALLBACK_RE`）。出典サイトの表示に実在する文字列で、
+    # 画面の文言ではない（generic.py の見出し語と同じ扱い）。
+    "staff/chef/recipe_sites/kurashiru.py:48",
     # [データ] staff/chef/recipe_sites/cookpad.py（ADR-015 D7・2026-09-12）:
     # 「作り方」「手順」はサイトの見出し語を拾うための正規表現の一部（データ）。
     "staff/chef/recipe_sites/cookpad.py:25",

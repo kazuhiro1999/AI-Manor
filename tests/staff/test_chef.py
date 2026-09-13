@@ -177,7 +177,8 @@ def test_all_chef_tables_are_prefixed(home: Path) -> None:
         # ADR-016 D1: 動画リスト（ながら見する YouTube の一覧。利用者ごと）。
         "chef_media",
         # ADR-019 D1・D2: 食品成分表の写しと、材料名 → 食品番号の名寄せ。
-        "chef_food", "chef_food_alias",
+        # `chef_food_blend` は §4 追補の混ぜ物（合いびき肉＝うし＋ぶた）。
+        "chef_food", "chef_food_alias", "chef_food_blend",
     }
 
 

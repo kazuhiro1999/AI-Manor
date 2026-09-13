@@ -2,6 +2,8 @@
   ADR-015 D7・D8 の試験用。実物の www.kurashiru.com のレシピページ（主人の実測 URL。
   2026-09-13 に1回だけ取得）から**構造だけ**を残し、script/style/広告/ナビ/たべれぽ/
   関連レシピを落とし、工程は5件のうち先頭2件に切り詰めた（著作物なので本文は必要最小限）。
+  材料は12件すべてを残してある——**JSON-LD の並びと DOM の並びが1対1**であることが
+  グループの補い（ADR-015 §7 追補）の前提なので、切り詰めると検算にならない。
   class 名（`_8u4gzj…` 等）は vanilla-extract のハッシュで、実物と同じ形を残している。
 
   ここで確かめたいこと:
@@ -11,6 +13,8 @@
     （`..._square_normal.jpg`）ではない（アダプタの `extract_hints` が og:image を先に指す）
   - `recipeCategory` の「ごはんもの,卵料理,肉,ひき肉」が分類3軸の手掛かりになる
   - 工程写真は1枚も無い（本文の `<img>` はロゴとカテゴリのサムネイルだけ）
+  - 材料のグループ（小見出し「卵そぼろ」「肉そぼろ」と `(A)`〜`(C)` の印）は本文にだけ
+    あり、JSON-LD には無い——アダプタの `extract_ingredient_groups` が並びから補う
 -->
 <html lang="ja">
 <head>
@@ -36,7 +40,7 @@
   "牛豚合びき肉 200g",
   "料理酒 大さじ2",
   "きび砂糖 大さじ1",
-  "酒 大さじ2",
+  "水 大さじ2",
   "しょうゆ 大さじ2",
   "みりん 大さじ2"
  ],
@@ -67,6 +71,17 @@
 <li class="_8u4gzj4"><a href="/search?query=ごはん" class="_8u4gzjc">ごはん</a><span class="_8u4gzja">400g</span></li>
 <li class="_8u4gzj4 _8u4gzj6"><div class="_8u4gzj9">卵そぼろ</div></li>
 <li class="_8u4gzj4 _8u4gzj7"><a href="/search?query=卵" class="_8u4gzjc">卵 (Mサイズ)</a><span class="_8u4gzja">2個</span></li>
+<li class="_8u4gzj4 _8u4gzj7"><a href="/search?query=顆粒和風だし" class="_8u4gzjc">(A)顆粒和風だし</a><span class="_8u4gzja">小さじ1/2</span></li>
+<li class="_8u4gzj4 _8u4gzj7"><a href="/search?query=料理酒" class="_8u4gzjc">(A)料理酒</a><span class="_8u4gzja">大さじ1</span></li>
+<li class="_8u4gzj4 _8u4gzj7"><a href="/search?query=みりん" class="_8u4gzjc">(A)みりん</a><span class="_8u4gzja">大さじ1</span></li>
+<li class="_8u4gzj4 _8u4gzj7"><a href="/search?query=サラダ油" class="_8u4gzjc">サラダ油</a><span class="_8u4gzja">小さじ2</span></li>
+<li class="_8u4gzj4 _8u4gzj6"><div class="_8u4gzj9">肉そぼろ</div></li>
+<li class="_8u4gzj4 _8u4gzj7 _8u4gzj8"><a href="/search?query=牛豚合びき肉" class="_8u4gzjc">牛豚合びき肉</a><span class="_8u4gzja">200g</span></li>
+<li class="_8u4gzj4 _8u4gzj7"><a href="/search?query=料理酒" class="_8u4gzjc">(B)料理酒</a><span class="_8u4gzja">大さじ2</span></li>
+<li class="_8u4gzj4 _8u4gzj7 _8u4gzj8"><a href="/search?query=きび砂糖" class="_8u4gzjc">(B)きび砂糖</a><span class="_8u4gzja">大さじ1</span></li>
+<li class="_8u4gzj4 _8u4gzj7"><a href="/search?query=水" class="_8u4gzjc">(B)水</a><span class="_8u4gzja">大さじ2</span></li>
+<li class="_8u4gzj4 _8u4gzj7"><a href="/search?query=しょうゆ" class="_8u4gzjc">(C)しょうゆ</a><span class="_8u4gzja">大さじ2</span></li>
+<li class="_8u4gzj4 _8u4gzj7"><a href="/search?query=みりん" class="_8u4gzjc">(C)みりん</a><span class="_8u4gzja">大さじ2</span></li>
 </ul>
 </section>
 <section class="browsi_videos_show_instructions">

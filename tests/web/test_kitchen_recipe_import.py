@@ -1,5 +1,5 @@
-"""`/api/v1/kitchen/recipes/import` `/api/v1/kitchen/recipes/{id}/estimate-nutrition`
-（ADR-015 R2）の試験。`tests/web/test_kitchen_recipes.py` と同じ流儀（`TestClient` を
+"""`/api/v1/kitchen/recipes/import` `/api/v1/kitchen/recipes/refine`
+（ADR-015 R2・D7）の試験。`tests/web/test_kitchen_recipes.py` と同じ流儀（`TestClient` を
 直に叩く）。**`claude -p` は呼ばない**——`manor.staff.chef.recipe_import` の関数を差し替える
 （`tests/staff/test_chef_recipe_import.py` が subprocess レベルで検算済みなので、
 ここでは web 層の配線・エラーの写り先だけを見る）。
@@ -187,70 +187,6 @@ def test_import_claude_failure_is_502(conn, home: Path, monkeypatch: pytest.Monk
 
     assert res.status_code == 502
     assert "claude" in res.json()["detail"]
-
-
-# --- estimate-nutrition（保存する。require_writable） ------------------------------------
-
-
-def test_estimate_nutrition_saves_meta(conn, home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    client = make_client(home)
-    recipe_id = client.post("/api/v1/kitchen/recipes", json=_minimal_recipe()).json()["id"]
-
-    monkeypatch.setattr(
-        recipe_import_mod, "estimate_nutrition",
-        lambda recipe, **kw: {
-            "ok": True,
-            "nutrition": {"kcal": 500.0, "protein_g": 20.0, "fat_g": 15.0, "carb_g": 60.0, "salt_g": 2.5},
-            "reason": "",
-        },
-    )
-
-    res = client.post(f"/api/v1/kitchen/recipes/{recipe_id}/estimate-nutrition")
-
-    assert res.status_code == 200
-    meta = res.json()
-    assert meta["kcal"] == 500.0
-    assert meta["nutrition_source"] == "estimated"
-
-    got = client.get(f"/api/v1/kitchen/recipes/{recipe_id}").json()
-    assert got["meta"]["nutrition_source"] == "estimated"
-    assert got["meta"]["kcal"] == 500.0
-
-
-def test_estimate_nutrition_claude_failure_is_502(
-    conn, home: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    client = make_client(home)
-    recipe_id = client.post("/api/v1/kitchen/recipes", json=_minimal_recipe()).json()["id"]
-
-    monkeypatch.setattr(
-        recipe_import_mod, "estimate_nutrition",
-        lambda recipe, **kw: {"ok": False, "nutrition": None, "reason": "claude が見つかりません"},
-    )
-
-    res = client.post(f"/api/v1/kitchen/recipes/{recipe_id}/estimate-nutrition")
-
-    assert res.status_code == 502
-    assert "claude" in res.json()["detail"]
-
-    # 失敗したので meta は変わっていない(estimated に上書きされていない)。
-    got = client.get(f"/api/v1/kitchen/recipes/{recipe_id}").json()
-    assert got["meta"]["nutrition_source"] == ""
-
-
-def test_estimate_nutrition_missing_recipe_is_404(conn, home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    client = make_client(home)
-    res = client.post("/api/v1/kitchen/recipes/999/estimate-nutrition")
-    assert res.status_code == 404
-
-
-def test_estimate_nutrition_requires_writable(conn, home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    client = make_client(home, read_only=True)
-    recipe_id_client = make_client(home)
-    recipe_id = recipe_id_client.post("/api/v1/kitchen/recipes", json=_minimal_recipe()).json()["id"]
-
-    res = client.post(f"/api/v1/kitchen/recipes/{recipe_id}/estimate-nutrition")
-    assert res.status_code == 403
 
 
 # --- refine（D7-2。保存しない） ------------------------------------------------------------

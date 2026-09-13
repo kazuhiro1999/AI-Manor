@@ -223,13 +223,14 @@ def nutrition_status(cand: Mapping[str, Any], minimum: float) -> str:
     """その候補の栄養値が献立の根拠に足りるか（ADR-018 D1・ADR-019 D4）。
 
     - `missing` … 5項目が揃っていない、または出所（`nutrition_source`）が無い
-    - `partial` … 推定（`estimated`）だが解決率が `minimum` に届かない
+    - `partial` … 推定（`estimated`）だが解決率が無い／`minimum` に届かない
     - `ok` … 候補にできる
 
-    **`coverage` が `None` の推定は通す**——ADR-019 より前に入った `estimated` の行
-    （`claude -p` の推定）には解決率が無い。黙って候補から落とすと、主人の目には
-    「急にレシピが減った」としか見えないので、今より悪くしない側へ倒す
-    （`manor chef nutrition rebuild` を通せば解決率が入り、この判定に乗る）。
+    **`coverage` が `None` の推定は通さない**（2026-09-13 に改めた）——解決率の無い
+    `estimated` は ADR-019 より前に `claude -p` が入れた行、つまり**根拠を言えない数字**
+    である。以前は「黙ってレシピが減ると主人が驚く」を理由に通していたが、LLM に栄養値を
+    言わせる経路そのものを畳んだ（ADR-019 §5）ので、守る相手がもういない。
+    `manor chef nutrition rebuild` が成分表から推定し直せば解決率が入り、この判定に乗る。
     """
     if nutrition_of(cand.get("nutrition") or {}) is None:
         return NUTRITION_MISSING
@@ -240,11 +241,11 @@ def nutrition_status(cand: Mapping[str, Any], minimum: float) -> str:
         return NUTRITION_OK
     coverage = cand.get("nutrition_coverage")
     if coverage is None:
-        return NUTRITION_OK
+        return NUTRITION_PARTIAL
     try:
         return NUTRITION_OK if float(coverage) >= minimum else NUTRITION_PARTIAL
     except (TypeError, ValueError):
-        return NUTRITION_OK
+        return NUTRITION_PARTIAL
 
 
 def sum_nutrition(items: Sequence[Mapping[str, Any]]) -> dict[str, float]:

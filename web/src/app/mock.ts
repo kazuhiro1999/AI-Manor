@@ -1078,7 +1078,9 @@ function validateRecipeBody(body: RecipeBody): RecipeBody {
     if (stitle.length > 12) badRequest(`steps[${i}].title は12文字以内にしてください（${stitle.length}文字）: ${stitle}`);
     const instruction = String(s.instruction || "").trim();
     if (!instruction) badRequest(`steps[${i}].instruction が必須です`);
-    if (instruction.length > 60) badRequest(`steps[${i}].instruction は60文字以内にしてください（${instruction.length}文字）: ${instruction}`);
+    // 上限は `chef/recipes.py` の `_INSTRUCTION_MAX`（100。2026-09-13 に 60 から広げた）と
+    // 同じ値。mock は app 層なので modules の `STEP_INSTRUCTION_MAX` は取り込まない。
+    if (instruction.length > 100) badRequest(`steps[${i}].instruction は100文字以内にしてください（${instruction.length}文字）: ${instruction}`);
     if (!phaseIds.has(s.phase)) badRequest(`steps[${i}].phase が phases に無い id を指しています: ${s.phase}`);
   });
   return {
@@ -1477,9 +1479,9 @@ export async function mockApi<T>(path: string, options: ApiOptions = {}): Promis
   }
 
   // ---------- kitchen: レシピ帳（ADR-015 D3・D4・§6） ----------
-  // `import`/`refine`/`estimate-nutrition` は R2・§6 D7（Python 担当が並行で作る口）だが、
-  // 画面を作り切るため合成の応答を用意する（ADR-015 §3 の契約 JSON どおりの下書き・
-  // 固定の推定値）。§6 D7「自動抽出を先に」: `mode` 省略時＝`auto` は URL のホスト名から
+  // `import`/`refine` は R2・§6 D7（Python 担当が並行で作る口）だが、
+  // 画面を作り切るため合成の応答を用意する（ADR-015 §3 の契約 JSON どおりの下書き）。
+  // §6 D7「自動抽出を先に」: `mode` 省略時＝`auto` は URL のホスト名から
   // jsonld/アダプタ/汎用を作り分け、`mode:"claude"` は上限内に整った下書きを返す
   // （実際の `claude -p` は呼ばない——遅さを再現する意味は無い）。
   if (path === "/kitchen/recipes/import" && method === "POST") {
@@ -1618,7 +1620,7 @@ export async function mockApi<T>(path: string, options: ApiOptions = {}): Promis
     return result as unknown as T;
   }
   if (path === "/kitchen/recipes/refine" && method === "POST") {
-    // §6 D7の2「Claude で整える」: 自動抽出の下書きを渡し、1動作1工程・≤12/≤60 に整える
+    // §6 D7の2「Claude で整える」: 自動抽出の下書きを渡し、1動作1工程・≤12/≤100 に整える
     // （本文全部を渡すより短く速い、という前提。mock は機械的に切り詰めて代わりにする）。
     const input = (body.recipe || {}) as RecipeBody;
     const refined: RecipeBody = {
@@ -1626,25 +1628,15 @@ export async function mockApi<T>(path: string, options: ApiOptions = {}): Promis
       steps: (input.steps || []).map((s) => ({
         ...s,
         title: s.title.length > 12 ? s.title.slice(0, 12) : s.title,
-        instruction: s.instruction.length > 60 ? s.instruction.slice(0, 60) : s.instruction,
+        instruction: s.instruction.length > 100 ? s.instruction.slice(0, 100) : s.instruction,
       })),
     };
     const result: RecipeImportResult = { recipe: refined, method: "claude", warnings: [] };
     return result as unknown as T;
   }
-  if (path.match(/^\/kitchen\/recipes\/\d+\/estimate-nutrition$/) && method === "POST") {
-    const id = Number(path.split("/")[3]);
-    const r = findRecipe(id);
-    // ADR-015 D2の5: 押したときだけ推定し、`nutrition_source='estimated'` で入れる
-    // （＝この口自体が「うちの値」へ書き込む。下書きを返すだけの import とは違う）。
-    r.meta.kcal = 550;
-    r.meta.protein_g = 20;
-    r.meta.fat_g = 18;
-    r.meta.carb_g = 65;
-    r.meta.salt_g = 2.1;
-    r.meta.nutrition_source = "estimated";
-    return { meta: r.meta } as unknown as T;
-  }
+  // `POST /kitchen/recipes/{id}/estimate-nutrition`（ADR-015 D2の5。`claude -p` に
+  // 栄養価を言わせる口）は 2026-09-13 に畳んだ（ADR-019 §5）。推定は下の
+  // `rebuild-nutrition`（材料 → 食品成分表）だけ。
   // ---------- kitchen: 材料からの栄養値の推定・食品の名寄せ（ADR-019 D5） ----------
   //
   // **`/kitchen/recipes` の一覧に落ちる前に置く**——下の一覧の分岐が

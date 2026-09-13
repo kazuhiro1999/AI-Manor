@@ -479,31 +479,9 @@ def register(app: FastAPI, ctx: WebContext) -> None:
             "meta": recipe.get("meta"),
         }
 
-    @app.post("/api/v1/kitchen/recipes/{recipe_id}/estimate-nutrition")
-    def recipe_estimate_nutrition(recipe_id: int) -> dict[str, object]:
-        """ADR-015 D2 手順5。押したときだけ推定し `nutrition_source='estimated'` で保存する。"""
-        require_writable(ctx)
-        from ...staff.chef import recipe_import as chef_recipe_import
-        from ...staff.chef import recipes as chef_recipes
-
-        with open_conn(ctx) as conn:
-            _require_chef_recipes(conn)
-            try:
-                recipe = chef_recipes.get(conn, recipe_id)
-            except ManorError as exc:
-                raise manor_error_to_http(exc)
-            result = chef_recipe_import.estimate_nutrition(recipe)
-            if not result.get("ok"):
-                raise HTTPException(status_code=502, detail=str(result.get("reason") or ""))
-            try:
-                updated = chef_recipes.set_meta(
-                    conn, recipe_id, nutrition_source="estimated", **result["nutrition"]
-                )
-            except ManorError as exc:
-                conn.rollback()
-                raise manor_error_to_http(exc)
-            commit_and_render(conn, ctx)
-            return updated["meta"]  # type: ignore[return-value]
+    # `POST /recipes/{id}/estimate-nutrition`（`claude -p` に栄養価を言わせる ADR-015
+    # D2 手順5 の口）は 2026-09-13 に畳んだ（ADR-019 §5「LLM に栄養値を言わせない」）。
+    # 材料からの推定は `POST /food/aliases` の副作用と `manor chef nutrition rebuild`。
 
     # --- nutrition / food（材料からの推定と名寄せ。ADR-019 D5） ---
     #

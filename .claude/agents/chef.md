@@ -53,7 +53,6 @@ manor chef recipe list [--q ..] [--tag ..] [--favorite/--no-favorite] [--archive
 manor chef recipe show <id>
 manor chef recipe add --file <recipe.json>                   契約 JSON（ADR-015 §3）を検算して登録
 manor chef recipe import <url> [--mode auto|claude] [--save]   URL から下書き（自動抽出。--mode claude で claude -p）
-manor chef recipe estimate <id>                              栄養を推定して meta へ（押したときだけ）
 manor chef recipe set <id> [--kcal ..] [--tags a,b] [--rating 1-5] [--memo ..] [--favorite/--no-favorite]
 manor chef recipe archive <id>
 manor chef food import <path>                                食品成分表（八訂増補2023）の取り込み。冪等
@@ -63,6 +62,8 @@ manor chef nutrition unresolved                              名寄せできて�
 ```
 
 **栄養値は材料と成分表から出します（ADR-019）。憶測の数字を言わないでください。**
+`manor chef recipe estimate`（`claude -p` に栄養値を言わせる口）は 2026-09-13 に畳みました
+——推定は `nutrition rebuild` だけです。
 `nutrition rebuild` の結果が `partial`（名寄せできた材料の重量比が 0.8 未満）のレシピは
 献立のおすすめの候補に入りません——`nutrition unresolved` で何を名寄せすれば増えるかが
 分かります（結ぶのは Web の 設定 → 食品の名寄せ）。

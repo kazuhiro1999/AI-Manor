@@ -101,9 +101,17 @@ def test_validate_accepts_step_title_at_12_chars(conn, home: Path) -> None:
     assert recipes.get(conn, recipe_id)["steps"][0]["title"] == "あ" * 12
 
 
-def test_validate_rejects_instruction_over_60_chars(conn, home: Path) -> None:
+def test_validate_accepts_instruction_up_to_100_chars(conn, home: Path) -> None:
+    """上限は 60 → 100（2026-09-13。出典サイトの1文が60字を超えるのが普通だった）。"""
     recipe = _minimal_recipe()
-    recipe["steps"][0]["instruction"] = "あ" * 61
+    recipe["steps"][0]["instruction"] = "あ" * 100
+    recipe_id = recipes.add(conn, recipe)
+    assert len(recipes.get(conn, recipe_id)["steps"][0]["instruction"]) == 100
+
+
+def test_validate_rejects_instruction_over_100_chars(conn, home: Path) -> None:
+    recipe = _minimal_recipe()
+    recipe["steps"][0]["instruction"] = "あ" * 101
     with pytest.raises(ManorError) as exc_info:
         recipes.add(conn, recipe)
     assert exc_info.value.code == 2

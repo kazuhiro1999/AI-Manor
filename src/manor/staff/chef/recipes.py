@@ -45,7 +45,11 @@ VALID_EVENT_TYPES: tuple[str, ...] = ("next", "prev", "timer_start", "done")
 VALID_SORT: tuple[str, ...] = ("recent", "cooked", "title")
 
 _TITLE_MAX = 12
-_INSTRUCTION_MAX = 60
+#: 工程の本文の上限（ADR-015 §3）。**60 → 100 へ広げた**（2026-09-13。主人の実測: クラシル
+#: 2件・白ごはん.com 4件・Nadia 3件が60字を超え、取り込みのたびに警告が並んだ）。
+#: 出典の文は1文で60字を超えることが珍しくない——**切らない方針は変えない**ので、
+#: 上限は「画面で直す前に気づくための目安」であり、超えた分は `warnings` に出るだけ。
+_INSTRUCTION_MAX = 100
 
 #: `set_meta` の「渡さなかった」を表す番人（`None` は「明示的に空にする」と区別する）。
 _UNSET: Any = object()

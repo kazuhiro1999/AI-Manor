@@ -555,21 +555,8 @@ def cmd_recipe_import(conn, home, args) -> object:
     return {"recipe": recipe, "method": method, "warnings": warnings}
 
 
-def cmd_recipe_estimate(conn, home, args) -> object:
-    """ADR-015 D2 手順5。押したときだけ推定し、`nutrition_source='estimated'` で保存する。"""
-    _require_chef_recipe_table(conn)
-    recipe = recipes.get(conn, args.id)
-    result = recipe_import.estimate_nutrition(recipe)
-    if not result.get("ok"):
-        raise ManorError(
-            f"栄養価の推定に失敗しました: {result.get('reason', '')}",
-            key="error.chef.recipe_estimate_failed",
-            params={"reason": result.get("reason", "")},
-        )
-    updated = recipes.set_meta(conn, args.id, nutrition_source="estimated", **result["nutrition"])
-    if args.json:
-        return updated
-    return i18n.t("chef.recipe.estimate.done", id=args.id)
+# `manor chef recipe estimate`（`claude -p` に栄養価を言わせる ADR-015 D2 手順5 の口）は
+# 2026-09-13 に畳んだ（ADR-019 §5）。材料からの推定は `manor chef nutrition rebuild`。
 
 
 # --- food / nutrition（食品成分表と推定。ADR-019 D1・D4） ---------------------------
@@ -974,7 +961,7 @@ def register(subparsers) -> None:
     p.add_argument("--no-render", action="store_true")
     p.set_defaults(func=cmd_recipe_archive, is_write=True)
 
-    # --- recipe import/estimate（ADR-015 R2・D7） ---
+    # --- recipe import（ADR-015 R2・D7） ---
     p = recipe_sub.add_parser("import")
     p.add_argument("url")
     p.add_argument("--mode", choices=["auto", "claude"], default="auto")
@@ -982,12 +969,6 @@ def register(subparsers) -> None:
     p.add_argument("--json", action="store_true")
     p.add_argument("--no-render", action="store_true")
     p.set_defaults(func=cmd_recipe_import, is_write=True)
-
-    p = recipe_sub.add_parser("estimate")
-    p.add_argument("id", type=int)
-    p.add_argument("--json", action="store_true")
-    p.add_argument("--no-render", action="store_true")
-    p.set_defaults(func=cmd_recipe_estimate, is_write=True)
 
     # --- food（食品成分表。ADR-019 D1） ---
     food_p = chef_sub.add_parser("food", help=i18n.t("cli.chef.food.help"))

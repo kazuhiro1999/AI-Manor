@@ -72,13 +72,18 @@ CREATE TABLE IF NOT EXISTS chef_cook_event (
 2. 本文を取得（上限 4 MB・タイムアウト 15 秒。`calendar.fetch_ics` と同じ流儀）
 3. 本文を **`claude -p`** に渡し、§3 の JSON へ構造化する（`calendar.extract_event` と同じ
    「道具を1つも持たせない・出力は JSON だけ」の型。モデルは `haiku` から。上限超え
-   （`title` ≤ 12・`instruction` ≤ 60）は**再生成**、2回目も超えたら切らずにそのまま返して
-   画面で直させる）
+   （`title` ≤ 12・`instruction` ≤ 100。**当初は 60 で、2026-09-13 に広げた**——§7 追補2 参照）
+   は**再生成**、2回目も超えたら切らずにそのまま返して画面で直させる）
 4. **保存せずに下書きを返す。** 画面は編集フォームに流し込み、主人が直して「登録」で
    `POST /api/v1/kitchen/recipes` に入る（取り込み・貼り付け・手入力は同じフォームに流れ込む
    ——参考サイトの「取り込みは1つの編集可能なフォーム」）
-5. 栄養価は取り込みでは**推定しない**（v0）。「推定する」ボタンを別に置き、押したときだけ
-   `claude -p` で1人分を推定し `nutrition_source='estimated'` で入れる。手で直せば `manual`
+5. ~~栄養価は取り込みでは**推定しない**（v0）。「推定する」ボタンを別に置き、押したときだけ
+   `claude -p` で1人分を推定し `nutrition_source='estimated'` で入れる。手で直せば `manual`~~
+   → **2026-09-13 に畳んだ**（ADR-019 §5）。`claude -p` に栄養価を言わせる口
+   （CLI `manor chef recipe estimate`・`POST /recipes/{id}/estimate-nutrition`・画面の
+   「栄養を推定」）を**すべて外した**。取り込みで入るのは**出典サイトの表示値だけ**
+   （`nutrition_source='site'`）で、無ければ空のまま。`estimated` は材料と食品成分表からの
+   推定（ADR-019）だけが付ける印になり、必ず `nutrition_coverage`（解決率）を伴う
 
 ### D3 API（`/api/v1/kitchen/recipes*`。認証は既存の passcode/cookie）
 
@@ -91,7 +96,6 @@ CREATE TABLE IF NOT EXISTS chef_cook_event (
 | `PUT /api/v1/kitchen/recipes/{id}/meta` | うちの値（栄養・タグ・評価・メモ・favorite） |
 | `POST /api/v1/kitchen/recipes/{id}/archive` | 畳む（消さない） |
 | `POST /api/v1/kitchen/recipes/import {url}` | D2。下書きを返す |
-| `POST /api/v1/kitchen/recipes/{id}/estimate-nutrition` | D2 の5 |
 | `POST /api/v1/kitchen/cook-sessions {recipe_id}` | 調理開始（`user_id` は見ている利用者） |
 | `POST /api/v1/kitchen/cook-sessions/{id}/events {type, step?}` | 工程の進行。返り `{current, progress}` |
 | `GET /api/v1/kitchen/cook-sessions/current` | 途中起動の復帰（見ている利用者の未終了セッション） |
@@ -139,7 +143,7 @@ XR クライアント（Unity）の認証は**既存の口**で足りる: `POST 
   "ingredients": [{"name","qty","unit","prep","group"}],
   "tools": ["フライパン"],
   "phases": [{"id","title"}],
-  "steps": [{"index","phase","title"(≤12),"instruction"(≤60),"image","ingredients_used",
+  "steps": [{"index","phase","title"(≤12),"instruction"(≤100),"image","ingredients_used",
              "timer_sec","completion":"manual|auto|confirm","tips":[]}],
   "meta": {"kcal","protein_g","fat_g","carb_g","salt_g","nutrition_source","tags","rating",
            "memo","favorite","times_cooked","last_cooked_at"}
@@ -170,7 +174,7 @@ kitchen-xr 側の P3（レシピ取り込み）はこの R1〜R3 の後。R1 は
    `cookpad.com` から。`staff/chef/recipe_sites/<site>.py` に1サイト1ファイル。追加しやすく）
    ③どちらも無ければ汎用（見出し・`<ol>`/`<li>` の推定）。工程の見出しは本文の先頭を句読点まで
    （≤12 字）で機械的に切る。**上限超えは切らずに `warnings` で返す**（画面で直すか Claude へ）
-2. **Claude で整える**（画面のボタン。任意）: 自動抽出の下書きを渡し、1動作1工程・≤12/≤60 に
+2. **Claude で整える**（画面のボタン。任意）: 自動抽出の下書きを渡し、1動作1工程・≤12/≤100 に
    整える（本文全部を渡すより短く速い）
 3. **Claude で最初から抽出**（画面のボタン。任意）: 従来の R2 の経路
 
@@ -245,5 +249,42 @@ Nadia の取り込みで工程の写真は取れたが完成画像が取れな�
   ほぼ全部が和食だが、`classify_dish_type` は**語彙の並び順で最初に当たった型**を返すので、
   アダプタが「和食」を足すとカレー等でも和食になる。`lexicon.toml` を触らない約束もあり、
   今回は空のままにした
-- **`instruction` の60字超え**: クラシル2件・白ごはん.com 4件（切らずに `warnings`。D7 の約束どおり）
-- **材料のグループ**: クラシルは本文の DOM に「(A)」「卵そぼろ」の印があるが JSON-LD には無い
+- ~~**`instruction` の60字超え**~~ → **上限を 100 字へ広げた**（下の追補3）
+- ~~**材料のグループ**~~ → **拾えるようにした**（下の追補3）
+
+## 8. 追補3（2026-09-13）材料のグループと、工程の文の上限
+
+主人がクラシルのレシピ（`.../recipes/e80338d5-…`）を取り込んで見つけた2件。
+
+### D10 材料のグループは**本文の並び**から補う（`extract_hints.ingredient_groups`）
+
+XR の工程の板が「(B)＝しょうゆ 大さじ1・…」を添えられるよう、`ingredients[].group` を
+`A`／`B`／見出し語で埋める。JSON-LD の `recipeIngredient` は**1本の文字列の並び**で、
+グループを持たないサイトが多い——本文の DOM から**行の並び**として取り、`recipeIngredient`
+と**同じ順・同じ件数**なら行番号で当てる。**件数が合わなければ当てずに `warnings` を1行**
+（工程写真の穴埋め `_fill_missing_step_images_from_html` と同じ約束。1つずれたグループは
+無いより悪い）。
+
+グループ名の決め方は `recipe_shaping.ingredient_groups_in_order()` に1つだけ置いた:
+**材料名に付いた `(A)`・`【A】`・`★` が優先**、無ければ直前の小見出しを引き継ぐ。
+クラシルは「肉そぼろ」という小見出しの**中に** `(B)`・`(C)` が入れ子で付くので、
+どちらか一方だけでは足りない（実測）。
+
+| サイト | 経路 | グループの出どころ | 状態 |
+|---|---|---|---|
+| kurashiru.com | `jsonld` | 本文 `<li>` の並び（`<a>` を持つ行＝材料、持たない行＝小見出し） | **足した**。実ページ12件で `["", "卵そぼろ", "A", "A", "A", "卵そぼろ", "肉そぼろ", "B", "B", "B", "C", "C"]` |
+| oceans-nadia.com | `jsonld` | 本文 `IngredientsList_group`（行ごとの欄） | **足した**。アダプタの `extract()` は既に読んでいたが、実ページは①が勝つので効いていなかった（実ページ12件・後ろ4件が `A`） |
+| delishkitchen.tv | `jsonld` | `<ul class="ingredient-list">` の `li.ingredient-group__header` | **足した**。実測したレシピはグループ無しで、class 名はページ自身の CSS から確かめた（グループのある回で初めて効く） |
+| sirogohan.com | `adapter:sirogohan` | `<ul class="a-list">` → `A` | **元から拾えていた**（実ページで確認） |
+| cookpad.com | `jsonld` | — | **確かめていない**（手元に実 URL が無い）。JSON-LD の行に `★` や `(A)` が書いてあれば `parse_ingredient_line` が従来どおり拾う |
+
+class 名がハッシュ（クラシルの vanilla-extract、Nadia の CSS Modules）でも**タグの形と
+順序**だけを見るので壊れにくい。壊れたら空が返るだけで、取り込み自体は今までどおり成立する。
+
+### D11 `instruction` の上限 60 → **100 字**
+
+実測で60字を超えるのは珍しくない（クラシル2件・白ごはん.com 4件・Nadia 3件）。
+**切らない方針は変えない**——上限は「画面で直す前に気づくための目安」なので、超えた分は
+`warnings` に出るだけ。100 字にすると実測の超過はクラシル0件・Nadia 2件・白ごはん.com 3件に
+減り、「本当に長い1文」だけが残る。値の正は `chef/recipes.py` の `_INSTRUCTION_MAX`
+（web は `recipeShared.ts` の `STEP_INSTRUCTION_MAX` が同じ値を持つ）。

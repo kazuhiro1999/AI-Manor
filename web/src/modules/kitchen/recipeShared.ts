@@ -35,8 +35,9 @@ export const NUTRITION_LABEL_KEY: Record<NutritionField, TranslationKey> = {
   salt_g: "kitchen.recipes.saltLabel",
 };
 // `nutrition_source` の表示語（`RecipeMetaForm`・`RecipeDetail`・`RecipeNewPage` で共通）。
-// ``=未設定／`site`=出典サイトの表示値をそのまま採った／`estimated`=Claude 推定／
-// `manual`=手入力、の4状態。
+// ``=未設定／`site`=出典サイトの表示値をそのまま採った／`estimated`=**材料と食品成分表
+// からの推定**（ADR-019。2026-09-13 まで「Claude 推定」と出していたが、LLM に栄養値を
+// 言わせる経路は畳んだ）／`manual`=手入力、の4状態。
 export const NUTRITION_SOURCE_LABEL_KEY: Record<string, TranslationKey> = {
   "": "kitchen.recipes.nutritionSourceNone",
   site: "kitchen.recipes.nutritionSourceSite",
@@ -63,7 +64,9 @@ export function nutritionMetaToForm(meta: Partial<RecipeMeta> | null | undefined
 
 // 契約 §3 の上限（`chef/recipes.py` の `_TITLE_MAX`/`_INSTRUCTION_MAX` と同じ値）。
 export const STEP_TITLE_MAX = 12;
-export const STEP_INSTRUCTION_MAX = 60;
+// 60 → 100（2026-09-13。出典サイトの1文が60字を超えることが多く、取り込みのたびに
+// 警告が並んだ。切らない方針は変えない——上限は「直す前に気づくための目安」）。
+export const STEP_INSTRUCTION_MAX = 100;
 // ADR-015 D4「phases（2〜4）」——バックエンドは1つ以上しか強制しないので、ここは
 // 画面側の目安表示だけ（超えても送信は止めない。主人の実データを弾かないための判断）。
 export const PHASE_MIN = 2;

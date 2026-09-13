@@ -30,15 +30,19 @@ def tables() -> nutrition.UnitTables:
 
 @pytest.fixture
 def seeded(conn, tables: nutrition.UnitTables):
-    """抜粋を取り込み、種を入れた状態の `(index, aliases)`（`manor chef food import` と同じ順）。"""
+    """抜粋を取り込み、種を入れた状態の `(index, aliases, blends)`（`manor chef food import` と同じ順）。"""
     nutrition.import_food_table(conn, EXCERPT_CSV)
     nutrition.seed_aliases(conn, tables=tables)
-    return nutrition.build_index(nutrition.food_rows(conn), tables), nutrition.alias_map(conn)
+    return (
+        nutrition.build_index(nutrition.food_rows(conn), tables),
+        nutrition.alias_map(conn),
+        nutrition.blend_map(conn),
+    )
 
 
 def _resolve(name: str, seeded, tables: nutrition.UnitTables) -> str:
-    index, aliases = seeded
-    found = nutrition.resolve_food(name, index, aliases, tables)
+    index, aliases, blends = seeded
+    found = nutrition.resolve_food(name, index, aliases, tables, blends)
     return "" if found is None else str(found["food_code"])
 
 
@@ -50,7 +54,12 @@ def test_seed_file_is_readable_and_large_enough(tables: nutrition.UnitTables) ->
     aliases = [a for e in entries for a in e["aliases"]]
     assert len(entries) >= 150          # 家庭料理の主要な食品
     assert len(aliases) >= 200          # 表記の揺れを入れた材料名
-    assert all(len(e["food_code"]) >= 4 for e in entries)
+    # 1行につき `code`（1対1）か `codes`（混ぜ物）のどちらかが必ず入っている。
+    for entry in entries:
+        if entry["codes"]:
+            assert all(len(p["food_code"]) >= 4 and p["weight"] > 0 for p in entry["codes"])
+        else:
+            assert len(entry["food_code"]) >= 4
 
 
 def test_seed_has_no_duplicate_aliases(tables: nutrition.UnitTables) -> None:
@@ -58,15 +67,111 @@ def test_seed_has_no_duplicate_aliases(tables: nutrition.UnitTables) -> None:
 
     重複は**正規化した後**で起きる（「蒸し中華めん」は `drop_words` の「蒸し」が落ちて
     「中華めん」になり、別の行の「中華めん」とぶつかった）。だから正規化後の鍵で見る。
+    混ぜ物（`codes`）も同じ土俵で見る——「合いびき肉」が1対1と混ぜ物の両方にあると、
+    どちらが効くかが `resolve_food` の段の順に依存して読みにくい。
     """
     seen: dict[str, str] = {}
     clashes: list[str] = []
     for entry in nutrition.load_alias_seed(tables=tables):
+        key = entry["food_code"] or "+".join(p["food_code"] for p in entry["codes"])
         for alias in entry["aliases"]:
-            if alias in seen and seen[alias] != entry["food_code"]:
-                clashes.append(f"{alias}: {seen[alias]} / {entry['food_code']}")
-            seen[alias] = entry["food_code"]
+            if alias in seen and seen[alias] != key:
+                clashes.append(f"{alias}: {seen[alias]} / {key}")
+            seen[alias] = key
     assert clashes == []
+
+
+# --- 混ぜ物（ADR-019 §4 追補。成分表に1行では無い食品） ----------------------------------
+
+
+def test_blended_ground_meat_resolves_to_a_weighted_virtual_food(
+    seeded, tables: nutrition.UnitTables
+) -> None:
+    """「合いびき肉」は成分表に無い。うし・ぶたのひき肉を半々で混ぜた仮想の1行に当たる。
+
+    主人のクラシルの実測（2026-09-13）で「牛豚合びき肉 200g」が1件も当たらなかった件。
+    """
+    index, aliases, blends = seeded
+    for name in ("合いびき肉", "合びき肉", "牛豚合びき肉", "合挽き肉", "あいびき肉"):
+        found = nutrition.resolve_food(name, index, aliases, tables, blends)
+        assert found is not None, name
+        assert found["_stage"] == nutrition.STAGE_BLEND
+        assert found["food_code"] == "11089+11163"
+        # うし 251 と ぶた 209 の加重平均。
+        assert found["kcal"] == pytest.approx(230.0)
+        assert found["protein_g"] == pytest.approx((17.1 + 17.7) / 2)
+
+
+def test_blend_falls_back_when_a_food_code_is_missing(tmp_path: Path, conn) -> None:
+    """混ぜる食品の片方が成分表に無ければ、残った側の重みで割り直す（版が動いた回の保険）。"""
+    nutrition.import_food_table(conn, EXCERPT_CSV)
+    tables = nutrition.load_unit_tables()
+    index = nutrition.build_index(nutrition.food_rows(conn), tables)
+    row = nutrition.blend_row(
+        "架空の混ぜ物",
+        [{"food_code": "11163", "weight": 0.5}, {"food_code": "99999", "weight": 0.5}],
+        index,
+    )
+    assert row is not None
+    assert row["food_code"] == "11163"
+    assert row["kcal"] == pytest.approx(209.0)
+    assert nutrition.blend_row("空", [{"food_code": "99999", "weight": 1}], index) is None
+
+
+def test_manual_alias_wins_over_a_blend(conn, tables: nutrition.UnitTables) -> None:
+    """主人が「合いびき肉＝豚ひき肉」と決めたら、混ぜ物より人の判断が勝つ。"""
+    nutrition.import_food_table(conn, EXCERPT_CSV)
+    nutrition.seed_aliases(conn, tables=tables)
+    nutrition.set_alias(conn, "合いびき肉", "11163")
+    index = nutrition.build_index(nutrition.food_rows(conn), tables)
+    found = nutrition.resolve_food(
+        "合いびき肉", index, nutrition.alias_map(conn), tables, nutrition.blend_map(conn)
+    )
+    assert found is not None
+    assert found["food_code"] == "11163"
+    assert found["_stage"] == nutrition.STAGE_ALIAS
+
+
+# --- 家庭の材料で外れていたもの（2026-09-13 に実物の chef_food で確かめて種に足した） -----
+
+
+@pytest.mark.parametrize(
+    ("name", "food_code"),
+    [
+        ("きび砂糖", "03003"),          # 成分表に「きび砂糖」は無い → 上白糖
+        ("顆粒コンソメ", "17027"),      # 洋風の顆粒だしは固形ブイヨンだけ
+        ("白だし", "17087"),            # だししょうゆへ寄せる
+        ("カットトマト缶", "06184"),    # 生のトマトとは別（加工品 ホール）
+        ("トマト缶", "06184"),
+        ("無調整豆乳", "04052"),
+        ("鶏むね肉皮なし", "11220"),    # 皮つき（11219）とは kcal が 133/105 で違う
+    ],
+)
+def test_household_ingredients_that_used_to_miss(
+    name: str, food_code: str, seeded, tables: nutrition.UnitTables
+) -> None:
+    assert _resolve(name, seeded, tables) == food_code
+
+
+def test_water_is_not_counted_at_all(seeded, tables: nutrition.UnitTables) -> None:
+    """「水」は栄養を持たないので、分子にも分母にも入れない（`[food_normalize].not_counted`）。
+
+    直す前は「水」が「`<水産練り製品>` だて巻」に部分一致して当たっていた
+    （成分表の食品群の見出し `<…>` を落としていなかったため）。
+    """
+    index, aliases, blends = seeded
+    assert nutrition.normalize_name("水", tables) in tables.not_counted
+    recipe = {
+        "servings": 1,
+        "ingredients": [
+            {"name": "しょうゆ", "qty": "1", "unit": "大さじ"},
+            {"name": "水", "qty": "2", "unit": "大さじ"},
+        ],
+    }
+    est = nutrition.estimate_nutrition(recipe, index, aliases, tables, blends)
+    assert est.unresolved == []
+    assert est.coverage == 1.0
+    assert [r["name"] for r in est.resolved] == ["しょうゆ"]
 
 
 # --- 表の材料名（実測で外れていたもの。ADR-019 §4 の一覧そのもの） ----------------------
@@ -112,7 +217,7 @@ def test_reported_ingredients_resolve(
         ("オリーブオイル", "14001"), ("バター", "14017"),
         ("食パン", "01026"), ("うどん", "01039"), ("そば", "01128"), ("パスタ", "01063"),
         ("豚こま", "11115"), ("鶏むね肉", "11219"), ("ささみ", "11227"),
-        ("合いびき肉", "11163"), ("ベーコン", "11183"), ("ウインナー", "11186"),
+        ("ベーコン", "11183"), ("ウインナー", "11186"),
         ("鮭", "10134"), ("さば", "10154"), ("ツナ缶", "10263"), ("えび", "10415"),
         ("にんじん", "06212"), ("じゃがいも", "02017"), ("白菜", "06233"),
         ("ほうれん草", "06267"), ("小松菜", "06086"), ("もやし", "06291"),

@@ -1002,35 +1002,4 @@ describe("kitchen recipes — 編集とうちの値（ADR-015 D1・D4・§6 D9�
     expect(body.cuisine).toBe("エスニック");
   });
 
-  it("「栄養を推定」を押すと POST .../estimate-nutrition の返り値で栄養欄が埋まる", async () => {
-    const recipe = chahan();
-    const estimated: RecipeMeta = { ...recipe.meta, kcal: 600, protein_g: 25, fat_g: 20, carb_g: 70, salt_g: 2.5, nutrition_source: "estimated" };
-    globalThis.fetch = vi.fn().mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
-      const url = String(input);
-      const method = (init?.method || "GET").toUpperCase();
-      if (url.endsWith("/api/v1/kitchen/recipes/1") && method === "GET") {
-        return { ok: true, status: 200, json: async () => recipe };
-      }
-      if (url.endsWith("/api/v1/kitchen/recipes/1/estimate-nutrition") && method === "POST") {
-        return { ok: true, status: 200, json: async () => ({ meta: estimated }) };
-      }
-      throw new Error("unexpected fetch: " + url);
-    }) as unknown as typeof fetch;
-
-    const user = userEvent.setup();
-    render(
-      <MemoryRouter initialEntries={["/1/edit"]}>
-        <ToastProvider>
-          <RecipesRouter />
-        </ToastProvider>
-      </MemoryRouter>
-    );
-
-    await waitFor(() => expect(screen.getByText("うちの値")).toBeTruthy());
-    await user.click(screen.getByRole("button", { name: "栄養を推定" }));
-
-    await waitFor(() => expect((screen.getByLabelText("kcal") as HTMLInputElement).value).toBe("600"));
-    expect((screen.getByLabelText("たんぱく質(g)") as HTMLInputElement).value).toBe("25");
-    expect(screen.getByText("栄養の出どころ: 推定（Claude）")).toBeTruthy();
-  });
 });

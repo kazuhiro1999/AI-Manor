@@ -356,7 +356,7 @@ export interface RecipeStep {
   index: number;
   phase: string; // RecipePhase.id への参照
   title: string; // ≤12文字（ADR-015 §3）
-  instruction: string; // ≤60文字
+  instruction: string; // ≤100文字
   image: string | null;
   ingredients_used: string[];
   timer_sec: number | null;

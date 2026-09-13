@@ -74,6 +74,37 @@ def test_kurashiru_recipe_category_feeds_classification() -> None:
     assert meta["tags"] == ["ごはんもの", "卵料理", "肉", "ひき肉"]
 
 
+def test_kurashiru_ingredient_groups_come_from_the_body_order() -> None:
+    """材料のグループ（ADR-015 §7 追補）。JSON-LD には無く、本文の並びからだけ取れる。
+
+    小見出し（「卵そぼろ」「肉そぼろ」）と `(A)`〜`(C)` の印が**入れ子**で付くので、
+    材料名に付いた印を優先し、無ければ直前の小見出しを引き継ぐ。XR の工程の板が
+    「(B)＝しょうゆ 大さじ1・…」と短く添えられるようにするため（主人の目的）。
+    """
+    recipe = _extract()["recipe"]
+    assert [ing["group"] for ing in recipe["ingredients"]] == [
+        "", "卵そぼろ", "A", "A", "A", "卵そぼろ",
+        "肉そぼろ", "B", "B", "B", "C", "C",
+    ]
+
+
+def test_kurashiru_group_mismatch_warns_instead_of_shifting() -> None:
+    """本文の材料の数が JSON-LD と合わなければ**当てずに**警告を1行返す（壊れる前提）。
+
+    1つずれたグループは、無いより悪い（別の材料に別の印が付く）。
+    """
+    html = (FIXTURES_DIR / "kurashiru_min.html").read_text(encoding="utf-8")
+    broken = html.replace(
+        '<li class="_8u4gzj4 _8u4gzj7"><a href="/search?query=みりん" class="_8u4gzjc">(C)みりん</a>'
+        '<span class="_8u4gzja">大さじ2</span></li>\n',
+        "",
+    )
+    result = recipe_import.extract_auto(broken, URL)
+    assert result["ok"] is True
+    assert any("材料のグループ" in w for w in result["warnings"])
+    assert all(ing["group"] == "" for ing in result["recipe"]["ingredients"])
+
+
 def test_kurashiru_has_no_nutrition() -> None:
     """実測: 栄養価の表示が無い（HTML に `kcal` の語も現れない）。"""
     meta = _extract()["recipe"]["meta"]
