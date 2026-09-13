@@ -16,6 +16,18 @@
 
 ---
 
+## 2026-09-14（意見箱の札で「仕分け済み・未着手」と「着手中」を分ける）
+
+### 修正: 意見箱の画面が `todo` を「対応中」と出していた
+
+`web/src/modules/ideas/IdeaList.tsx` は `todo`・`doing`・`waiting`・`resident` を全部
+「対応中」の札にまとめていた（9/11 の夜勤が意見箱の画面を作ったときの割り当て）。夜勤が
+仕分けして `hold → todo` に移しただけの件も「対応中」に見え、主人が「途中までやったのか、
+何がブロッカーか」と問われた（2026-09-14 朝）。
+
+`todo` の札を「受付済み」（英語 "Queued"）に分け、色も `st-todo`（薄い）へ。`doing`・
+`waiting`・`resident` は従来どおり「対応中」。API・DB は変えていない。
+
 ## 2026-09-14（i18n の LINE_ALLOWLIST を行番号ではなく行の内容で持つ。T49）
 
 ### 修正: `tests/test_i18n_no_hardcoded_japanese.py` の LINE_ALLOWLIST が3日で5回ずれた

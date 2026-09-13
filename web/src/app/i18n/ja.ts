@@ -859,7 +859,7 @@ export const ja = {
   "ideas.list.empty": "まだありません。",
   "ideas.list.loadFailed": "読み込めませんでした",
   "ideas.status.hold": "仕分け待ち",
-  "ideas.status.todo": "対応中",
+  "ideas.status.todo": "受付済み",
   "ideas.status.doing": "対応中",
   "ideas.status.waiting": "対応中",
   "ideas.status.resident": "対応中",

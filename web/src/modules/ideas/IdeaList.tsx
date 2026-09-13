@@ -1,6 +1,8 @@
 /* manor web — 過去に登録した意見の一覧（`GET /api/v1/ideas`）。
- * 新しい順。状態の札（hold=仕分け待ち／todo・doing・waiting・resident=対応中／
- * done=完了✓／withdrawn=見送り。夜勤 N6・主人のご要望 2026-09-08）。
+ * 新しい順。状態の札（hold=仕分け待ち／todo=受付済み／doing・waiting・resident=対応中／
+ * done=完了✓／withdrawn=見送り。夜勤 N6・主人のご要望 2026-09-08。todo を「対応中」と
+ * 出していたのを 2026-09-14 に分けた——仕分け済みなだけで誰も着手していない件が「対応中」に見え、
+ * 主人が「何がブロッカーか」と問われた）。
  * source='idea' のまま残るので、仕分け後に別プロジェクトへ移っても一覧から辿れる。
  */
 import { useEffect, useState } from "react";
@@ -10,7 +12,7 @@ import { useT, type TranslationKey } from "../../app/i18n";
 
 const STATUS_CLASS: Record<TaskStatus, string> = {
   hold: "st-hold",
-  todo: "st-doing",
+  todo: "st-todo",
   doing: "st-doing",
   waiting: "st-doing",
   resident: "st-doing",

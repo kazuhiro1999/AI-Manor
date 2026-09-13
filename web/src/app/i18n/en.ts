@@ -857,7 +857,7 @@ export const en: { [K in TranslationKey]: MirrorEntry<K> } = {
   "ideas.list.empty": "Nothing yet.",
   "ideas.list.loadFailed": "Could not load",
   "ideas.status.hold": "Sorting",
-  "ideas.status.todo": "In progress",
+  "ideas.status.todo": "Queued",
   "ideas.status.doing": "In progress",
   "ideas.status.waiting": "In progress",
   "ideas.status.resident": "In progress",
