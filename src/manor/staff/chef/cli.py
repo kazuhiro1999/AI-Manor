@@ -645,10 +645,22 @@ def cmd_nutrition_rebuild(conn, home, args) -> object:
     result = nutrition.rebuild(conn, recipe_id=args.recipe)
     if args.json:
         return result
-    return i18n.t(
-        "chef.nutrition.rebuild.done",
-        updated=result["updated"], skipped=result["skipped"], unresolved=result["unresolved"],
-    )
+    lines = [
+        i18n.t(
+            "chef.nutrition.rebuild.done",
+            updated=result["updated"], skipped=result["skipped"], unresolved=result["unresolved"],
+        )
+    ]
+    # 調理による油の吸収を足した件数（ADR-019 §4 追補）。材料表に書かれていない油を
+    # 足しているので、黙って値が増えたように見えないよう1行で言う。
+    if result.get("oil_adjusted"):
+        lines.append(
+            i18n.t(
+                "chef.nutrition.rebuild.oil",
+                n=result["oil_adjusted"], grams=result["oil_grams"],
+            )
+        )
+    return "\n".join(lines)
 
 
 def cmd_nutrition_unresolved(conn, home, args) -> object:

@@ -775,6 +775,13 @@ describe("kitchen recipes — 表示（ADR-015 D4）", () => {
             kcal: 520, protein_g: 20, fat_g: 18, carb_g: 65, salt_g: 2.1,
             source: "estimated", coverage: 0.62, coverage_min: 0.8, partial: true,
             unresolved: [{ name: "しょうが", normalized: "しょうが", qty: "5", unit: "g", reason: "no_food" }],
+            // ADR-019 §4 追補: 材料表に「適量」としか書かれていない揚げ油の吸収。
+            adjustments: [
+              {
+                kind: "oil_absorption", method: "唐揚げ", grams: 28, food_code: "14006",
+                food_name: "調合油", kcal: 248, protein_g: 0, fat_g: 28, carb_g: 0, salt_g: 0,
+              },
+            ],
             food_table_available: true,
           }),
         };
@@ -798,6 +805,9 @@ describe("kitchen recipes — 表示（ADR-015 D4）", () => {
     // 未解決の材料と「名寄せへ」の導線。
     const unresolved = container.querySelector("#recipe-nutrition-unresolved") as HTMLElement;
     expect(within(unresolved).getByText(/しょうが（5g）/)).toBeTruthy();
+    // 揚げ油の吸収（ADR-019 §4 追補）は内訳の1行として出る。
+    const adjustments = container.querySelector("#recipe-nutrition-adjustments") as HTMLElement;
+    expect(within(adjustments).getByText(/唐揚げの油の吸収（推定）約 28g・\+248kcal/)).toBeTruthy();
     const link = within(unresolved).getByRole("link", { name: "名寄せへ →" }) as HTMLAnchorElement;
     expect(link.getAttribute("href")).toBe("/settings#settings-food-aliases");
   });
@@ -817,7 +827,7 @@ describe("kitchen recipes — 表示（ADR-015 D4）", () => {
             recipe_id: 1, servings: 2,
             kcal: 520, protein_g: 20, fat_g: 18, carb_g: 65, salt_g: 2.1,
             source: "site", coverage: null, coverage_min: 0.8, partial: false,
-            unresolved: [], food_table_available: true,
+            unresolved: [], adjustments: [], food_table_available: true,
           }),
         };
       }

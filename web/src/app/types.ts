@@ -465,8 +465,25 @@ export interface RecipeNutritionUnresolved {
   reason: string; // no_food / no_amount / unknown_unit / no_piece
 }
 
+// 材料表に**書かれていない**ぶんの加算1件（ADR-019 §4 追補）。いまは揚げ油・炒め油の
+// 吸収だけ（`kind: "oil_absorption"`）。量は**レシピ全体ぶん**で、合計には既に入っている
+// ——画面はこれを内訳の1行として見せる。`method` は調理法の語（「唐揚げ」「炒め物」）で、
+// `lexicon.toml` の語彙そのもの（訳さない。`reason` のような閉じた符牒ではない）。
+export interface RecipeNutritionAdjustment {
+  kind: string; // oil_absorption
+  method: string;
+  grams: number;
+  food_code: string;
+  food_name: string;
+  kcal: number;
+  protein_g: number;
+  fat_g: number;
+  carb_g: number;
+  salt_g: number;
+}
+
 // `GET /api/v1/kitchen/recipes/{id}/nutrition`。**保存されている5項目に
-// `source`/`coverage`/`unresolved` を足しただけ**（XR が読む形は変わらない）。
+// `source`/`coverage`/`unresolved`/`adjustments` を足しただけ**（XR が読む形は変わらない）。
 export interface RecipeNutrition {
   recipe_id: number;
   servings: number | null;
@@ -480,6 +497,7 @@ export interface RecipeNutrition {
   coverage_min: number; // これを下回ると `partial`（献立の候補に入らない）
   partial: boolean;
   unresolved: RecipeNutritionUnresolved[];
+  adjustments: RecipeNutritionAdjustment[]; // 揚げ油の吸収など（合計には既に入っている）
   food_table_available: boolean; // 成分表をまだ取り込んでいなければ false
 }
 

@@ -123,8 +123,44 @@ _EXPORT_NAME_SPACE_RE = re.compile(r"[\s　]+")
 
 
 @dataclass(frozen=True)
+class OilAbsorption:
+    """`lexicon.toml` の `[nutrition.oil_absorption]` の写し（ADR-019 §4 追補）。
+
+    **揚げ油が材料表で数えられていないとき**（「揚げ油 適量」は ADR-019 D3 で数えない）
+    に、`主材料の重さ × 吸油率` で足す油を決める物差し。`UnitTables` と同じ約束で、
+    数値は1つも持たず全部 `lexicon.toml` から読む（主人が実測で書き換えれば結果が変わる）。
+    """
+
+    #: 吸った油の栄養を引く食品番号（調合油 `14006`）。
+    food_code: str = ""
+    #: 調理法 → 主材料の重さに対する吸油率。
+    rate: dict[str, float] = field(default_factory=dict)
+    #: 調理法 → 題名・工程の文に探す語。**並び順に意味がある**（最初に当たった型を採る）。
+    cues: tuple[tuple[str, tuple[str, ...]], ...] = ()
+    #: 手がかりを探す前に文から落とす語（「フライパン」は揚げ物ではない）。
+    drop_words: tuple[str, ...] = ()
+    #: 揚げ油として数える油の名前（正規化して**完全一致**で見る）。
+    oil_names: frozenset[str] = frozenset()
+    #: 主材料に数えない材料（`[basics].items` ＋ `not_main`。`ops.is_staple` で緩く見る）。
+    not_main: tuple[str, ...] = ()
+    #: 率ではなく**人数ぶんの実量**で足す型の名前（炒め物）。
+    stir_fry_method: str = ""
+    stir_fry_default_oil_g: float = 0.0
+
+    @property
+    def ready(self) -> bool:
+        """足せるだけの物差しが揃っているか。
+
+        `[nutrition.oil_absorption]` を持たない `lexicon.toml`（試験の合成データや、
+        主人がこの節を丸ごと消した home）では**何も足さない**——節が無いことを理由に
+        推定全体を失敗させない（`blend_map()` が表の無い home で空を返すのと同じ）。
+        """
+        return bool(self.food_code) and bool(self.cues)
+
+
+@dataclass(frozen=True)
 class UnitTables:
-    """`lexicon.toml` の `[units]`・`[food_normalize]` の写し（ADR-019 D3）。"""
+    """`lexicon.toml` の `[units]`・`[food_normalize]`・`[nutrition.oil_absorption]` の写し。"""
 
     volume_ml: dict[str, float] = field(default_factory=dict)
     weight_g: dict[str, float] = field(default_factory=dict)
@@ -136,6 +172,8 @@ class UnitTables:
     synonyms: tuple[tuple[str, str], ...] = ()
     #: 栄養を持たない材料（水・湯・氷）。**どちらにも数えない**（`[food_normalize].not_counted`）。
     not_counted: frozenset[str] = frozenset()
+    #: 調理による油の吸収（`[nutrition.oil_absorption]`。ADR-019 §4 追補）。
+    oil: OilAbsorption = field(default_factory=OilAbsorption)
 
 
 def _float_map(raw: Any) -> dict[str, float]:
@@ -146,6 +184,33 @@ def _float_map(raw: Any) -> dict[str, float]:
         except (TypeError, ValueError):
             continue
     return out
+
+
+def _oil_absorption(lex: Mapping[str, Any]) -> OilAbsorption:
+    """`[nutrition.oil_absorption]` を読む（ADR-019 §4 追補）。節が無ければ空。"""
+    raw = dict(dict(lex.get("nutrition") or {}).get("oil_absorption") or {})  # type: ignore[union-attr]
+    if not raw:
+        return OilAbsorption()
+    # 主材料に数えない材料は「基礎調味料（`[basics].items`）＋ この節の足し分」。
+    # 油・調味料・粉の語彙を2つ持たない（在庫が「数えない」ものと同じ並びを使う）。
+    basics = [str(w) for w in (dict(lex.get("basics") or {}).get("items") or [])]  # type: ignore[union-attr]
+    try:
+        stir_fry_g = float(raw.get("stir_fry_default_oil_g", 0.0))
+    except (TypeError, ValueError):
+        stir_fry_g = 0.0
+    return OilAbsorption(
+        food_code=str(raw.get("food_code") or ""),
+        rate=_float_map(raw.get("rate")),
+        cues=tuple(
+            (str(method), tuple(str(w) for w in (words or []) if str(w)))
+            for method, words in dict(raw.get("cues") or {}).items()
+        ),
+        drop_words=tuple(str(w) for w in (raw.get("drop_words") or []) if str(w)),
+        oil_names=frozenset(str(w) for w in (raw.get("oil_names") or []) if str(w)),
+        not_main=tuple(w for w in (*basics, *(str(x) for x in (raw.get("not_main") or []))) if w),
+        stir_fry_method=str(raw.get("stir_fry_method") or ""),
+        stir_fry_default_oil_g=stir_fry_g,
+    )
 
 
 def load_unit_tables(path: Path | None = None) -> UnitTables:
@@ -183,6 +248,7 @@ def load_unit_tables(path: Path | None = None) -> UnitTables:
         drop_words=drop_words,
         synonyms=synonyms,
         not_counted=not_counted,
+        oil=_oil_absorption(lex),
     )
 
 
@@ -615,6 +681,107 @@ def resolve_food(
     return None
 
 
+# --- 調理による油の吸収（純粋関数。ADR-019 §4 追補） --------------------------------------
+#
+# 材料表の「揚げ油 適量」は ADR-019 D3 で**数えない**ので、揚げて吸った油がまるごと
+# 落ちていた（主人の実測: 白ごはん.com の塩唐揚げが約 450kcal/人。ネットの目安は 550〜600）。
+# ここは「**書かれていないが確かに食べている油**」を、調理法から量って足す。
+# 出典と数字は `lexicon.toml` の `[nutrition.oil_absorption]`（この module は持たない）。
+
+#: `adjustments[]` の種類（画面が文へ直す符牒。未解決の理由と同じ考え方）。
+ADJUST_OIL_ABSORPTION = "oil_absorption"
+
+
+def _method_haystack(recipe: Mapping[str, Any]) -> str:
+    """調理法の手がかりを探す文（`dish_type`・題名・工程の題と文）。
+
+    **材料名は見ない**——材料表の「揚げ油」という名前だけで揚げ物に化けてしまう
+    （油を常備品として並べただけの煮物がある）。調理法はあくまで工程が言うこと。
+    """
+    parts = [str(recipe.get("dish_type") or ""), str(recipe.get("title") or "")]
+    for step in recipe.get("steps") or []:
+        if isinstance(step, Mapping):
+            parts.append(str(step.get("title") or ""))
+            parts.append(str(step.get("instruction") or ""))
+    return unicodedata.normalize("NFKC", " ".join(p for p in parts if p))
+
+
+def detect_cooking_method(recipe: Mapping[str, Any], oil: OilAbsorption) -> str:
+    """レシピの調理法（`[nutrition.oil_absorption].cues` に**上から**当てて最初の1つ）。
+
+    当たらなければ空（＝油は足さない）。`[dish_types]`・`ops.classify_dish_type` と
+    同じ「最初に当たった型を採る」約束なので、細かい型を先に並べておく。
+    """
+    if not oil.cues:
+        return ""
+    text = _method_haystack(recipe)
+    for word in oil.drop_words:
+        if word:
+            text = text.replace(word, "")
+    for method, cues in oil.cues:
+        if any(cue and cue in text for cue in cues):
+            return method
+    return ""
+
+
+def is_frying_oil(name: str, normalized: str, oil: OilAbsorption) -> bool:
+    """材料名が**揚げ油そのもの**か（正規化して**完全一致**）。
+
+    含む／含まれるでは見ない——「ごま油」が「油」に当たってしまい、たれの大さじ 1/2 を
+    「揚げ油が書いてある」と読んで吸油を丸ごと落とす（塩唐揚げで実測。2026-09-13）。
+    """
+    if not oil.oil_names:
+        return False
+    return shaping.normalize_food_name(name) in oil.oil_names or normalized in oil.oil_names
+
+
+def is_main_ingredient(name: str, oil: OilAbsorption) -> bool:
+    """吸油の土台に数える材料か（油・調味料・粉は数えない）。"""
+    return not ops.is_staple(str(name), list(oil.not_main))
+
+
+def oil_adjustment(
+    method: str,
+    main_grams: float,
+    servings: int,
+    index: FoodIndex,
+    oil: OilAbsorption,
+) -> dict[str, Any] | None:
+    """吸油の加算1件（`adjustments[]` の1行）。足さないときは `None`。
+
+    揚げ物は `主材料の重さ × 吸油率`、炒め物は `1 人前の仮置き × 人数`
+    ——炒め物の油はフライパンに引く量で、材料の重さには比例しない。
+
+    値は**レシピ全体ぶん**（`estimate_nutrition` が最後に `servings` で割る前の量）。
+    画面もこの量をそのまま見せる（「約 28g・+248kcal」＝この一皿に入った油）。
+    """
+    if not oil.ready or not method:
+        return None
+    food = index.by_code.get(oil.food_code)
+    if food is None:
+        return None  # 成分表を入れていない home・版が変わって番号が動いた回
+    if method == oil.stir_fry_method:
+        grams = float(oil.stir_fry_default_oil_g) * max(1, int(servings))
+    else:
+        grams = max(0.0, float(main_grams)) * float(oil.rate.get(method, 0.0))
+    if grams <= 0:
+        return None
+    out: dict[str, Any] = {
+        "kind": ADJUST_OIL_ABSORPTION,
+        "method": method,
+        "grams": round(grams, 1),
+        "food_code": str(food.get("food_code") or ""),
+        "food_name": str(food.get("name") or ""),
+    }
+    for key in NUTRIENTS:
+        try:
+            per100 = float(food.get(key) or 0.0)
+        except (TypeError, ValueError):
+            per100 = 0.0
+        out[key] = round(per100 * grams / 100.0, 1)
+    return out
+
+
 # --- 推定（純粋関数。ADR-019 D4） --------------------------------------------------------
 
 
@@ -627,6 +794,8 @@ class Estimate:
     servings: int = 1
     resolved: list[dict[str, Any]] = field(default_factory=list)
     unresolved: list[dict[str, Any]] = field(default_factory=list)
+    #: 材料表に**書かれていない**ぶんの加算（いまは吸油だけ。ADR-019 §4 追補）。
+    adjustments: list[dict[str, Any]] = field(default_factory=list)
 
     @property
     def ok(self) -> bool:
@@ -644,6 +813,7 @@ class Estimate:
             "servings": self.servings,
             "resolved": self.resolved,
             "unresolved": self.unresolved,
+            "adjustments": self.adjustments,
         }
 
 
@@ -660,7 +830,12 @@ def estimate_nutrition(
     出す）、`servings` で割って1人前にする。`servings` が無ければ 1 人前と見なす
     ——割らないほうが「1 皿ぶん」として意味が通る。
 
-    `recipe` は `recipes.get()` の形（`servings` と `ingredients[]` を読む）。
+    材料表に**書かれていない**ぶんは `adjustments[]` として足す（ADR-019 §4 追補。
+    いまは揚げ油・炒め油の吸収だけ）。加算は合計には入るが **`coverage` には数えない**
+    ——`coverage` は「材料表のうちどれだけ名寄せできたか」の物差しで、材料表に無い
+    ものを分子にも分母にも入れると意味が変わってしまう。
+
+    `recipe` は `recipes.get()` の形（`servings`・`ingredients[]`・`title`・`steps[]` を読む）。
     """
     tables = tables or load_unit_tables()
     aliases = dict(aliases or {})
@@ -674,6 +849,11 @@ def estimate_nutrition(
     counted_grams = 0.0
     resolved: list[dict[str, Any]] = []
     unresolved: list[dict[str, Any]] = []
+    # 吸油の加算（ADR-019 §4 追補）に要る2つ。`oil_counted` は「揚げ油が**量つきで**
+    # 材料表に書いてある」（＝吸油を足すと二重になる）か、`main_grams` は吸油の土台
+    # （解決できた材料のうち油・調味料・粉以外）。
+    oil_counted = False
+    main_grams = 0.0
 
     for ing in recipe.get("ingredients") or []:
         if not isinstance(ing, Mapping):
@@ -688,6 +868,13 @@ def estimate_nutrition(
             continue
         grams, reason = to_grams(str(ing.get("qty") or ""), str(ing.get("unit") or ""), norm, tables)
         food = resolve_food(name, index, aliases, tables, blends)
+        if (
+            is_frying_oil(name, norm, tables.oil)
+            and grams is not None
+            and reason != NOT_COUNTED
+            and grams > 0
+        ):
+            oil_counted = True
 
         if grams is None:
             # 換算できない。分母にだけ目安重量で数える（分からないほど coverage が下がる）。
@@ -731,6 +918,8 @@ def estimate_nutrition(
                 per100 = 0.0
             totals[key] += per100 * edible / 100.0
         resolved_grams += grams
+        if is_main_ingredient(name, tables.oil):
+            main_grams += grams
         resolved.append(
             {
                 "name": name,
@@ -743,6 +932,16 @@ def estimate_nutrition(
             }
         )
 
+    # 調理による油の吸収（ADR-019 §4 追補）。**揚げ油が量つきで書かれていれば足さない**。
+    adjustments: list[dict[str, Any]] = []
+    method = detect_cooking_method(recipe, tables.oil)
+    if method and not oil_counted:
+        adjustment = oil_adjustment(method, main_grams, servings, index, tables.oil)
+        if adjustment is not None:
+            adjustments.append(adjustment)
+            for key in NUTRIENTS:
+                totals[key] += float(adjustment.get(key) or 0.0)
+
     coverage = (resolved_grams / counted_grams) if counted_grams > 0 else 0.0
     return Estimate(
         nutrition={key: round(totals[key] / servings, 1) for key in NUTRIENTS},
@@ -750,6 +949,7 @@ def estimate_nutrition(
         servings=servings,
         resolved=resolved,
         unresolved=unresolved,
+        adjustments=adjustments,
     )
 
 
@@ -1474,7 +1674,11 @@ def rebuild(
             "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'chef_food'"
         ).fetchone()
         if row is None:
-            return {"updated": 0, "skipped": 0, "unresolved": 0, "items": [], "available": False}
+            return {
+                "updated": 0, "skipped": 0, "unresolved": 0,
+                "oil_adjusted": 0, "oil_grams": 0.0,
+                "items": [], "available": False,
+            }
     tables = load_unit_tables()
     index = build_index(food_rows(conn), tables)
     aliases = alias_map(conn)
@@ -1483,6 +1687,8 @@ def rebuild(
 
     updated = 0
     skipped = 0
+    oil_adjusted = 0   # 吸油を足したレシピの数（CLI が1行で言う。ADR-019 §4 追補）
+    oil_grams = 0.0
     items: list[dict[str, object]] = []
     for rid in _recipe_ids(conn, recipe_id):
         meta = _meta_row(conn, rid)
@@ -1504,12 +1710,17 @@ def rebuild(
             (round(est.coverage, 4), rid),
         )
         updated += 1
+        added_oil = sum(float(a.get("grams") or 0.0) for a in est.adjustments)
+        if added_oil > 0:
+            oil_adjusted += 1
+            oil_grams += added_oil
         items.append(
             {
                 "recipe_id": rid,
                 "coverage": round(est.coverage, 3),
                 "partial": est.is_partial(minimum),
                 "unresolved": len(est.unresolved),
+                "oil_g": round(added_oil, 1),
                 **est.nutrition,
             }
         )
@@ -1518,6 +1729,8 @@ def rebuild(
         "skipped": skipped,
         "unresolved": sum(int(i.get("unresolved") or 0) for i in items),
         "coverage_min": minimum,
+        "oil_adjusted": oil_adjusted,
+        "oil_grams": round(oil_grams, 1),
         "items": items,
         "available": True,
     }
@@ -1536,7 +1749,9 @@ def nutrition_payload(conn: sqlite3.Connection, recipe_id: int) -> dict[str, obj
 
     `coverage` は `chef_recipe_meta.nutrition_coverage`（推定のときだけ入っている）。
     `unresolved` は**その場で数え直す**——名寄せを直した直後に画面が新しい結果を
-    見せられるようにする（保存しない。書くのは `rebuild()` だけ）。
+    見せられるようにする（保存しない。書くのは `rebuild()` だけ）。`adjustments`
+    （揚げ油・炒め油の吸収。ADR-019 §4 追補）も同じで、その場で組み直す
+    ——保存されている5項目には**既に足されている**ので、ここは内訳を言うためだけ。
     """
     recipe = recipes.get(conn, recipe_id)
     meta = dict(recipe["meta"])  # type: ignore[arg-type]
@@ -1553,6 +1768,7 @@ def nutrition_payload(conn: sqlite3.Connection, recipe_id: int) -> dict[str, obj
         is not None
     )
     unresolved: list[dict[str, Any]] = []
+    adjustments: list[dict[str, Any]] = []
     live_coverage: float | None = None
     if available and int(conn.execute("SELECT COUNT(*) AS n FROM chef_food").fetchone()["n"]) > 0:
         tables = load_unit_tables()
@@ -1560,6 +1776,7 @@ def nutrition_payload(conn: sqlite3.Connection, recipe_id: int) -> dict[str, obj
             recipe, build_index(food_rows(conn), tables), alias_map(conn), tables, blend_map(conn)
         )
         unresolved = est.unresolved
+        adjustments = est.adjustments
         live_coverage = est.coverage
     else:
         available = False
@@ -1577,6 +1794,7 @@ def nutrition_payload(conn: sqlite3.Connection, recipe_id: int) -> dict[str, obj
         "coverage_min": minimum,
         "partial": bool(source == "estimated" and coverage is not None and float(coverage) < minimum),
         "unresolved": unresolved,
+        "adjustments": adjustments,
         "food_table_available": available,
     }
 

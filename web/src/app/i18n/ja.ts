@@ -1121,6 +1121,10 @@ export const ja = {
   "kitchen.nutrition.coverage": (p) => `名寄せできた材料: ${p.percent}%`,
   "kitchen.nutrition.partialWarning": (p) =>
     `解決率が ${p.min}% に届かないため、献立のおすすめには入りません。`,
+  /* ADR-019 §4 追補: 材料表に「適量」としか書かれていない揚げ油・炒め油の吸収。
+     量は**レシピ全体ぶん**（1 人分の値には既に按分して入っている）。 */
+  "kitchen.nutrition.oilAbsorption": (p) =>
+    `${p.method}の油の吸収（推定）約 ${p.grams}g・+${p.kcal}kcal`,
   "kitchen.nutrition.unresolvedHeading": "名寄せできていない材料",
   "kitchen.nutrition.unresolvedLine": (p) => `${p.name}（${p.amount}）`,
   "kitchen.nutrition.amountUnknown": "分量なし",

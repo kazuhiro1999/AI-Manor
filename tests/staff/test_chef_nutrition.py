@@ -43,6 +43,7 @@ def _fake_foods() -> list[dict[str, object]]:
         _food("12004", "鶏卵 全卵 生", kcal=142.0, protein_g=12.2, fat_g=10.2, carb_g=0.4, salt_g=0.4, refuse_pct=14.0),
         _food("17007", "こいくちしょうゆ", kcal=76.0, protein_g=7.7, carb_g=7.9, salt_g=14.5),
         _food("14006", "調合油", kcal=886.0, fat_g=100.0),
+        _food("11224", "にわとり 若どり もも 皮つき 生", kcal=190.0, protein_g=16.6, fat_g=14.2, salt_g=0.2),
     ]
 
 
@@ -232,6 +233,164 @@ def test_estimate_with_no_match_is_not_ok(index: nutrition.FoodIndex, tables: nu
     )
     assert est.ok is False
     assert est.coverage == 0.0
+
+
+# --- §4 追補 調理による油の吸収（`[nutrition.oil_absorption]`） ------------------------
+#
+# 材料表の「揚げ油 適量」は D3 で数えないので、揚げて吸った油が落ちていた
+# （主人の実測: 白ごはん.com の塩唐揚げが約 450kcal/人。ネットの目安は 550〜600）。
+
+#: 唐揚げの名寄せ（偽の成分表の鶏もも）。実物は `food_aliases_seed.toml` が入れる。
+CHICKEN_ALIAS = {"鶏もも肉": "11224"}
+
+
+def _fried_recipe(ingredients: list[dict[str, str]], **over) -> dict[str, object]:
+    recipe: dict[str, object] = {
+        "title": "塩唐揚げ",
+        "servings": 2,
+        "steps": [{"index": 1, "instruction": "揚げ油を160℃に熱して3分ほど揚げます。"}],
+        "ingredients": ingredients,
+    }
+    recipe.update(over)
+    return recipe
+
+
+def test_oil_absorption_is_added_when_frying_oil_is_not_counted(
+    index: nutrition.FoodIndex, tables: nutrition.UnitTables
+) -> None:
+    """揚げ物で揚げ油が「適量」なら、主材料の重さ × 吸油率を `adjustments[]` で足す。"""
+    recipe = _fried_recipe(
+        [
+            {"name": "鶏もも肉", "qty": "350", "unit": "g"},
+            {"name": "揚げ油", "qty": "", "unit": "適量"},
+        ]
+    )
+    est = nutrition.estimate_nutrition(recipe, index, CHICKEN_ALIAS, tables)
+    assert len(est.adjustments) == 1
+    adj = est.adjustments[0]
+    assert adj["kind"] == nutrition.ADJUST_OIL_ABSORPTION
+    assert adj["method"] == "唐揚げ"
+    assert adj["food_code"] == "14006"           # 調合油の熱量で引く
+    assert adj["grams"] == pytest.approx(28.0)   # 350g × 0.08
+    assert adj["fat_g"] == pytest.approx(28.0)   # 油は 100% 脂質
+    assert adj["kcal"] == pytest.approx(28.0 * 8.86, abs=0.1)
+    # 合計（1 人前）にも入っている。
+    assert est.nutrition["kcal"] == pytest.approx((350 * 1.90 + 28.0 * 8.86) / 2, abs=0.2)
+    # 「適量」は数えないままなので `coverage` は動かない（材料表の名寄せ率の物差し）。
+    assert est.coverage == 1.0
+
+
+def test_oil_absorption_is_not_added_when_oil_has_an_amount(
+    index: nutrition.FoodIndex, tables: nutrition.UnitTables
+) -> None:
+    """揚げ油が量つきで書かれていれば**二重に足さない**（材料としてもう数えている）。"""
+    recipe = _fried_recipe(
+        [
+            {"name": "鶏もも肉", "qty": "350", "unit": "g"},
+            {"name": "サラダ油", "qty": "3", "unit": "大さじ"},
+        ]
+    )
+    est = nutrition.estimate_nutrition(recipe, index, CHICKEN_ALIAS, tables)
+    assert est.adjustments == []
+
+
+def test_flavour_oil_in_the_marinade_does_not_block_the_absorption(
+    index: nutrition.FoodIndex, tables: nutrition.UnitTables
+) -> None:
+    """たれのごま油は揚げ油ではない（白ごはん.com の塩唐揚げ。2026-09-13 の実測）。"""
+    recipe = _fried_recipe(
+        [
+            {"name": "鶏もも肉", "qty": "350", "unit": "g"},
+            {"name": "ごま油", "qty": "1/2", "unit": "大さじ"},
+            {"name": "揚げ油", "qty": "", "unit": "適量"},
+        ]
+    )
+    est = nutrition.estimate_nutrition(recipe, index, CHICKEN_ALIAS, tables)
+    assert [a["method"] for a in est.adjustments] == ["唐揚げ"]
+
+
+def test_oil_absorption_counts_only_the_main_ingredients(
+    index: nutrition.FoodIndex, tables: nutrition.UnitTables
+) -> None:
+    """土台は「解決できた材料のうち油・調味料・粉以外」——衣の片栗粉や醤油は数えない。"""
+    recipe = _fried_recipe(
+        [
+            {"name": "鶏もも肉", "qty": "350", "unit": "g"},
+            {"name": "片栗粉", "qty": "4", "unit": "大さじ"},
+            {"name": "醤油", "qty": "1", "unit": "大さじ"},
+            {"name": "揚げ油", "qty": "", "unit": "適量"},
+        ]
+    )
+    est = nutrition.estimate_nutrition(recipe, index, CHICKEN_ALIAS, tables)
+    assert est.adjustments[0]["grams"] == pytest.approx(28.0)
+
+
+def test_no_oil_absorption_when_the_recipe_is_not_fried(
+    index: nutrition.FoodIndex, tables: nutrition.UnitTables
+) -> None:
+    """揚げ物でも炒め物でもなければ足さない（煮物に油は要らない）。"""
+    recipe = _fried_recipe(
+        [
+            {"name": "豚ひき肉", "qty": "200", "unit": "g"},
+            {"name": "サラダ油", "qty": "", "unit": "適量"},
+        ],
+        title="豚ひき肉の煮物",
+        steps=[{"index": 1, "instruction": "だしで15分ほど煮ます。"}],
+    )
+    est = nutrition.estimate_nutrition(recipe, index, {}, tables)
+    assert est.adjustments == []
+
+
+def test_stir_fry_uses_a_flat_amount_per_serving(
+    index: nutrition.FoodIndex, tables: nutrition.UnitTables
+) -> None:
+    """炒め物は率ではなく**1 人前の仮置き × 人数**（フライパンに引く油は材料に比例しない）。"""
+    recipe = _fried_recipe(
+        [
+            {"name": "豚ひき肉", "qty": "200", "unit": "g"},
+            {"name": "サラダ油", "qty": "", "unit": "適量"},
+        ],
+        title="豚ひき肉と玉ねぎの炒め物",
+        steps=[{"index": 1, "instruction": "フライパンで強火で炒めます。"}],
+        servings=2,
+    )
+    est = nutrition.estimate_nutrition(recipe, index, {}, tables)
+    adj = est.adjustments[0]
+    assert adj["method"] == "炒め物"
+    assert adj["grams"] == pytest.approx(26.0)   # 13.0g × 2 人前
+    assert adj["kcal"] == pytest.approx(26.0 * 8.86, abs=0.1)
+
+
+def test_frying_pan_and_fish_cake_words_are_not_cooking_methods(
+    tables: nutrition.UnitTables
+) -> None:
+    """手がかりの誤爆を落とす（「フライパン」はフライではない・「油揚げ」は食材）。"""
+    assert nutrition.detect_cooking_method(
+        {"title": "小松菜の煮びたし", "steps": [{"instruction": "油揚げを入れて煮ます。"}]},
+        tables.oil,
+    ) == ""
+    assert nutrition.detect_cooking_method(
+        {"title": "きんぴら", "steps": [{"instruction": "フライパンで和えます。"}]}, tables.oil
+    ) == ""
+    # 材料名は見ない（「揚げ油」を常備品として並べただけでは揚げ物にしない）。
+    assert nutrition.detect_cooking_method(
+        {"title": "肉じゃが", "ingredients": [{"name": "揚げ油", "qty": "", "unit": "適量"}]},
+        tables.oil,
+    ) == ""
+
+
+def test_oil_absorption_is_skipped_without_the_lexicon_section(
+    tmp_path: Path, index: nutrition.FoodIndex
+) -> None:
+    """`[nutrition.oil_absorption]` を持たない `lexicon.toml` では何も足さない。"""
+    lex = tmp_path / "lexicon.toml"
+    lex.write_text("[units]\nunresolved_grams = 30.0\n", encoding="utf-8")
+    tables = nutrition.load_unit_tables(lex)
+    assert tables.oil.ready is False
+    est = nutrition.estimate_nutrition(
+        _fried_recipe([{"name": "鶏もも肉", "qty": "350", "unit": "g"}]), index, CHICKEN_ALIAS, tables
+    )
+    assert est.adjustments == []
 
 
 # --- D1 取り込み（5 行の偽 CSV。列は見出し名で探す） ---------------------------------

@@ -88,6 +88,7 @@
   "chef.menu.slot.side": "副菜",
   "chef.menu.slot.soup": "汁物",
   "chef.nutrition.rebuild.done": "栄養値を推定しました（更新 {updated} / 見送り {skipped} / 未解決の材料 {unresolved}）",
+  "chef.nutrition.rebuild.oil": "うち揚げ油・炒め油の吸収を足したもの {n} 件（合計 約 {grams}g）",
   "chef.nutrition.unresolved.empty": "（名寄せできていない材料はありません）",
   "chef.nutrition.unresolved.line": "{name}（正規化: {normalized}）{count}件",
   "chef.pantry.add.done": "{item} を在庫に追加しました（id={id}）",

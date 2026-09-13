@@ -1117,6 +1117,8 @@ export const en: { [K in TranslationKey]: MirrorEntry<K> } = {
   "kitchen.nutrition.coverage": (p) => `Ingredients matched: ${p.percent}%`,
   "kitchen.nutrition.partialWarning": (p) =>
     `Coverage is below ${p.min}%, so this recipe is left out of menu suggestions.`,
+  "kitchen.nutrition.oilAbsorption": (p) =>
+    `Oil absorbed while cooking (${p.method}, estimated): about ${p.grams} g, +${p.kcal} kcal`,
   "kitchen.nutrition.unresolvedHeading": "Ingredients not matched",
   "kitchen.nutrition.unresolvedLine": (p) => `${p.name} (${p.amount})`,
   "kitchen.nutrition.amountUnknown": "no amount",

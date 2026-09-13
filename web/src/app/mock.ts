@@ -1035,7 +1035,7 @@ function mockUnresolved(): FoodUnresolvedItem[] {
   return [...counts.values()].sort((a, b) => b.count - a.count);
 }
 
-/** `GET /kitchen/recipes/{id}/nutrition`（保存されている5項目＋ source/coverage/unresolved）。 */
+/** `GET /kitchen/recipes/{id}/nutrition`（保存されている5項目＋ source/coverage/unresolved/adjustments）。 */
 function recipeNutritionPayload(id: number): RecipeNutrition {
   const r = findRecipe(id);
   const unresolved: RecipeNutritionUnresolved[] = r.ingredients
@@ -1054,6 +1054,16 @@ function recipeNutritionPayload(id: number): RecipeNutrition {
     coverage_min: 0.8,
     partial: coverage != null && coverage < 0.8,
     unresolved,
+    // 揚げ油の吸収（ADR-019 §4 追補）。題名に「揚げ」が入る作り置きだけ1件返す
+    // ——デモの画面で内訳の行が見えるようにするためだけの模擬値。
+    adjustments: /揚げ|フライ|天ぷら/.test(r.title)
+      ? [
+          {
+            kind: "oil_absorption", method: "唐揚げ", grams: 28, food_code: "14006",
+            food_name: "調合油", kcal: 248, protein_g: 0, fat_g: 28, carb_g: 0, salt_g: 0,
+          },
+        ]
+      : [],
     food_table_available: true,
   };
 }

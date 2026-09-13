@@ -272,6 +272,23 @@ export function RecipeDetail() {
                 )}
               </div>
             )}
+            {/* ADR-019 §4 追補: 材料表に書かれていない油（「揚げ油 適量」）の吸収。
+                黙って kcal が増えたように見えないよう、内訳の1行で言う。 */}
+            {nutrition && (nutrition.adjustments?.length ?? 0) > 0 && (
+              <div id="recipe-nutrition-adjustments">
+                <ul className="panel-note">
+                  {(nutrition.adjustments ?? []).map((a) => (
+                    <li key={`${a.kind}-${a.method}`}>
+                      {t("kitchen.nutrition.oilAbsorption", {
+                        method: a.method,
+                        grams: Math.round(a.grams),
+                        kcal: Math.round(a.kcal),
+                      })}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
             {nutrition && nutrition.unresolved.length > 0 && (
               <div id="recipe-nutrition-unresolved">
                 <p className="panel-note">{t("kitchen.nutrition.unresolvedHeading")}</p>

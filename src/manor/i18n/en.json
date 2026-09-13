@@ -88,6 +88,7 @@
   "chef.menu.slot.side": "Side dish",
   "chef.menu.slot.soup": "Soup",
   "chef.nutrition.rebuild.done": "Estimated nutrition (updated {updated} / skipped {skipped} / unresolved ingredients {unresolved})",
+  "chef.nutrition.rebuild.oil": "Cooking-oil absorption added to {n} recipe(s) (about {grams} g in total)",
   "chef.nutrition.unresolved.empty": "(no unresolved ingredients)",
   "chef.nutrition.unresolved.line": "{name} (normalized: {normalized}) x{count}",
   "chef.pantry.add.done": "Added {item} to pantry (id={id}).",
