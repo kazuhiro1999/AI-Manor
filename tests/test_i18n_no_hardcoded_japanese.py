@@ -215,121 +215,97 @@ ALLOWLIST: set[str] = {
     "shortcut.py",
 }
 # 行単位の許可(ファイル全体は検算したいが、特定の行だけ理由があって除外)。
-# "相対パス:行番号" の形。
-LINE_ALLOWLIST: set[str] = {
+# (相対パス, その行の完全なテキスト) の組で持つ(T49・2026-09-14)。行番号だと
+# 上に1行足すたびにずれて誤検知した(3日で5回。詳細は task.py の項目のコメント参照)。
+LINE_ALLOWLIST: set[tuple[str, str]] = {
     # [共有] calendar.py: fetch_ics/check_connection の `reason` は web の拡張ステータス
     # 表示(`manor ext check calendar` 相当・設定画面のヘルスチェック)と共有する診断
     # 文字列。CLI 表示側(_cmd_sync/_cmd_list)の「包む文」だけを訳し、ここは日本語のまま。
-    # [データ] calendar.py の書き込み（2026-09-06）: 335 は `claude -p` へ渡す指示の
-    # 文面そのもの（端末には出ない。slack.py の生成の下書きと同じ扱い）。418 以降は
-    # `reason` ——`check()` / 返信と共有する診断文字列なので訳さない（このファイルの
-    # 既存の方針と同じ。ADR-012 5d の判断）。
-    # [データ] calendar.py（2026-09-06 の書き込み・読み取り）: 335/398 は `claude -p` へ
-    # 渡す指示の文面そのもの（端末には出ない。slack.py の生成の下書きと同じ扱い）。
-    # 残りは `reason` ——`check()` / Slack の返信と共有する診断文字列なので訳さない
-    # （このファイルの既存の方針と同じ。ADR-012 5d の判断）。
-    # ⚠ 行番号で固定してあるので、上に行を足すとここがずれる。ずれたら
-    #   `_string_constant_offenders` に直接聞いて入れ替えること（手で数えない）。
-    # [データ] calendar.py: ICS の注記マーカーと、2026-09-06 に足した書き込み・読み取り。
-    # 338/354 は `claude -p` へ渡す指示の文面そのもの（端末には出ない）。残りは `reason`
-    # ——`check()` / Slack の返信と共有する診断文字列なので訳さない。
-    # ⚠ 行番号で固定してあるので、上に行を足すとずれる。ずれたら手で数えず、
-    #   `_string_constant_offenders` に直接聞いて入れ替えること。
-    # 2026-09-11（ADR-014 D5・段C）: per_user 対応で行数が動いたため、下の一覧は
-    # `_string_constant_offenders` に直接聞き直して入れ替えた（手で数えていない）。
-    "calendar.py:89",
-    "calendar.py:91",
-    "calendar.py:93",
-    "calendar.py:95",
-    "calendar.py:102",
-    "calendar.py:114",
-    "calendar.py:120",
-    "calendar.py:123",
-    "calendar.py:238",
-    "calendar.py:432",
-    "calendar.py:448",
-    "calendar.py:525",
-    "calendar.py:560",
-    "calendar.py:567",
-    "calendar.py:589",
-    "calendar.py:598",
-    "calendar.py:605",
-    "calendar.py:607",
-    "calendar.py:630",
-    "calendar.py:673",
-    "calendar.py:675",
-    "calendar.py:693",
-    "calendar.py:700",
-    "calendar.py:702",
-    "calendar.py:709",
-    "calendar.py:711",
-    "calendar.py:718",
+    # [データ] calendar.py: `claude -p` へ渡す指示の文面そのもの（端末には出ない。
+    # slack.py の生成の下書きと同じ扱い）と、ICS の注記マーカー。残りは `reason`
+    # ——`check()` / Slack の返信と共有する診断文字列なので訳さない（ADR-012 5d の判断）。
+    ('calendar.py', '        return {"ok": False, "reason": f"HTTP エラー: {exc.code}"}'),
+    ('calendar.py', '        return {"ok": False, "reason": f"接続できませんでした: {exc.reason}"}'),
+    ('calendar.py', '        return {"ok": False, "reason": "タイムアウトしました"}'),
+    ('calendar.py', '        return {"ok": False, "reason": f"取得できませんでした: {exc}"}'),
+    ('calendar.py', '        return {"ok": False, "reason": "ICS 形式ではないようです（BEGIN:VCALENDAR が見つかりません）"}'),
+    ('calendar.py', '            return {"ok": False, "reason": "URL が未設定です（manor ext set calendar --secret url）"}'),
+    ('calendar.py', '            return {"ok": True, "reason": "接続できました（予定は0件です）"}'),
+    ('calendar.py', '        return {"ok": False, "reason": f"確認できませんでした: {exc}"}'),
+    ('calendar.py', '        return {"ok": False, "reason": "URL が未設定です（manor ext set calendar --secret url）"}'),
+    ('calendar.py', 'UPDATE_PROMPT_TEMPLATE = """`{tool}` を**ちょうど1回**呼んで、既にある予定を1件直してください。'),
+    ('calendar.py', 'PUSH_PROMPT_TEMPLATE = """`{tool}` を**ちょうど1回**呼んで、予定を1件作ってください。'),
+    ('calendar.py', '    safe_place = (location or "").replace(chr(10), " ").strip()[:PUSH_TITLE_MAX] or "（なし）"'),
+    ('calendar.py', '        return {"ok": False, "html_link": "", "mode": "", "reason": "[calendar] write_calendar_id が未設定です"}'),
+    ('calendar.py', '        return {"ok": False, "html_link": "", "mode": mode, "reason": "claude が見つかりません"}'),
+    ('calendar.py', '        return {"ok": False, "html_link": "", "mode": mode, "reason": f"claude を呼べません: {exc}"}'),
+    ('calendar.py', '        return {"ok": False, "html_link": "", "mode": mode, "reason": "claude がエラーを返しました"}'),
+    ('calendar.py', '        reason = result_text.strip()[:200] or "リンクが返りませんでした"'),
+    ('calendar.py', '            reason = f"道具を拒否されました（{\', \'.join(denied)}）: {reason}"'),
+    ('calendar.py', 'EXTRACT_PROMPT_TEMPLATE = """次の <本文> から予定を1件読み取り、**JSON だけ**を出力してください。'),
+    ('calendar.py', '        return {"ok": False, "reason": "claude が見つかりません"}'),
+    ('calendar.py', '    weekday = "月火水木金土日"[_dt.strptime(today, "%Y-%m-%d").weekday()]'),
+    ('calendar.py', '        return {"ok": False, "reason": f"claude を呼べません: {exc}"}'),
+    ('calendar.py', '        return {"ok": False, "reason": "claude の応答を読めません"}'),
+    ('calendar.py', '        return {"ok": False, "reason": "claude がエラーを返しました"}'),
+    ('calendar.py', '        return {"ok": False, "reason": f"読み取り結果が JSON ではありません: {body.strip()[:120]}"}'),
+    ('calendar.py', '        reason = str((data or {}).get("error") or "読み取れません")'),
+    ('calendar.py', '        return {"ok": False, "reason": "件名か日付を読み取れません"}'),
     # [共有] face.py: try_open_app_window は web の `/api/v1/face/open` の応答(reason)。
     # _popen_chrome も両方から共有される(コメント参照)。
-    "face.py:52", "face.py:226", "face.py:237",
+    ('face.py', '            f"担当が見つかりません: {agent!r}（使えるのは {known}）",'), ('face.py', '        return {"opened": False, "method": "none", "reason": "Chrome が見つかりません"}'), ('face.py', '        return {"opened": False, "method": "none", "reason": f"Chrome を起動できませんでした（{failure}）"}'),
     # [データ] decision.py: 承認・却下のときに入れる既定のルーリング文言そのものは、
     # 台帳に永続する記録(主人が入れたデータと同じ扱い)。CLI の言語設定に関わらず
     # 日本語のまま。
     # 2026-09-06（S12）: `rule()` に actor の説明を足して行がずれた（87 → 101）。
     # 2026-09-11（T16）: `ask()` に asked_by の docstring を足して行がずれた（101 → 105）。
-    "decision.py:105",
+    ('decision.py', '        ruling = {"approved": "承認", "rejected": "却下"}[verdict]'),
     # [データ] chef/ops.py: validate_date の既定 field="日付"。tests/staff/test_chef.py が
     # field 省略で呼ぶため既定値は残すが、エラーの ManorError 側では呼び出し元が
     # field_key を渡して訳している(cli.py 側からの呼び出しはすべて明示的)。
-    # ⚠ 2026-09-12（ADR-015 D9追補）: レシピ分類3軸の lexicon アクセサを validate_date
-    # より前に足したので行がずれた（57 → 96）。
-    "staff/chef/ops.py:117",
+    ('staff/chef/ops.py', 'def validate_date(value: str, *, field: str = "日付", field_key: str = "chef.field.date") -> str:'),
     # [データ] secretary/ops.py: 曜日の対訳表・相対日付(今日/明日/明後日)の受理語彙は
     # 「主人が入力する側」の語彙(ADR-002 §6)であって、出力の文言ではない。
-    "staff/secretary/ops.py:26", "staff/secretary/ops.py:33",
-    "staff/secretary/ops.py:61", "staff/secretary/ops.py:63", "staff/secretary/ops.py:65",
+    ('staff/secretary/ops.py', '_WEEKDAY_JA: dict[str, int] = {"月": 0, "火": 1, "水": 2, "木": 3, "金": 4, "土": 5, "日": 6}'), ('staff/secretary/ops.py', '_NEXT_WEEK_RE = re.compile(r"^来週の(月|火|水|木|金|土|日)$")'),
+    ('staff/secretary/ops.py', '    if s == "今日" or lowered == "today":'), ('staff/secretary/ops.py', '    if s == "明日" or lowered == "tomorrow":'), ('staff/secretary/ops.py', '    if s == "明後日":'),
     # [データ] secretary/ops.py: ics.py が予定の note に埋め込む注記マーカーとの照合
     # (ics.py 自体が ALLOWLIST 済み。ここは判定のための文字列一致で、表示側の文言は
     # 別に訳し済み)。
-    "staff/secretary/ops.py:234", "staff/secretary/ops.py:236",
+    ('staff/secretary/ops.py', '        if "[未対応の繰り返し]" in note:'), ('staff/secretary/ops.py', '        if "[TZID未解決]" in note:'),
     # [データ] secretary/ops.py: validate_time/validate_datetime の既定 field。呼び出し側は
     # すべて明示的に上書きしており、既定値は保守のためだけに残る死んだ経路。
-    "staff/secretary/ops.py:143", "staff/secretary/ops.py:156",
+    ('staff/secretary/ops.py', 'def validate_time(value: str, *, field: str = "時刻") -> str:'), ('staff/secretary/ops.py', 'def validate_datetime(value: str, *, field: str = "日時") -> str:'),
     # [データ] steward/cli.py: 定期支払いの記録として DB の memo 列に永続する文字列
     # (decision.py の ruling と同じ「主人のデータ」の扱い)。
-    "staff/steward/cli.py:315",
+    ('staff/steward/cli.py', '        (on, row["amount"], kind, row["category"], f"定期: {row[\'name\']}", util.now()),'),
     # [データ] task.py: link_dependency/dup が task_event.note へ書く定型の一言。
     # 台帳に永続する記録(decision.py の ruling と同じ扱い)。
-    # ⚠ 行番号で持つ許可は、上に1行足すたびに壊れる（2026-09-09: 夜勤が `list_tasks` へ
-    # docstring を足して 542 → 556 へずれ、既存の一言が「新しい日本語」に見えた）。
-    # ⚠ **2026-09-11 に2度目**（夜勤が `add_idea` と `source` を足して 238→273・556→595）。
-    # 3日で2度ずれている——行番号ではなく文字列そのもので許可する形へ変えたい（T12 に起票）。
-    # ⚠ **2026-09-11 に3度目**（T16・夜勤が HG 昇格の decision.ask に asked_by を足して
-    # 273→274・595→596）。T12 の必要性がさらに裏付けられた。
-    # ⚠ **2026-09-11 に4度目**（T35・夜勤が `status()` に withdrawn の docstring を足して
-    # 596→601。274 は今回の追記より前なので不変）。
-    # ⚠ **2026-09-11 に5度目**（ADR-014・段Aが `add()`/`set()` に `user`（誰の件か）の
-    # 解決・検算とその docstring を足して 274→291・601→639）。
-    "task.py:291", "task.py:639",
+    # 3日で5回、行番号がずれて誤検知した経緯（T12）を踏まえ、T49（2026-09-14）で
+    # (ファイル, 行テキスト) の照合に変えた。以後この種のずれでは壊れない。
+    ('task.py', '        status(conn, src, "waiting", note=f"{dst} の後に", actor=actor)'), ('task.py', '    return status(conn, src, "withdrawn", note=f"{dst} と重複のため")'),
     # [データ] project.py: `project.kind` の値そのもの。DB に入っている文字列なので
     # 訳さない——訳すと、既存の行と一致しなくなる（2026-09-09・T26 の実装で追加）。
-    # ⚠ 2026-09-11（ADR-014）: `user as user_mod` の import を1行足して 18→19。
-    "project.py:19",
+    ('project.py', 'BUTLER_PROJECT_KIND = "執事"'),
     # [データ] user.py: `seed_defaults` が種（`master`/`butler`）を入れるときの名前の
     # 既定値（「主人」「執事」）。ADR-014 D1「名前の既定値は i18n を通さない」——
     # `profile.summary_line` が「執事」を既定にしているのと同じ扱いで、DB の中身
     # （利用者の呼び名の初期値）であって画面の文言ではない。
-    "user.py:65", "user.py:66",
+    ('user.py', '    master_name = _profile_name(conn, "master.callname", "主人")'), ('user.py', '    butler_name = _profile_name(conn, "butler.callname", "執事")'),
     # [データ] board/__init__.py・web/__init__.py・archive.py・gate.py・night/__init__.py の
     # `LABEL` 定数。`manor.cli` の `_run_init` が「部下: {name}」の一覧に使う想定の
     # 表示名だが、実際に読まれるのは `staff/*` 配下の担当モジュールだけ(grep で確認)。
     # 担当モジュールの `LABEL`(agent_meta.py の ALLOWLIST 理由と同じ)に合わせて
     # 日本語のままにする。
-    "board/__init__.py:22", "web/__init__.py:19",
-    "archive.py:44", "gate.py:58", "night/__init__.py:27",
+    ('board/__init__.py', 'LABEL = "ダッシュボード"'), ('web/__init__.py', 'LABEL = "Web アプリ"'),
+    ('archive.py', 'LABEL = "アーカイブ"'), ('gate.py', 'LABEL = "関門"'), ('night/__init__.py', 'LABEL = "夜勤"'),
     # [データ] archive.py: アーカイブした先を示す Markdown コメントを元ファイルへ
     # 挿入する行。端末には出さず、CHANGELOG.md 等その場に永続する注記(decision.py の
     # ruling と同じ「主人のファイルへ残す記録」の扱い)。
-    "archive.py:393",
+    ('archive.py', '            new_parts.append(f"<!-- archived: {m} → {rel}（{counts[m]}件） -->\\n")'),
     # [データ] gate.py: 振る舞い試験ランナー自身の標準出力(「結果一式: <path>」)を
     # 読み取るための正規表現。ランナー側の出力形式そのものであって manor の文言では
     # ない。
-    "gate.py:91",
+    ('gate.py', '_OUT_DIR_RE = re.compile(r"結果一式:\\s*(.+)\\s*$")'),
     # [データ] staff/chef/recipe_import.py（ADR-015 R2・2026-09-12。D7/D8/D9追補、
     # および同日の追補2（3つの取りこぼし: タグ混入・題名の尾・工程写真の穴埋め）で
     # 行が大きくずれたため、その都度 `_string_constant_offenders` で洗い直した）:
@@ -341,93 +317,85 @@ LINE_ALLOWLIST: set[str] = {
     # _fill_missing_step_images_from_html の `reason`/`warnings` 文字列
     # （calendar.fetch_ics の `reason` と同じ「共有の診断文字列」の扱い。CLI/Web の
     # 呼び出し側が包む文だけ訳す）。
-    # ⚠ 行番号で固定してあるので、上に行を足すとここがずれる。ずれたら
-    #   `_string_constant_offenders` に直接聞いて入れ替えること（手で数えない）。
     # （ADR-015 §6 追補・2026-09-12: 材料の分割・栄養価の取り込みで行数が増え、
     #   このブロック全体を `_string_constant_offenders` で洗い直した）。
     # （2026-09-13・取り込み対象を3サイト広げたとき: JSON-LD のタグ収集・アダプタの
     #   「補い」（`extract_hints`）を足して行数が増え、もう一度洗い直した。
     #   ここで増えた `_LD_TAG_SPLIT_RE` の読点も「サイトの文字列を割るためのデータ」）。
-    "staff/chef/recipe_import.py:134", "staff/chef/recipe_import.py:136",
-    "staff/chef/recipe_import.py:138", "staff/chef/recipe_import.py:140",
-    "staff/chef/recipe_import.py:145", "staff/chef/recipe_import.py:507",
-    "staff/chef/recipe_import.py:698", "staff/chef/recipe_import.py:699",
-    "staff/chef/recipe_import.py:728", "staff/chef/recipe_import.py:729",
-    "staff/chef/recipe_import.py:886", "staff/chef/recipe_import.py:887",
-    "staff/chef/recipe_import.py:919", "staff/chef/recipe_import.py:1036",
-    "staff/chef/recipe_import.py:1041", "staff/chef/recipe_import.py:1073",
-    "staff/chef/recipe_import.py:1117", "staff/chef/recipe_import.py:1133",
-    "staff/chef/recipe_import.py:1140", "staff/chef/recipe_import.py:1142",
-    "staff/chef/recipe_import.py:1144", "staff/chef/recipe_import.py:1149",
-    "staff/chef/recipe_import.py:1157", "staff/chef/recipe_import.py:1192",
-    "staff/chef/recipe_import.py:1201", "staff/chef/recipe_import.py:1203",
-    "staff/chef/recipe_import.py:1206", "staff/chef/recipe_import.py:1210",
-    "staff/chef/recipe_import.py:1224", "staff/chef/recipe_import.py:1232",
-    "staff/chef/recipe_import.py:1235", "staff/chef/recipe_import.py:1258",
-    "staff/chef/recipe_import.py:1259", "staff/chef/recipe_import.py:1264",
-    "staff/chef/recipe_import.py:1265", "staff/chef/recipe_import.py:1342",
+    ('staff/chef/recipe_import.py', '        return {"ok": False, "html": "", "final_url": "", "reason": f"HTTP エラー: {exc.code}"}'), ('staff/chef/recipe_import.py', '        return {"ok": False, "html": "", "final_url": "", "reason": f"接続できませんでした: {exc.reason}"}'),
+    ('staff/chef/recipe_import.py', '        return {"ok": False, "html": "", "final_url": "", "reason": "タイムアウトしました"}'), ('staff/chef/recipe_import.py', '        return {"ok": False, "html": "", "final_url": "", "reason": f"取得できませんでした: {exc}"}'),
+    ('staff/chef/recipe_import.py', '            "reason": f"本文が大きすぎます（上限 {max_bytes // (1024 * 1024)}MB）",'), ('staff/chef/recipe_import.py', '    return "", ["完成画像が見つかりません"]'),
+    ('staff/chef/recipe_import.py', '            "工程の写真の数が本文の工程数と合わないため割り当てていません"'), ('staff/chef/recipe_import.py', '            f"（工程 {len(raw_steps)} 件 / 写真 {len(candidates)} 件）"'),
+    ('staff/chef/recipe_import.py', '            "材料のグループの数が本文と合わないため割り当てていません"'), ('staff/chef/recipe_import.py', '            f"（材料 {len(lines)} 件 / グループ {len(groups)} 件）"'),
+    ('staff/chef/recipe_import.py', '                "index": 1, "phase": "cook", "title": "要編集",'), ('staff/chef/recipe_import.py', '                "instruction": "手順を自動では読み取れませんでした。内容を確認して編集してください。",'),
+    ('staff/chef/recipe_import.py', '        "title": title.strip() or str(source.get("title") or "").strip() or "（タイトル不明）",'), ('staff/chef/recipe_import.py', '                "自動抽出では手順を見つけられませんでした。内容を編集するか、"'),
+    ('staff/chef/recipe_import.py', '                "自動抽出できた工程が少ないため、内容をご確認ください"'), ('staff/chef/recipe_import.py', '        return {"ok": False, "recipe": None, "method": "", "warnings": [], "reason": f"自動抽出に失敗しました: {exc}"}'),
+    ('staff/chef/recipe_import.py', '        return {"ok": False, "data": None, "reason": "claude が見つかりません"}'), ('staff/chef/recipe_import.py', '        return {"ok": False, "data": None, "reason": f"claude を呼べません: {exc}"}'),
+    ('staff/chef/recipe_import.py', '        return {"ok": False, "data": None, "reason": "claude の応答を読めません"}'), ('staff/chef/recipe_import.py', '        return {"ok": False, "data": None, "reason": "claude の応答の形が不正です"}'),
+    ('staff/chef/recipe_import.py', '        return {"ok": False, "data": None, "reason": "claude がエラーを返しました"}'), ('staff/chef/recipe_import.py', '        return {"ok": False, "data": None, "reason": f"読み取り結果が JSON ではありません: {body.strip()[:120]}"}'),
+    ('staff/chef/recipe_import.py', 'STRUCTURE_PROMPT_TEMPLATE = """次の<ページ>から、料理のレシピを次の JSON へ構造化してください。**JSON だけ**を出力し、前後に説明文もコードブロックの囲みも付けないでください。'), ('staff/chef/recipe_import.py', 'STRUCTURE_RETRY_SUFFIX = """**もう一度お願いします。** 前回の出力は文字数の上限を超えていました。該当する工程だけを書き直し、それぞれの上限に収めてください（他はそのままで構いません）。JSON 全体をもう一度、**JSON だけ**で出力してください。'),
+    ('staff/chef/recipe_import.py', '        lines.append(f"分量: {ld[\'yield\']}")'), ('staff/chef/recipe_import.py', '        lines.append(f"所要時間: {ld[\'total_time\']}")'),
+    ('staff/chef/recipe_import.py', '        lines.append("材料:")'), ('staff/chef/recipe_import.py', '        lines.append("手順:")'),
+    ('staff/chef/recipe_import.py', '    content = content.strip()[:_TEXT_MAX_CHARS] or "（本文を取得できませんでした）"'), ('staff/chef/recipe_import.py', '        images_list = "（画像なし）"'),
+    ('staff/chef/recipe_import.py', '        title=str(source.get("title") or "").strip() or "（タイトル不明）",'), ('staff/chef/recipe_import.py', '                f"steps[{i}].title は{recipes._TITLE_MAX}文字以内にしてください"  # noqa: SLF001'),
+    ('staff/chef/recipe_import.py', '                f"（{len(title)}文字）: {title!r}"'), ('staff/chef/recipe_import.py', '                f"steps[{i}].instruction は{recipes._INSTRUCTION_MAX}文字以内にしてください"  # noqa: SLF001'),
+    ('staff/chef/recipe_import.py', '                f"（{len(instruction)}文字）: {instruction!r}"'), ('staff/chef/recipe_import.py', 'REFINE_PROMPT_TEMPLATE = """次の<下書き>は、料理サイトから自動抽出したレシピの JSON です。**1動作1工程**になるよう `steps` を整え、`title` は12文字以内、`instruction` は100文字以内に収めてください。**JSON だけ**を出力し、前後に説明文もコードブロックの囲みも付けないでください。'),
     # [データ] staff/chef/media.py（ADR-016 D2・2026-09-12）: `fetch_oembed` の
     # `reason` ——`recipe_import.fetch_page` の `reason` と同じ「共有の診断文字列」。
     # **そもそも主人には見えない**（ADR-016 D2-3 のとおり、oEmbed が落ちても登録は
     # 通すので `add_from_url` はこの理由を捨てる。残してあるのは道具から呼んで
     # 切り分けるときのため）。
-    # ⚠ 行番号で固定してあるので、上に行を足すとずれる。ずれたら手で数えず、
-    #   `_string_constant_offenders` に直接聞いて入れ替えること。
-    "staff/chef/media.py:140", "staff/chef/media.py:142",
-    "staff/chef/media.py:144", "staff/chef/media.py:146",
-    "staff/chef/media.py:149", "staff/chef/media.py:153",
-    "staff/chef/media.py:155",
+    ('staff/chef/media.py', '        return {"ok": False, "reason": f"HTTP エラー: {exc.code}"}'), ('staff/chef/media.py', '        return {"ok": False, "reason": f"接続できませんでした: {exc.reason}"}'),
+    ('staff/chef/media.py', '        return {"ok": False, "reason": "タイムアウトしました"}'), ('staff/chef/media.py', '        return {"ok": False, "reason": f"取得できませんでした: {exc}"}'),
+    ('staff/chef/media.py', '        return {"ok": False, "reason": "応答が大きすぎます"}'), ('staff/chef/media.py', '        return {"ok": False, "reason": f"JSON として読めません: {exc}"}'),
+    ('staff/chef/media.py', '        return {"ok": False, "reason": "JSON の形が想定と違います"}'),
     # [データ] staff/chef/recipe_shaping.py（ADR-015 D7・2026-09-12）: 下ごしらえ語
     # （`_PREP_WORDS`）・既定の phase 見出し（`_PHASE_DEFS` の「下ごしらえ」「調理」
     # 「仕上げ」）は自動抽出が機械的に使う手がかり語・レシピ本体に残る見出し文字列
     # ——画面の文言ではなくデータ（`lexicon.toml` の分類語彙と同じ扱い）。
-    # ⚠ 2026-09-13: アダプタ共通の小道具（`text_only`/`tag_attr`/
-    #   `image_url_from_img_tag`）をここへ移して行がずれたので洗い直した。
     # [データ] staff/chef/recipe_shaping.py（ADR-015 §6 追補・2026-09-12／ADR-019・
     # 2026-09-13）: 材料の分割で使う量の語彙（`_QTY_PHRASE_WORDS`/`_QTY_COUNTER_UNITS`/
     # 「大さじ」等）と、その語彙を埋め込んだ正規表現（`_NUM_PART`/`_AMOUNT_TAIL_RE` の
     # 「各」等）、材料名の正規化で落とす飾り。`_PREP_WORDS` と同じ「手がかり語」の扱い。
-    "staff/chef/recipe_shaping.py:28", "staff/chef/recipe_shaping.py:29",
-    "staff/chef/recipe_shaping.py:37", "staff/chef/recipe_shaping.py:38",
-    "staff/chef/recipe_shaping.py:39", "staff/chef/recipe_shaping.py:85",
-    "staff/chef/recipe_shaping.py:151", "staff/chef/recipe_shaping.py:156",
-    "staff/chef/recipe_shaping.py:157", "staff/chef/recipe_shaping.py:161",
-    "staff/chef/recipe_shaping.py:166", "staff/chef/recipe_shaping.py:170",
-    "staff/chef/recipe_shaping.py:211", "staff/chef/recipe_shaping.py:235",
-    "staff/chef/recipe_shaping.py:319",
+    ('staff/chef/recipe_shaping.py', '    "切る", "切り", "切っ", "刻む", "刻み", "刻ん", "混ぜる", "混ぜ", "溶く", "溶き",'), ('staff/chef/recipe_shaping.py', '    "洗う", "洗い", "むく", "むき", "戻す", "戻し", "解凍", "下ごしらえ",'),
+    ('staff/chef/recipe_shaping.py', '    {"id": "prep", "title": "下ごしらえ"},'), ('staff/chef/recipe_shaping.py', '    {"id": "cook", "title": "調理"},'),
+    ('staff/chef/recipe_shaping.py', '    {"id": "finish", "title": "仕上げ"},'), ('staff/chef/recipe_shaping.py', '    return result or [{"id": "cook", "title": "調理"}]'),
+    ('staff/chef/recipe_shaping.py', '_QTY_PHRASE_WORDS: tuple[str, ...] = ("適量", "少々", "ひとつまみ", "ふたつまみ", "お好みで")'), ('staff/chef/recipe_shaping.py', '    "kg", "ml", "cc", "cm", "㎝", "g", "個", "枚", "本", "切れ", "束", "株", "房",'),
+    ('staff/chef/recipe_shaping.py', '    "丁", "片", "袋", "缶", "合", "杯", "滴",'), ('staff/chef/recipe_shaping.py', '_NUM_PART = r"[\\d０-９]+(?:[./][\\d０-９]+)?(?:と[\\d０-９]+(?:[./][\\d０-９]+)?)?"'),
+    ('staff/chef/recipe_shaping.py', '    r"(?P<each>各\\s*)?"'), ('staff/chef/recipe_shaping.py', '    rf"|{_NUM_PART}\\s*(?:{\'|\'.join(_QTY_COUNTER_UNITS)})(?:分)?"'),
+    ('staff/chef/recipe_shaping.py', '    for word in ("大さじ", "小さじ", "カップ"):'), ('staff/chef/recipe_shaping.py', '    each = amount.startswith("各")'),
+    ('staff/chef/recipe_shaping.py', '    amount_text = ("各" if m.group("each") else "") + m.group("amount")'),
     # [データ] staff/chef/recipe_shaping.py（ADR-015 §3・2026-09-13）:
     # `infer_ingredients_used()`（工程が使う材料の推定）が使う**言語の手がかり**
     # ——材料表ぜんぶを指す言い回し（「全ての材料」）、短い材料名の前に来てよい助詞、
     # 量の言い回し（「大さじ」等。`_QTY_PHRASE_WORDS` の使い回し）、平仮名・漢字・
     # カタカナの文字クラス、末尾の揺れ（「肉」「類」）。`_PREP_WORDS` と同じ
     # 「手がかり語」の扱いで、画面の文言ではない。
-    # ⚠ この節は**ファイルの末尾に足した**——先頭に入れると上の行番号が全部ずれる。
-    "staff/chef/recipe_shaping.py:373", "staff/chef/recipe_shaping.py:384",
-    "staff/chef/recipe_shaping.py:388", "staff/chef/recipe_shaping.py:392",
-    "staff/chef/recipe_shaping.py:393", "staff/chef/recipe_shaping.py:424",
-    "staff/chef/recipe_shaping.py:435", "staff/chef/recipe_shaping.py:440",
-    "staff/chef/recipe_shaping.py:442",
+    ('staff/chef/recipe_shaping.py', '    "全ての材料", "すべての材料", "全材料", "材料全て", "材料すべて", "材料全部",'), ('staff/chef/recipe_shaping.py', '_PARTICLE_CHARS = frozenset("をはがにでとやもへからばしてただりるきくいえずつ")'),
+    ('staff/chef/recipe_shaping.py', '_QTY_LEAD_WORDS: tuple[str, ...] = _QTY_PHRASE_WORDS + ("大さじ", "小さじ", "カップ", "各")'), ('staff/chef/recipe_shaping.py', '_WORD_CHAR_RE = re.compile(r"[々㐀-䶿一-鿿゠-ヿｦ-ﾟ]")'),
+    ('staff/chef/recipe_shaping.py', '_HIRAGANA_RE = re.compile(r"[ぁ-ゟ]")'), ('staff/chef/recipe_shaping.py', '    for suffix in ("肉", "類"):'),
+    ('staff/chef/recipe_shaping.py', '_MEAT_CUT_GAP = r"[^、。,.・（）()とやをはがにでもの]{0,4}?"'), ('staff/chef/recipe_shaping.py', '    if not base.endswith("肉") or len(base) < 2:'),
+    ('staff/chef/recipe_shaping.py', '    pattern = re.compile(rf"{re.escape(base[0])}{_MEAT_CUT_GAP}肉")'),
     # [データ] staff/chef/recipe_sites/kurashiru.py（ADR-015 §7 追補・2026-09-13）:
     # 材料一覧の節を本文から探す保険の正規表現に入る見出し語「材料」
     # （`_INGREDIENT_SECTION_FALLBACK_RE`）。出典サイトの表示に実在する文字列で、
     # 画面の文言ではない（generic.py の見出し語と同じ扱い）。
-    "staff/chef/recipe_sites/kurashiru.py:48",
+    ('staff/chef/recipe_sites/kurashiru.py', '_INGREDIENT_SECTION_FALLBACK_RE = re.compile(r"材料(.*?)</section>", re.S)'),
     # [データ] staff/chef/recipe_sites/cookpad.py（ADR-015 D7・2026-09-12）:
     # 「作り方」「手順」はサイトの見出し語を拾うための正規表現の一部（データ）。
-    "staff/chef/recipe_sites/cookpad.py:25",
+    ('staff/chef/recipe_sites/cookpad.py', "_STEP_HEADING_BLOCK_RE = re.compile(r'(?:作り方|手順)[\\s\\S]*?<(?:ol|ul)[^>]*>(.*?)</(?:ol|ul)>', re.S)"),
     # [データ] staff/chef/recipe_sites/nadia.py（ADR-015 §6 追補・2026-09-12）:
     # 栄養価の表示ラベル語（「エネルギー」「たんぱく質」「脂質」「炭水化物」
     # 「食塩相当量」）——出典サイトの DOM に実在するラベル文字列を拾うための
     # 手がかり語であって、画面の文言ではない（`_NUTRITION_LABELS`）。
-    # ⚠ 2026-09-13: 共通の小道具を `recipe_shaping` へ出して行がずれた（62→60）。
-    "staff/chef/recipe_sites/nadia.py:60", "staff/chef/recipe_sites/nadia.py:61",
-    "staff/chef/recipe_sites/nadia.py:62", "staff/chef/recipe_sites/nadia.py:63",
-    "staff/chef/recipe_sites/nadia.py:64",
+    ('staff/chef/recipe_sites/nadia.py', '    ("エネルギー", "kcal"),'), ('staff/chef/recipe_sites/nadia.py', '    ("たんぱく質", "protein_g"),'),
+    ('staff/chef/recipe_sites/nadia.py', '    ("脂質", "fat_g"),'), ('staff/chef/recipe_sites/nadia.py', '    ("炭水化物", "carb_g"),'),
+    ('staff/chef/recipe_sites/nadia.py', '    ("食塩相当量", "salt_g"),'),
     # [データ] staff/chef/recipe_sites/sirogohan.py（ADR-015 D7・2026-09-13）:
     # 分量「(２人分)」と調理時間「調理時間：30分」を本文から拾う正規表現の一部
     # （`_SERVINGS_RE`/`_MINUTES_RE`）。出典サイトの表示に実在する文字列で、
     # 画面の文言ではない。
-    "staff/chef/recipe_sites/sirogohan.py:61", "staff/chef/recipe_sites/sirogohan.py:62",
+    ('staff/chef/recipe_sites/sirogohan.py', '_SERVINGS_RE = re.compile(r"([\\d０-９]+)\\s*人分")'), ('staff/chef/recipe_sites/sirogohan.py', '_MINUTES_RE = re.compile(r"([\\d０-９]+)\\s*分")'),
     # [データ] staff/chef/recipe_sites/delishkitchen.py（ADR-015 D7・2026-09-13）:
     # ①栄養価の表示ラベル語（`_NUTRITION_LABELS` の「カロリー」「塩分」等。nadia.py と
     # 同じ理由）②サイト固有の分類語を `lexicon.toml` の語へ寄せる対応表
@@ -435,13 +403,13 @@ LINE_ALLOWLIST: set[str] = {
     # 分類語彙と同じ「データ」の扱い。⚠ 本来は lexicon 側に英語の手がかり語を足したいが、
     # 別の担当が同じファイルを編集中のため今回は触らず、報告で挙げた）
     # ③分量「【2人分】」を拾う正規表現（`_SERVINGS_NUM_RE`）。
-    "staff/chef/recipe_sites/delishkitchen.py:60", "staff/chef/recipe_sites/delishkitchen.py:61",
-    "staff/chef/recipe_sites/delishkitchen.py:62", "staff/chef/recipe_sites/delishkitchen.py:63",
-    "staff/chef/recipe_sites/delishkitchen.py:64", "staff/chef/recipe_sites/delishkitchen.py:72",
+    ('staff/chef/recipe_sites/delishkitchen.py', '    ("カロリー", "kcal"),'), ('staff/chef/recipe_sites/delishkitchen.py', '    ("たんぱく質", "protein_g"),'),
+    ('staff/chef/recipe_sites/delishkitchen.py', '    ("脂質", "fat_g"),'), ('staff/chef/recipe_sites/delishkitchen.py', '    ("炭水化物", "carb_g"),'),
+    ('staff/chef/recipe_sites/delishkitchen.py', '    ("塩分", "salt_g"),'), ('staff/chef/recipe_sites/delishkitchen.py', '_SERVINGS_NUM_RE = re.compile(r"([\\d０-９]+)\\s*人分")'),
     # [データ] staff/chef/recipe_sites/generic.py（ADR-015 D7・2026-09-12）:
     # 見出し語の手がかり（「材料」「作り方」「手順」等）——lexicon.toml の分類語彙と
     # 同じ「データ」の扱いで、画面の文言ではない。
-    "staff/chef/recipe_sites/generic.py:23", "staff/chef/recipe_sites/generic.py:24",
+    ('staff/chef/recipe_sites/generic.py', '_INGREDIENT_HEADER_WORDS = ("材料",)'), ('staff/chef/recipe_sites/generic.py', '_STEP_HEADER_WORDS = ("作り方", "手順", "レシピ手順", "steps", "instructions", "directions")'),
 }
 
 
@@ -502,7 +470,7 @@ def _manor_error_message_ranges(tree: ast.Module) -> set[int]:
     return lines
 
 
-def _string_constant_offenders(path: Path, tree: ast.Module) -> list[str]:
+def _string_constant_offenders(path: Path, tree: ast.Module, source_lines: list[str]) -> list[str]:
     docstring_lines = _docstring_line_ranges(tree)
     manor_error_lines = _manor_error_message_ranges(tree)
     ja_assignment_lines = _ja_suffixed_assignment_ranges(tree)
@@ -516,7 +484,9 @@ def _string_constant_offenders(path: Path, tree: ast.Module) -> list[str]:
         if lineno in docstring_lines or lineno in manor_error_lines or lineno in ja_assignment_lines:
             continue
         rel = path.relative_to(SRC_ROOT).as_posix()
-        if f"{rel}:{lineno}" in LINE_ALLOWLIST:
+        # 行番号ではなく行の内容そのものと照合する(T49)。上に行を足しても壊れない。
+        line_text = source_lines[lineno - 1] if 0 < lineno <= len(source_lines) else ""
+        if (rel, line_text) in LINE_ALLOWLIST:
             continue
         offenders.append(f"{rel}:{lineno}: {node.value[:80]!r}")
     return offenders
@@ -540,7 +510,7 @@ def test_no_hardcoded_japanese(path: Path) -> None:
         pytest.skip(f"{rel} は ALLOWLIST（データ・語彙。理由はテストファイル冒頭のコメント参照）")
     source = path.read_text(encoding="utf-8")
     tree = ast.parse(source, filename=str(path))
-    offenders = _string_constant_offenders(path, tree)
+    offenders = _string_constant_offenders(path, tree, source.split("\n"))
     assert offenders == [], "\n".join(offenders)
 
 
@@ -554,10 +524,32 @@ def test_allowlist_entries_exist_and_still_contain_japanese() -> None:
 
 
 def test_line_allowlist_entries_still_contain_japanese() -> None:
-    for entry in LINE_ALLOWLIST:
-        rel, lineno_str = entry.rsplit(":", 1)
+    """LINE_ALLOWLIST の風化を防ぐ: 行番号ではなく行の内容そのもので照合するので
+    (T49)、ここで壊れうるのは「その行がもうファイルに存在しない」（内容が変わった）
+    ときだけ——行の移動では壊れない。
+    """
+    for rel, line_text in LINE_ALLOWLIST:
         path = SRC_ROOT / rel
-        assert path.is_file(), f"{rel} が見つかりません（{entry} を LINE_ALLOWLIST から外すこと）"
+        assert path.is_file(), f"{rel} が見つかりません（LINE_ALLOWLIST から外すこと）"
+        assert JA_CHAR_PATTERN.search(line_text), f"{rel}: {line_text!r} は日本語を含みません"
         lines = path.read_text(encoding="utf-8").split("\n")
-        line = lines[int(lineno_str) - 1] if 0 < int(lineno_str) <= len(lines) else ""
-        assert JA_CHAR_PATTERN.search(line), f"{entry} はもう日本語を含みません（行がずれたか、直った可能性）"
+        assert line_text in lines, (
+            f"{rel}: {line_text!r} がもうファイルにありません"
+            "（内容が変わったので LINE_ALLOWLIST を更新すること）"
+        )
+
+
+def test_line_allowlist_survives_line_shift() -> None:
+    """T49 の核心: 許可された行の上に無関係な行を挿入して行番号がずれても、
+    (ファイル, 行の内容)で照合するので誤検知しない(旧・行番号方式は3日で5回壊れた)。
+    """
+    rel, line_text = "decision.py", '        ruling = {"approved": "承認", "rejected": "却下"}[verdict]'
+    assert (rel, line_text) in LINE_ALLOWLIST  # 前提: 実在の許可対象であること
+    path = SRC_ROOT / rel
+    lines = path.read_text(encoding="utf-8").split("\n")
+    idx = lines.index(line_text)
+    shifted_lines = lines[:idx] + ["# inserted for test_line_allowlist_survives_line_shift"] + lines[idx:]
+    shifted_source = "\n".join(shifted_lines)
+    tree = ast.parse(shifted_source, filename=str(path))
+    offenders = _string_constant_offenders(path, tree, shifted_lines)
+    assert offenders == [], "\n".join(offenders)

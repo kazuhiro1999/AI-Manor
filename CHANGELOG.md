@@ -16,6 +16,25 @@
 
 ---
 
+## 2026-09-14（i18n の LINE_ALLOWLIST を行番号ではなく行の内容で持つ。T49）
+
+### 修正: `tests/test_i18n_no_hardcoded_japanese.py` の LINE_ALLOWLIST が3日で5回ずれた
+
+`LINE_ALLOWLIST` は `"task.py:238"` のように行番号で許可を持っていたため、対象行より
+上に1行足すたびにずれ、既存の許可済み文字列が「新しい未翻訳の日本語」として誤検知
+されていた（2026-09-09・2026-09-11に複数回）。行を直すたびに`_string_constant_offenders`
+で該当行を洗い直す運用でしのいでいたが、機構そのものは直っていなかった。
+
+`LINE_ALLOWLIST` の型を `set[str]`（`"file.py:行番号"`）から `set[tuple[str, str]]`
+（ファイルとその行の完全なテキスト）へ変更。`_string_constant_offenders` は行番号では
+なく `(相対パス, 行のテキスト)` の完全一致で照合する。既存138エントリは自動変換で
+移行。`test_line_allowlist_survives_line_shift`（対象行の上に1行挿入しても誤検知しない
+ことを実際に確かめる試験）を新設。
+
+**影響**: 今後この検査に関わるファイルへ行を足しても、既存の許可はずれない。
+`test_line_allowlist_entries_still_contain_japanese` は「行の内容がもうファイルに無い」
+（中身が変わった）ときだけ気づく形に変わった。
+
 ## 2026-09-14（`manor check` C10 を、archive しても動く月がある晩だけ鳴らす。T43）
 
 ### 修正: 追記ファイル肥大化の警告（C10）が、archive しても無意味な晩にも鳴っていた
