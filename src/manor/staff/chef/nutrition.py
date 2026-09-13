@@ -42,6 +42,7 @@ from __future__ import annotations
 
 import csv
 import sqlite3
+import re
 import unicodedata
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -549,7 +550,8 @@ _COLUMN_SPECS: tuple[tuple[str, tuple[str, ...], tuple[str, ...], bool], ...] = 
     ("name", ("食品名",), (), True),
     ("food_group", ("食品群",), (), False),
     ("refuse_pct", ("廃棄率",), (), False),
-    ("kcal", ("エネルギー", "kcal"), ("kj",), True),
+    # 「エネルギー」は kJ 列との結合セルに載るので kcal 列の見出しには現れない。単位行の kcal だけで引く。
+    ("kcal", ("kcal",), ("kj",), True),
     ("protein_g", ("たんぱく質",), ("アミノ酸",), True),
     ("fat_g", ("脂質",), ("脂肪酸", "トリアシル", "コレステロール"), True),
     ("carb_g", ("炭水化物",), ("利用可能", "単糖", "質量", "差引き", "食物繊維", "糖アルコール"), True),
@@ -567,12 +569,21 @@ def _cell(row: Sequence[Any], i: int) -> str:
     return "" if value is None else str(value).strip()
 
 
+_HEADER_SPACES = re.compile(r"[\s\u3000]+")
+
+
+def _header_cell(row: Sequence[Any], i: int) -> str:
+    """見出し用の読み。八訂の見出しは「食　品　名」「廃　棄　率」のように全角空白で字を離すので、
+    空白を全部落として語で引けるようにする（食品名そのものの読みには使わない）。"""
+    return _HEADER_SPACES.sub("", _cell(row, i))
+
+
 def _header_texts(rows: Sequence[Sequence[Any]], header_end: int) -> list[str]:
     """列ごとに、見出し行（0〜`header_end`）を縦に連結した文字列。"""
     width = max((len(r) for r in rows[: header_end + 1]), default=0)
     out: list[str] = []
     for i in range(width):
-        parts = [_cell(rows[r], i) for r in range(header_end + 1)]
+        parts = [_header_cell(rows[r], i) for r in range(header_end + 1)]
         out.append(" ".join(p for p in parts if p).lower())
     return out
 
@@ -615,7 +626,7 @@ def find_columns(rows: Sequence[Sequence[Any]]) -> tuple[int, dict[str, int]]:
     """
     name_row = -1
     for r, row in enumerate(rows[:_HEADER_SCAN_ROWS]):
-        if any("食品名" in _cell(row, i) for i in range(len(row))):
+        if any("食品名" in _header_cell(row, i) for i in range(len(row))):
             name_row = r
             break
     header_end = -1
