@@ -11,6 +11,7 @@ from pathlib import Path
 from manor import check as check_mod
 from manor import render as render_mod
 from manor import task as task_mod
+from manor import util
 
 OVER = 40 * 1024 + 1
 UNDER = 40 * 1024 - 1
@@ -73,3 +74,25 @@ def test_c10_does_not_affect_check_exit_verdict(conn, home: Path):
 def test_c10_label_registered():
     assert "C10" in check_mod.CHECK_LABELS
     assert "C10" in check_mod.WARNING_ONLY_CHECKS
+
+
+def test_c10_silent_when_archive_has_no_target_month(tmp_path: Path, home: Path):
+    # T43: 解釈できる形式（heading）でも、archive しても動かす月が無いなら鳴らさない
+    # （外部視点 E28）。全エントリが今月なら keep-months=1 の既定で常に対象月なし。
+    today_heading = f"## {util.today()}\n\n本文" + "x" * OVER
+    changelog = tmp_path / "CHANGELOG.md"
+    changelog.write_text(today_heading, encoding="utf-8")
+
+    results = check_mod.check_c10(home, extra_paths={"CHANGELOG.md": changelog})
+    assert results == []
+
+
+def test_c10_fires_when_archive_has_a_target_month(tmp_path: Path, home: Path):
+    # 過去月のエントリが混ざっていれば、archive で実際に動かせるので従来どおり鳴る
+    old_heading = "## 2020-01-01\n\n本文" + "x" * OVER
+    changelog = tmp_path / "CHANGELOG.md"
+    changelog.write_text(old_heading, encoding="utf-8")
+
+    results = check_mod.check_c10(home, extra_paths={"CHANGELOG.md": changelog})
+    flagged = {item["path"] for item in results}
+    assert "CHANGELOG.md" in flagged

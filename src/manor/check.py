@@ -6,6 +6,7 @@ import re
 import sqlite3
 from pathlib import Path
 
+from . import archive as archive_mod
 from . import db, render, util
 from . import voice
 
@@ -153,8 +154,14 @@ def check_c10(home: Path, *, extra_paths: dict[str, Path] | None = None) -> list
             size = path.stat().st_size
         except OSError:
             continue
-        if size > threshold:
-            out.append({"path": label, "bytes": size})
+        if size <= threshold:
+            continue
+        # archive できる形式なのに、いま archive しても動かす月が無いなら鳴らさない
+        # （外部視点 E28・2026-09-10。T43）。形式を解釈できないファイルは従来どおり鳴らす。
+        plan = archive_mod.apply(path, dry_run=True)
+        if plan["supported"] and not plan["archived_months"]:
+            continue
+        out.append({"path": label, "bytes": size})
     return out
 
 
