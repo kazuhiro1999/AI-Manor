@@ -18,9 +18,13 @@ CLI（`cli.py`）・Web（`web/api_v1/kitchen.py`）の両方がここの関数�
 
 1. `chef_food_alias.alias` の**完全一致**（素の名前 → 正規化した名前の順に引く）
 2. 正規化した名前が**成分表の食品名と完全一致**
-3. 成分表の食品名に**部分一致**（複数あれば「生」を優先し、次に調理済みでないもの、
-   最後に名前が短いもの）
+3. 成分表の食品名に**部分一致**（当たり方の**位置**で順位を付け、同じ位置なら「生」を
+   優先し、次に調理済みでないもの、最後に名前が短いもの。`_match_tier` 参照）
 4. 当たらなければ**未解決**——推定値には足さず、`coverage` を下げる
+
+①の alias は主人が手で入れるほか、**名寄せの種**（`food_aliases_seed.toml`。ADR-019 §4）
+が `confidence='rule'` で先に埋める——成分表の食品名は「根深ねぎ 葉 軟白 生」のような
+分類の言葉で、うちの「長ねぎ」とは字が重ならない。字が無いものは③では当たらない。
 
 ## coverage（解決率）と `partial`
 
@@ -43,6 +47,7 @@ from __future__ import annotations
 import csv
 import sqlite3
 import re
+import tomllib
 import unicodedata
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -90,6 +95,9 @@ _RAW_WORD = "生"
 _COOKED_WORDS: tuple[str, ...] = (
     "ゆで", "茹で", "焼き", "蒸し", "油いため", "水煮", "乾", "フライ", "から揚げ", "天ぷら", "缶詰",
 )
+
+#: 名寄せの種（ADR-019 §4）。`lexicon.toml` と同じ「語彙はファイルに置く」流儀。
+_SEED_PATH = Path(__file__).with_name("food_aliases_seed.toml")
 
 
 # --- lexicon（換算の物差しの唯一の出どころ。ここは読むだけ） -----------------------------
@@ -327,6 +335,34 @@ class FoodIndex:
     by_code: dict[str, dict[str, Any]] = field(default_factory=dict)
     by_name: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
     normalized: list[tuple[str, dict[str, Any]]] = field(default_factory=list)
+    #: 食品番号 → 食品名を**語に割ったもの**（`_name_words`）。順位付けだけに使う。
+    words: dict[str, tuple[str, ...]] = field(default_factory=dict)
+
+
+#: 食品名の語の区切り（八訂は「ぶた ばら 脂身つき 生」のように**空白で語を並べる**）。
+_NAME_WORD_SPLIT_RE = re.compile(r"[\s　]+")
+#: 食品群の見出し（`<調味料類>`）。語ではなく分類の札なので、順位付けからは外す
+#: （`(しょうゆ類)`・`[大型種肉]` は `recipe_shaping` の括弧落としが既に外している）。
+_GROUP_LABEL_RE = re.compile(r"<[^>]*>")
+
+
+def _name_words(name: str, tables: UnitTables) -> tuple[str, ...]:
+    """成分表の食品名 → 正規化した**語の並び**（ADR-019 §4）。
+
+    `normalize_name()` は空白を詰めて1本の文字列にしてしまうので、語の切れ目が消える
+    ——「そらまめ しょうゆ豆」と「こいくちしょうゆ」のどちらが**しょうゆそのもの**かは、
+    語の切れ目が分からないと決められない。ここだけ**割る前**の名前から語を採る。
+    """
+    raw = unicodedata.normalize("NFKC", str(name or ""))
+    out: list[str] = []
+    for token in _NAME_WORD_SPLIT_RE.split(raw):
+        token = _GROUP_LABEL_RE.sub("", token).strip()
+        if not token:
+            continue
+        word = normalize_name(token, tables, drop=False)
+        if word:
+            out.append(word)
+    return tuple(out)
 
 
 def build_index(foods: Iterable[Mapping[str, Any]], tables: UnitTables | None = None) -> FoodIndex:
@@ -344,14 +380,61 @@ def build_index(foods: Iterable[Mapping[str, Any]], tables: UnitTables | None = 
             continue
         index.by_name.setdefault(norm, []).append(row)
         index.normalized.append((norm, row))
+        index.words[code] = _name_words(str(row.get("name") or ""), tables)
     return index
 
 
-def _partial_sort_key(norm_name: str, row: Mapping[str, Any]) -> tuple[int, int, str]:
-    """部分一致の優先度（ADR-019 D2 ③「複数あれば生を優先」）。
+#: 部分一致の**当たり方**（ADR-019 §4。小さいほど「その食品そのもの」に近い）。
+#: 日本語の複合語は**後ろが主辞**（「こいくち＋しょうゆ」はしょうゆの一種、
+#: 「しょうゆ＋豆」は豆の一種）なので、語の**末尾**に当たったものを上に置く。
+MATCH_WORD_EXACT = 0   # 食品名の語がまるごと材料名（「にんじん 根 皮つき 生」の「にんじん」）
+MATCH_WORD_HEAD = 1    # 語の主辞が材料名（「こいくちしょうゆ」「食塩」「りょくとうもやし」）
+MATCH_SPAN = 2         # 語の切れ目をまたいで含む（素の部分一致。「鶏 ひき肉 生」×「鶏ひき肉」）
+MATCH_WORD_PREFIX = 3  # 語の**頭**にだけ当たる（「しょうゆ豆」「しょうゆ漬」＝別の食品の小分類）
+MATCH_WORD_INSIDE = 4  # 語の**途中**にだけ当たる（「塩蔵わかめ」の「塩」）
 
-    ①「生」を含む → ②調理済みの語を含まない → ③それ以外、の順。同じ段なら
-    **名前が短いもの**（余計な修飾が付いていない＝素の食品に近い）、最後に食品番号で安定させる。
+
+def _match_tier(query: str, words: Sequence[str]) -> int:
+    """材料名が食品名の**どこ**に当たったか（上の `MATCH_*`）。
+
+    `query` が空（食品名のほうが材料名に含まれる向きの照合）なら、位置では区別せず
+    `MATCH_SPAN` を返す——順位は「生」優先と名前の短さだけで決める（従来どおり）。
+    """
+    if not query or not words:
+        return MATCH_SPAN
+    tier: int | None = None
+    for word in words:
+        if word == query:
+            return MATCH_WORD_EXACT
+        if query not in word:
+            continue
+        if word.endswith(query):
+            here = MATCH_WORD_HEAD
+        elif word.startswith(query):
+            here = MATCH_WORD_PREFIX
+        else:
+            here = MATCH_WORD_INSIDE
+        tier = here if tier is None else min(tier, here)
+    # どの語の中にも収まらない＝語の切れ目をまたいで含まれている。
+    return MATCH_SPAN if tier is None else tier
+
+
+def _partial_sort_key(
+    norm_name: str,
+    row: Mapping[str, Any],
+    *,
+    query: str = "",
+    words: Sequence[str] = (),
+) -> tuple[int, int, int, str]:
+    """部分一致の優先度（ADR-019 D2 ③・§4）。
+
+    ①当たり方の位置（`_match_tier`）→ ②「生」を含む → ③調理済みの語を含まない →
+    ④それ以外、の順。同じ段なら**名前が短いもの**（余計な修飾が付いていない＝素の
+    食品に近い）、最後に食品番号で安定させる。
+
+    名前の長さは**食品群の見出しを除いた語の合計**で測る——`<調味料類>` の 6 字が
+    調味料だけに一律で乗ると、群をまたいだ比べ（「そらまめ しょうゆ豆」対
+    「こいくちしょうゆ」）が歪む。
     """
     if _RAW_WORD in norm_name:
         rank = 0
@@ -359,7 +442,8 @@ def _partial_sort_key(norm_name: str, row: Mapping[str, Any]) -> tuple[int, int,
         rank = 1
     else:
         rank = 2
-    return rank, len(norm_name), str(row.get("food_code") or "")
+    length = sum(len(w) for w in words) if words else len(norm_name)
+    return _match_tier(query, words), rank, length, str(row.get("food_code") or "")
 
 
 def resolve_food(
@@ -392,11 +476,23 @@ def resolve_food(
         return {**row, "_stage": STAGE_NAME, "_normalized": norm}
 
     # ③ 部分一致（成分表の名前が材料名を含む → 材料名が成分表の名前を含む）
+    # 前者は**当たり方の位置**で順位を付けられる（`_match_tier`）。後者は材料名のほうが
+    # 長い＝食品名の語の話ではないので、位置では区別しない（`query=""` を渡す）。
     contains = [(n, r) for n, r in index.normalized if norm in n]
+    query = norm
     if not contains:
         contains = [(n, r) for n, r in index.normalized if n in norm]
+        query = ""
     if contains:
-        n, row = sorted(contains, key=lambda pair: _partial_sort_key(pair[0], pair[1]))[0]
+        n, row = sorted(
+            contains,
+            key=lambda pair: _partial_sort_key(
+                pair[0],
+                pair[1],
+                query=query,
+                words=index.words.get(str(pair[1].get("food_code") or ""), ()),
+            ),
+        )[0]
         return {**row, "_stage": STAGE_PARTIAL, "_normalized": norm}
 
     # ④ 未解決
@@ -821,18 +917,54 @@ def alias_map(conn: sqlite3.Connection) -> dict[str, str]:
     }
 
 
-def search_foods(conn: sqlite3.Connection, q: str, *, limit: int = 50) -> list[dict[str, Any]]:
-    """食品名の**部分一致**で探す（画面の「食品を選ぶ」。ADR-019 D5）。"""
-    require_food_table(conn)
+def search_terms(q: str, tables: UnitTables | None = None) -> list[str]:
+    """検索語 → LIKE に掛ける語の並び（ADR-019 §4）。**正規化の前と後の両方**を返す。
+
+    成分表はかな書き（「たまねぎ」「ぶた」「こいくちしょうゆ」）、うちのレシピは漢字
+    （「玉ねぎ」「豚」「醤油」）。`[food_normalize].synonyms` はレシピの書き方へ寄せる
+    向きなので、検索では**逆向きにも当てる**——そうしないと「玉ねぎ」で成分表の
+    「たまねぎ」が1件も出ない（2026-09-13 の実測）。
+    """
+    tables = tables or load_unit_tables()
+    out: list[str] = []
+
+    def push(value: str) -> None:
+        text = str(value or "").strip()
+        if text and text not in out:
+            out.append(text)
+
     term = unicodedata.normalize("NFKC", str(q or "")).strip()
-    if not term:
+    push(term)
+    push(shaping.normalize_food_name(term))
+    norm = normalize_name(term, tables, drop=False)
+    push(norm)
+    for src, dst in tables.synonyms:
+        key = shaping.normalize_food_name(dst)
+        target = shaping.normalize_food_name(src)
+        if key and target and key in norm:
+            push(norm.replace(key, target))
+    return out
+
+
+def search_foods(conn: sqlite3.Connection, q: str, *, limit: int = 50) -> list[dict[str, Any]]:
+    """食品名の**部分一致**で探す（画面の「食品を選ぶ」。ADR-019 D5）。
+
+    引く語は `search_terms()` が広げる（正規化の前と後・同義語の逆向き）。どれか1つに
+    当たれば拾い、**名前が短い順**に並べる——修飾の少ない素の食品が上に来る。
+    """
+    require_food_table(conn)
+    terms = search_terms(q)
+    if not terms:
         return []
     # LIKE の特殊文字（`%`・`_`）は主人が打った素の文字として扱う（ESCAPE で逃がす）。
-    escaped = term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+    args: list[Any] = []
+    for term in terms:
+        args.append("%" + term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%")
+    where = " OR ".join(["name LIKE ? ESCAPE '\\'"] * len(terms))
+    args.append(max(1, int(limit)))
     rows = conn.execute(
-        "SELECT * FROM chef_food WHERE name LIKE ? ESCAPE '\\'"
-        " ORDER BY LENGTH(name), food_code LIMIT ?",
-        (f"%{escaped}%", max(1, int(limit))),
+        f"SELECT * FROM chef_food WHERE {where} ORDER BY LENGTH(name), food_code LIMIT ?",
+        args,
     ).fetchall()
     return [dict(r) for r in rows]
 
@@ -889,6 +1021,106 @@ def set_alias(
         "food_name": str(row["name"]),
         "confidence": confidence,
         "updated_at": now,
+    }
+
+
+# --- 名寄せの種（ADR-019 §4） -------------------------------------------------------------
+
+
+def load_alias_seed(
+    path: Path | None = None, tables: UnitTables | None = None
+) -> list[dict[str, Any]]:
+    """`food_aliases_seed.toml` を読む（試験は `path` に合成データを渡せる）。
+
+    戻り値は `[{"food_code", "name", "aliases": [正規化した材料名, …]}, …]`。
+    **DB は触らない**——実在の検算（食品番号が `chef_food` にあるか）は `seed_aliases()`。
+    """
+    tables = tables or load_unit_tables()
+    p = Path(path) if path is not None else _SEED_PATH
+    try:
+        with p.open("rb") as f:
+            data = tomllib.load(f)
+    except (OSError, tomllib.TOMLDecodeError) as exc:
+        raise ManorError(
+            f"名寄せの種を読めませんでした: {p}",
+            code=2,
+            key=ERR_FOOD_IMPORT_FAILED,
+            params={"detail": str(p)},
+        ) from exc
+    out: list[dict[str, Any]] = []
+    for raw in data.get("food") or []:
+        if not isinstance(raw, Mapping):
+            continue
+        code = str(raw.get("code") or "").strip()
+        if not code:
+            continue
+        aliases: list[str] = []
+        for alias in raw.get("aliases") or []:
+            norm = normalize_name(str(alias), tables)
+            if norm and norm not in aliases:
+                aliases.append(norm)
+        if not aliases:
+            continue
+        out.append({"food_code": code, "name": str(raw.get("name") or ""), "aliases": aliases})
+    return out
+
+
+def seed_aliases(
+    conn: sqlite3.Connection, *, path: Path | None = None, tables: UnitTables | None = None
+) -> dict[str, object]:
+    """名寄せの種を `chef_food_alias` へ `confidence='rule'` で入れる（冪等）。
+
+    **`manual` は上書きしない**（ADR-019 §4）——画面や `manor chef food alias` で主人が
+    決めた行は、種を入れ直しても動かない。同じ alias の `rule`／`llm` は更新する。
+
+    `chef_food` に無い食品番号は**黙って飛ばし**（`missing` に数える）、例外にしない
+    ——成分表を入れていない home や、版が違って番号が動いた行のために、種の1行で
+    取り込み全体を失敗させたくない。
+    """
+    require_food_table(conn)
+    tables = tables or load_unit_tables()
+    entries = load_alias_seed(path, tables)
+    known = {
+        str(r["food_code"]) for r in conn.execute("SELECT food_code FROM chef_food").fetchall()
+    }
+    existing = {
+        str(r["alias"]): str(r["confidence"])
+        for r in conn.execute("SELECT alias, confidence FROM chef_food_alias").fetchall()
+    }
+    now = util.now()
+    added = updated = kept = 0
+    missing: list[str] = []
+    seen: set[str] = set()
+    for entry in entries:
+        code = str(entry["food_code"])
+        if code not in known:
+            missing.append(code)
+            continue
+        for alias in entry["aliases"]:
+            if alias in seen:
+                continue  # 種の中の重複（試験が検算しているので、通れば起きない）
+            seen.add(alias)
+            if existing.get(alias) == "manual":
+                kept += 1
+                continue
+            conn.execute(
+                "INSERT INTO chef_food_alias (alias, food_code, confidence, updated_at)"
+                " VALUES (?, ?, 'rule', ?)"
+                " ON CONFLICT (alias) DO UPDATE SET food_code = excluded.food_code,"
+                "  confidence = excluded.confidence, updated_at = excluded.updated_at",
+                (alias, code, now),
+            )
+            if alias in existing:
+                updated += 1
+            else:
+                added += 1
+    return {
+        "foods": len(entries),
+        "aliases": len(seen),
+        "added": added,
+        "updated": updated,
+        "kept_manual": kept,
+        "missing": missing,
     }
 
 

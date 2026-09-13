@@ -582,12 +582,42 @@ def cmd_food_import(conn, home, args) -> object:
     `home/` に置いたファイルの道を渡す（置き場は `home/ENV.md`）。冪等。
     """
     result = nutrition.import_food_table(conn, args.path, source_version=args.source_version)
+    # 取り込んだ直後に名寄せの種を入れる（ADR-019 §4）——`nutrition rebuild` の前に
+    # 済ませておかないと、初回の推定が「長ねぎ」「片栗粉」を丸ごと取りこぼす。
+    seeded = nutrition.seed_aliases(conn)
+    if args.json:
+        return {**result, "seed": seeded}
+    return "\n".join([
+        i18n.t(
+            "chef.food.import.done",
+            rows=result["rows"], added=result["added"],
+            updated=result["updated"], total=result["total"],
+        ),
+        _seed_line(seeded),
+    ])
+
+
+def _seed_line(seeded: dict) -> str:
+    """`manor chef food seed` の結果行（取り込みの後にも同じ文を出す）。"""
+    return i18n.t(
+        "chef.food.seed.done",
+        aliases=seeded["aliases"], added=seeded["added"],
+        updated=seeded["updated"], kept=seeded["kept_manual"],
+    )
+
+
+def cmd_food_seed(conn, home, args) -> object:
+    """名寄せの種（`food_aliases_seed.toml`）を `chef_food_alias` へ入れる（ADR-019 §4）。
+
+    冪等。**主人が手で決めた名寄せ（`manual`）は上書きしない。**
+    """
+    result = nutrition.seed_aliases(conn)
     if args.json:
         return result
-    return i18n.t(
-        "chef.food.import.done",
-        rows=result["rows"], added=result["added"], updated=result["updated"], total=result["total"],
-    )
+    lines = [_seed_line(result)]
+    if result["missing"]:
+        lines.append(i18n.t("chef.food.seed.missing", n=len(result["missing"])))
+    return "\n".join(lines)
 
 
 def cmd_food_search(conn, home, args) -> object:
@@ -963,6 +993,11 @@ def register(subparsers) -> None:
     p.add_argument("--json", action="store_true")
     p.add_argument("--no-render", action="store_true")
     p.set_defaults(func=cmd_food_import, is_write=True)
+
+    p = food_sub.add_parser("seed", help=i18n.t("cli.chef.food.seed.help"))
+    p.add_argument("--json", action="store_true")
+    p.add_argument("--no-render", action="store_true")
+    p.set_defaults(func=cmd_food_seed, is_write=True)
 
     p = food_sub.add_parser("search")
     p.add_argument("q")
