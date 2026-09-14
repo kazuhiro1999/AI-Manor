@@ -1861,6 +1861,37 @@ def _push_to_calendar(home: Path, when: dict[str, Any], *, user_id: str | None =
         return {"ok": False, "html_link": "", "reason": str(exc)}
 
 
+def _project_search_terms(title: str) -> list[str]:
+    """プロジェクトのタイトルから照合語を切り出す（括弧の中と外を別々の語として扱う）。"""
+    outer = re.sub(r"[（(].*?[）)]", " ", title)
+    inner = " ".join(re.findall(r"[（(](.*?)[）)]", title))
+    terms: list[str] = []
+    for chunk in (outer, inner):
+        terms.extend(t for t in re.split(r"[\s・/、,]+", chunk) if t)
+    return terms
+
+
+def _guess_project(conn: sqlite3.Connection, body: str) -> str | None:
+    """`#task` の本文からプロジェクトを推測する（D16。2026-09-14）。
+
+    プロジェクトのタイトルに含まれる語（括弧の中身も込み）が本文にそのまま
+    出てきたら、いちばん長く一致した語のプロジェクトの `code` を返す。
+    **当たらなければ `None`**——無理に決めつけると、違うプロジェクトへ
+    紐づいてしまうほうが「project_id なし」より悪い。
+    """
+    from . import project as project_mod
+
+    body_lower = body.lower()
+    best: tuple[int, str] | None = None
+    for p in project_mod.list_projects(conn):
+        title = str(p.get("title") or "")
+        for term in _project_search_terms(title):
+            if len(term) >= 3 and term.lower() in body_lower:
+                if best is None or len(term) > best[0]:
+                    best = (len(term), str(p["code"]))
+    return best[1] if best else None
+
+
 def _create_from_intake(
     conn: sqlite3.Connection,
     *,
@@ -1885,14 +1916,14 @@ def _create_from_intake(
 
         return task_mod.add(
             conn, title, cls="general", now="Slack から受け取りました（#task）", body=body,
-            user=user_id,
+            user=user_id, project=_guess_project(conn, body),
         )
     if kind == "idea":
         from . import task as task_mod
 
         # **意見箱の起票は task_mod.add_idea を通す**。画面のフォーム（`/api/v1/ideas`）も
         # 同じ関数を通る——2箇所に書くと片方だけ直す事故になる（この4日で5回踏んだ）。
-        return task_mod.add_idea(conn, body)
+        return task_mod.add_idea(conn, body, project=_guess_project(conn, body))
     if kind == "cal" and when:
         from .staff.secretary import ops as sec_ops
 

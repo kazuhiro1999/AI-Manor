@@ -239,13 +239,14 @@ def add(
 IDEA_TITLE_MAX = 80
 
 
-def add_idea(conn: sqlite3.Connection, body: str) -> str:
+def add_idea(conn: sqlite3.Connection, body: str, *, project: str | None = None) -> str:
     """意見箱への起票を1本にする。**Slack（`#idea`）も画面のフォームも、ここを通す**
 
     ——2箇所に書くと片方だけ直す事故になる（この4日で5回踏んだ、と夜勤の指示に明記）。
     `hold`（仕分け待ち）で入れ、`source='idea'` を立てる。**`hold` で入れる理由**:
     `todo` で入れると板の未着手に紛れ、題名だけが並ぶ（主人ご自身が起こした T26 で
     実際にそうなり「どこにいったか分からなくなった」と仰った）。
+    `project`（D16）: 呼び出し側が本文から推測した `project.code`。当たらなければ `None`。
     """
     title = body.splitlines()[0][:IDEA_TITLE_MAX] or body[:IDEA_TITLE_MAX]
     task_id = add(
@@ -259,6 +260,7 @@ def add_idea(conn: sqlite3.Connection, body: str) -> str:
         owner="master",
         source="idea",
         user=user_mod.BUTLER_ID,
+        project=project,
     )
     status(conn, task_id, "hold")
     return task_id

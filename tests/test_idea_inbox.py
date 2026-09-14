@@ -47,6 +47,25 @@ def test_idea_lands_as_a_triage_item_not_in_the_todo_pile(home_path: Path) -> No
     assert "詳しくは" in str(row["body"]), "本文を丸ごと残していない"
 
 
+def test_idea_guesses_the_project_from_its_title(home_path: Path) -> None:
+    """D16「意見箱も同様に」: 本文にプロジェクトのタイトルの語が出てきたら project_id を埋める。"""
+    from manor import project as project_mod
+
+    assert cli.main(["init"]) == 0
+    conn = db.connect(home_path)
+    project_mod.add(conn, "vra", "VRAcademy 2台同期収録（会社）", kind="会社")
+    conn.commit()
+
+    task_id = slack_mod._create_from_intake(
+        conn, kind="idea", body="VRAcademyの意見箱への導線を増やしてほしい"
+    )
+    conn.commit()
+
+    row = conn.execute("SELECT project_id FROM task WHERE id = ?", (task_id,)).fetchone()
+    project_row = conn.execute("SELECT id FROM project WHERE code = 'vra'").fetchone()
+    assert row["project_id"] == project_row["id"]
+
+
 def test_install_command_carries_the_diary_flag() -> None:
     """登録するコマンドに `--diary` が出ること（設定ファイルへ隠さない）。"""
     cmd = runner.build_install_command(at="02:00", sleep_back_after=True, diary_after=True)

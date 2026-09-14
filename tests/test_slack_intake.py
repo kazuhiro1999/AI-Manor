@@ -158,6 +158,54 @@ def test_task_message_files_a_task_and_replies(
     assert task_id in str(posted[0]["text"])
 
 
+def test_task_message_guesses_the_project_from_its_title(
+    home: Path, conn, monkeypatch: pytest.MonkeyPatch, leak_terms
+) -> None:
+    """D16: 本文にプロジェクトのタイトルの語が出てきたら project_id を埋める。"""
+    from manor import project as project_mod
+
+    project_mod.add(conn, "vra", "VRAcademy 2台同期収録（会社）", kind="会社")
+    conn.commit()  # `intake()` は別接続を開くので、見えるように書き終える
+
+    posted = _setup(
+        home, monkeypatch, leak_terms,
+        [{"ts": "1000.0011", "text": "#task VRAcademyの収録日程を確認する"}],
+    )
+
+    result = slack_mod.intake(home)
+
+    task_id = result["taken"][0]["node_id"]
+    row = conn.execute(
+        "SELECT project_id FROM task WHERE id = ?", (task_id,)
+    ).fetchone()
+    project_row = conn.execute(
+        "SELECT id FROM project WHERE code = 'vra'"
+    ).fetchone()
+    assert row["project_id"] == project_row["id"]
+    assert task_id in str(posted[0]["text"])
+
+
+def test_task_message_leaves_project_unset_when_nothing_matches(
+    home: Path, conn, monkeypatch: pytest.MonkeyPatch, leak_terms
+) -> None:
+    """当たらなければ `None` のまま——**無理に決めつけない**。"""
+    from manor import project as project_mod
+
+    project_mod.add(conn, "vra", "VRAcademy 2台同期収録（会社）", kind="会社")
+    conn.commit()
+
+    _setup(
+        home, monkeypatch, leak_terms,
+        [{"ts": "1000.0012", "text": "#task 部屋の掃除をする"}],
+    )
+
+    result = slack_mod.intake(home)
+
+    task_id = result["taken"][0]["node_id"]
+    row = conn.execute("SELECT project_id FROM task WHERE id = ?", (task_id,)).fetchone()
+    assert row["project_id"] is None
+
+
 def test_log_message_files_a_note(
     home: Path, conn, monkeypatch: pytest.MonkeyPatch, leak_terms
 ) -> None:
