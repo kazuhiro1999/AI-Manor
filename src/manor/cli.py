@@ -249,6 +249,7 @@ def cmd_task_list(conn, home, args) -> object:
         include_settled=args.all,
         source=args.source,
         user_id=args.user,
+        night=args.night,
     )
     if args.json:
         return rows
@@ -895,7 +896,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--no-render", action="store_true")
     p.set_defaults(func=cmd_task_add, is_write=True)
 
-    p = task_sub.add_parser("set")
+    # allow_abbrev=False: `--status` は無い（状態変更は `task status` の担当——状態機械の
+    # 検証・task_event・done_at を通す）。既定の argparse は未知の長い引数を唯一の接頭辞候補
+    # （`--status-note`）へ黙って解釈するため、`--status done` が `status_note="done"` を書き
+    # 換えるだけで「更新しました」と成功を返す（state は変わらない）。この日 gate の S2/S3
+    # がこの罠に落ち、実行前は正常に見えて実は state が変わっていない偽陽性を出した。
+    p = task_sub.add_parser("set", allow_abbrev=False)
     p.add_argument("id")
     p.add_argument("--goal")
     p.add_argument("--now")
@@ -957,6 +963,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--source")
     p.add_argument("--user", help=i18n.t("cli.task.list.user.help"))
     p.add_argument("--all", action="store_true")
+    p.add_argument("--night", action="store_true", help=i18n.t("cli.task.list.night.help"))
     p.add_argument("--json", action="store_true")
     p.set_defaults(func=cmd_task_list, is_write=False)
 

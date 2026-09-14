@@ -589,6 +589,7 @@ def list_tasks(
     exclude_project_kind: str | None = None,
     source: str | None = None,
     user_id: str | None = None,
+    night: bool = False,
 ) -> list[dict[str, object]]:
     """課題の一覧。
 
@@ -599,7 +600,17 @@ def list_tasks(
 
     `user_id`（ADR-014 D4）: 渡すと「誰の件か」で絞る。`None`（既定）は絞らない
     （CLI・射影・起動時の注入・既存の呼び出しは今までどおり全部を見る）。
+
+    `night`（N9）: 夜勤の板の未着手を拾う歯止めを1つに束ねる。`--user butler`・
+    `status=todo`・`level が L2/L3` を固定で掛け、`source=idea` を先頭に並べる
+    （主人 2026-09-14「意見箱の中身は優先順位を高めに」）。**列挙式（2つのコマンドを
+    順に打ち、歯止めを目で確かめる）は完全性に全依存する（B139）**——歯止め③
+    （owner=butler）が意見箱の件を弾いていたことに誰も気づかなかったのが実例。
+    `owner` は見ない（「誰の件か」であって「誰が手を動かすか」ではないため）。
     """
+    if night:
+        status_filter = status_filter or "todo"
+        user_id = user_id or "butler"
     sql = "SELECT t.*, n.title AS title FROM task t JOIN node n ON n.id = t.id WHERE 1=1"
     params: list[object] = []
     if status_filter:
@@ -629,7 +640,11 @@ def list_tasks(
             " (SELECT id FROM project WHERE kind = ?))"
         )
         params.append(exclude_project_kind)
-    sql += " ORDER BY CAST(substr(t.id, 2) AS INTEGER)"
+    if night:
+        sql += " AND t.level IN ('L2','L3')"
+        sql += " ORDER BY (t.source != 'idea'), CAST(substr(t.id, 2) AS INTEGER)"
+    else:
+        sql += " ORDER BY CAST(substr(t.id, 2) AS INTEGER)"
     return [dict(r) for r in conn.execute(sql, params).fetchall()]
 
 

@@ -16,6 +16,27 @@
 
 ---
 
+## 2026-09-15（夜勤が拾う一覧を機構にする。N9）
+
+### 追加: `manor task list --night`
+
+板の未着手を拾う手順が「2つのコマンドを順に打ち、歯止め（owner=butler・level）を
+目で確かめる」形で、歯止め③（owner=butler）が意見箱の件（主人の指示・執事が実装）を
+9/14 まで全部弾いていたのに誰も気づかなかった件の対応（B139「列挙式は完全性に全依存
+する」と同じ型）。`task.list_tasks(..., night=True)` に `--user butler`・`status=todo`・
+`level in (L2,L3)`・`source=idea` を先頭、の歯止めを埋め込み、CLI に `--night` 1本で
+出す。owner は見ない。`home/night/tasks.md` の手順1をこの1コマンドへ書き換えた。
+
+### 修正: `manor task set --status` が `--status-note` へ黙って化けていた
+
+`task set` に `--status` は無く `--status-note` しかない。既定の argparse は未知の長い
+引数を唯一の接頭辞候補へ黙って解釈するため、`manor task set <id> --status done` が
+`status_note` を書き換えるだけで「更新しました」と成功を返し、`status`・`done_at`・
+`task_event` は変わらなかった（実行前は正常に見えて実は state が変わっていない偽陽性）。
+夜勤の振る舞い関門（gate S2・S3）がこの罠に繰り返し落ちて発覚。`task set` の
+subparser に `allow_abbrev=False` を付け、`--status` は `unrecognized arguments` で
+拒むようにした（状態変更は `task status`／`task done` の担当のまま）。
+
 ## 2026-09-15（夜勤の一時停止を仕組みにする。N8）
 
 ### 追加: `manor night pause`／`manor night resume`

@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from manor import cli
 
 
@@ -77,6 +79,27 @@ def test_task_status_invalid_vocab_is_exit_2(home_path: Path, capsys):
     tid = json.loads(capsys.readouterr().out)["id"]
     code = cli.main(["task", "status", tid, "not_a_status"])
     assert code == 2
+
+
+def test_task_set_status_is_rejected_not_aliased_to_status_note(home_path: Path, capsys):
+    """`task set` に `--status` は無い（状態変更は `task status` の担当）。既定の argparse は
+    未知の長い引数を唯一の接頭辞候補（`--status-note`）へ黙って解釈するため、直さないと
+    `--status done` が `status_note` を書き換えるだけで「成功」を返してしまう
+    （実行前は正常に見えて実は state が変わっていない偽陽性。gate の S2/S3 がこれで落ちた）。
+    """
+    cli.main(["init"])
+    capsys.readouterr()
+    cli.main(["task", "add", "何か", "--json"])
+    tid = json.loads(capsys.readouterr().out)["id"]
+    capsys.readouterr()
+    with pytest.raises(SystemExit) as exc_info:
+        cli.main(["task", "set", tid, "--status", "done"])
+    assert exc_info.value.code == 2
+    capsys.readouterr()
+    assert cli.main(["task", "show", tid, "--json"]) == 0
+    show_out = json.loads(capsys.readouterr().out)
+    assert show_out["status"] == "todo"
+    assert show_out["status_note"] == ""
 
 
 def test_import_v1_requires_queue_and_projects(home_path: Path, capsys):
