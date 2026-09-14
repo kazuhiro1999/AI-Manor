@@ -19,6 +19,15 @@ class IdeaAddRequest(BaseModel):
     body: str = Field(..., min_length=1)
 
 
+class IdeaUpdateRequest(BaseModel):
+    """T61: 送った本人が後から直せるようにする。**両方任意**——題名だけ、本文だけの
+    書き換えも許す（`task_mod.set` と同じ「渡した列だけ変える」約束に揃える）。
+    """
+
+    title: str | None = Field(None, min_length=1)
+    body: str | None = Field(None, min_length=1)
+
+
 def register(app: FastAPI, ctx: WebContext) -> None:
     @app.get("/api/v1/ideas")
     def ideas_list() -> dict[str, object]:
@@ -37,3 +46,15 @@ def register(app: FastAPI, ctx: WebContext) -> None:
                 raise manor_error_to_http(exc)
             commit_and_render(conn, ctx)
             return {"id": task_id}
+
+    @app.patch("/api/v1/ideas/{idea_id}")
+    def ideas_update(idea_id: str, body: IdeaUpdateRequest) -> dict[str, object]:
+        require_writable(ctx)
+        with open_conn(ctx) as conn:
+            try:
+                task_mod.set(conn, idea_id, title=body.title, body=body.body)
+            except ManorError as exc:
+                conn.rollback()
+                raise manor_error_to_http(exc)
+            commit_and_render(conn, ctx)
+            return {"id": idea_id}

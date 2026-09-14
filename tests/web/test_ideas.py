@@ -70,3 +70,59 @@ def test_ideas_list_empty_when_none_filed(home: Path) -> None:
     res = client.get("/api/v1/ideas")
     assert res.status_code == 200
     assert res.json()["items"] == []
+
+
+def test_ideas_update_changes_title_and_body(conn, home: Path) -> None:
+    """T61: 送った本人が後から直せること。"""
+    task_id = task_mod.add_idea(conn, "元の題名\n元の本文")
+    conn.commit()
+
+    client = make_web_client(home)
+    res = client.patch(f"/api/v1/ideas/{task_id}", json={"title": "直した題名", "body": "直した本文"})
+    assert res.status_code == 200
+
+    row = task_mod.show(conn, task_id)
+    assert row["title"] == "直した題名"
+    assert row["body"] == "直した本文"
+    assert row["status"] == "hold"  # 修正だけでは状態は動かない
+
+
+def test_ideas_update_title_only_leaves_body_untouched(conn, home: Path) -> None:
+    task_id = task_mod.add_idea(conn, "元の題名\n元の本文")
+    conn.commit()
+
+    client = make_web_client(home)
+    res = client.patch(f"/api/v1/ideas/{task_id}", json={"title": "題名だけ直す"})
+    assert res.status_code == 200
+
+    row = task_mod.show(conn, task_id)
+    assert row["title"] == "題名だけ直す"
+    assert row["body"] == "元の題名\n元の本文"
+
+
+def test_ideas_update_unknown_id_is_404(home: Path) -> None:
+    client = make_web_client(home)
+    res = client.patch("/api/v1/ideas/T9999", json={"title": "存在しない件"})
+    assert res.status_code == 404
+
+
+def test_ideas_update_is_blocked_read_only(conn, home: Path) -> None:
+    task_id = task_mod.add_idea(conn, "読み取り専用でも直せてしまったら困る")
+    conn.commit()
+
+    client = make_web_client(home, read_only=True)
+    res = client.patch(f"/api/v1/ideas/{task_id}", json={"title": "書き換え"})
+    assert res.status_code == 403
+
+
+def test_ideas_withdraw_via_existing_status_api(conn, home: Path) -> None:
+    """取り下げは専用APIを作らず、既存の task/{id}/status を使う（T61）。"""
+    task_id = task_mod.add_idea(conn, "やっぱり取り下げたい意見")
+    conn.commit()
+
+    client = make_web_client(home)
+    res = client.post(f"/api/v1/tasks/task/{task_id}/status", json={"status": "withdrawn", "note": "本人が取り下げ"})
+    assert res.status_code == 200
+
+    row = task_mod.show(conn, task_id)
+    assert row["status"] == "withdrawn"

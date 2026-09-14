@@ -16,6 +16,22 @@
 
 ---
 
+## 2026-09-15（意見箱・タスク一覧の進捗更新を、アプリからボタンポチでできるように。T55・T61）
+
+### 追加: タスク一覧の行から着手・完了をワンクリックで進められる（T55）
+
+`web/src/modules/tasks/TaskRow.tsx` に、いちばんよく使う遷移（todo/waiting/hold→doing
+「着手」、doing→done「完了」）だけを1クリックで実行するボタンを追加。API は既存の
+`POST /api/v1/tasks/task/{id}/status` をそのまま使う。level=HG の完了は対象外（decision
+経由の承認が要るため、従来どおり「詳しく」ボタン→CtxModal の厚いフォームに任せる）。
+
+### 追加: 意見箱を送った本人が後から確認・修正・取り下げできる（T61）
+
+`PATCH /api/v1/ideas/{id}`（title/body、任意で片方だけも可）を新設し、`web/src/modules/
+ideas/IdeaList.tsx` に「直す」（インライン編集）「取り下げ」（理由必須）ボタンを追加。
+取り下げは新しい API を作らず既存の `POST /api/v1/tasks/task/{id}/status`（status=
+withdrawn）をそのまま使う。done・withdrawn（済んだもの）にはボタンを出さない。
+
 ## 2026-09-14（意見箱の札で「仕分け済み・未着手」と「着手中」を分ける）
 
 ### 修正: 意見箱の画面が `todo` を「対応中」と出していた
