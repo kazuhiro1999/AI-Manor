@@ -36,6 +36,14 @@ const STATUS_KEY: Record<TaskStatus, TranslationKey> = {
   withdrawn: "ideas.status.withdrawn",
 };
 
+//: T54②「新しい順」が API の並びへ暗黙に依存していた（`.reverse()` のみで契約が
+//: どこにも書かれていなかった）。id の数値部分（`T54` の `54`）を降順に並べ、
+//: 画面側で「新しい順」を明示する。
+function ideaSortKey(id: string): number {
+  const match = id.match(/\d+/);
+  return match ? Number(match[0]) : 0;
+}
+
 function IdeaStatusBadge({ status }: { status: TaskStatus | string }) {
   const t = useT();
   const known = status in STATUS_KEY;
@@ -85,7 +93,7 @@ export function IdeaList({ reloadKey }: { reloadKey: number }) {
       {!error && items !== null && items.length > 0 && (
         <div className="rows">
           {[...items]
-            .reverse()
+            .sort((a, b) => ideaSortKey(b.id) - ideaSortKey(a.id))
             .map((it) =>
               editingId === it.id ? (
                 <IdeaEditRow

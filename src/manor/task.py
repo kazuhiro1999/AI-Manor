@@ -248,6 +248,11 @@ def add_idea(conn: sqlite3.Connection, body: str, *, project: str | None = None)
     実際にそうなり「どこにいったか分からなくなった」と仰った）。
     `project`（D16）: 呼び出し側が本文から推測した `project.code`。当たらなければ `None`。
     """
+    if not body.strip():
+        raise ManorError(
+            "意見箱の本文が空です",
+            key="error.task.idea_body_empty",
+        )
     title = body.splitlines()[0][:IDEA_TITLE_MAX] or body[:IDEA_TITLE_MAX]
     task_id = add(
         conn,

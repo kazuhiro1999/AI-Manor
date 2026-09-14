@@ -541,6 +541,7 @@
   "error.task.done_authorized_by_must_be_decision": "done's authorized_by must be a decision id (H<n> is a handoff ruling and cannot authorize done).",
   "error.task.hg_done_requires_decision": "{task_id} is level=HG. It cannot be marked done without an approved/modified decision (decided_by).",
   "error.task.hg_needs_recommendation": "A level=HG task requires --recommendation (the default plan to use if there is no reply). It will also file a decision immediately and enter section A (awaiting you).",
+  "error.task.idea_body_empty": "The idea box body is empty",
   "error.task.kind_unknown": "Unknown kind: {kind} (check with `manor kind list`, or add one with `manor kind add`)",
   "error.task.level_unknown": "Unknown level: {level}",
   "error.task.not_found": "Task not found: {task_id}",

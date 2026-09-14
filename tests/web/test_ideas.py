@@ -32,6 +32,15 @@ def test_ideas_add_empty_body_is_422(home: Path) -> None:
     assert res.status_code == 422
 
 
+def test_ideas_add_whitespace_only_body_is_rejected(home: Path) -> None:
+    """T54①: `min_length=1` だけでは空白だけの本文（`"   "`）を通してしまう。
+    唯一の入口 `task_mod.add_idea` 側で弾く。
+    """
+    client = make_web_client(home)
+    res = client.post("/api/v1/ideas", json={"body": "   "})
+    assert res.status_code == 400
+
+
 def test_ideas_add_is_blocked_read_only(home: Path) -> None:
     client = make_web_client(home, read_only=True)
     res = client.post("/api/v1/ideas", json={"body": "読み取り専用でも通ってしまったら困る"})

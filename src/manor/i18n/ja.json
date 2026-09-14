@@ -541,6 +541,7 @@
   "error.task.done_authorized_by_must_be_decision": "done の authorized_by は decision の id に限ります（H<n> は委譲の裁定なので done を認めません）",
   "error.task.hg_done_requires_decision": "{task_id} は level=HG です。承認/修正済みの decision（decided_by）が無いと done にできません",
   "error.task.hg_needs_recommendation": "level=HG のタスクは --recommendation（無回答時の既定案）が必須です。起票と同時に decision を積み、section A（主人待ち）へ入ります",
+  "error.task.idea_body_empty": "意見箱の本文が空です",
   "error.task.kind_unknown": "語彙外の kind です: {kind}（`manor kind list` で確認、または `manor kind add` で追加）",
   "error.task.level_unknown": "語彙外の level です: {level}",
   "error.task.not_found": "task が見つかりません: {task_id}",
