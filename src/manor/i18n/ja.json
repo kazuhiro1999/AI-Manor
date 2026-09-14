@@ -16,6 +16,7 @@
   "check.label.c13": "muted_by_night が立ったまま夜勤が動いていない（home/night/night.lock が無い。ADR-008 D12）",
   "check.label.c14": "task.user_id / project.user_id が user 表に無い・畳んだ利用者を指している",
   "check.label.c15": "role='principal' がちょうど1件、role='butler' がちょうど1件（畳んでいないもの）",
+  "check.label.c16": "外部視点の台帳の取り込みが「頻度」行の周期を超えて空いている（v1 の O1。T30）",
   "check.label.c2": "3日動いていない doing（v_stale_doing）",
   "check.label.c3": "waiting なのに status_note が空",
   "check.label.c4": "section=A なのに recommendation が空、または decided_by の decision が無い",

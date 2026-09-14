@@ -16,6 +16,7 @@
   "check.label.c13": "muted_by_night is still set but the night shift is not running (home/night/night.lock is missing; ADR-008 D12)",
   "check.label.c14": "task.user_id / project.user_id points to a user not in the user table, or an archived one",
   "check.label.c15": "role='principal' should be exactly 1 row, and role='butler' exactly 1 row (not archived)",
+  "check.label.c16": "The external-perspective ledger has gone past its stated cadence without a new round (v1's O1. T30).",
   "check.label.c2": "doing untouched for 3 days (v_stale_doing)",
   "check.label.c3": "waiting but status_note is empty",
   "check.label.c4": "section=A but recommendation is empty, or there is no decided_by decision",

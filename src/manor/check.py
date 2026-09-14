@@ -26,11 +26,12 @@ CHECK_LABELS: dict[str, str] = {
     "C13": "muted_by_night が立ったまま夜勤が動いていない（home/night/night.lock が無い。ADR-008 D12）",
     "C14": "task.user_id / project.user_id が user 表に無い・畳んだ利用者を指している",
     "C15": "role='principal' がちょうど1件、role='butler' がちょうど1件（畳んでいないもの）",
+    "C16": "外部視点の台帳の取り込みが「頻度」行の周期を超えて空いている（v1 の O1。T30）",
 }
 
-#: 警告のみの check（C10・C11・C13）。存在しても `manor check` の終了コードは変えない
-#: （ADR-006 D5・D14・ADR-008 D12）。
-WARNING_ONLY_CHECKS: frozenset[str] = frozenset({"C10", "C11", "C13"})
+#: 警告のみの check（C10・C11・C13・C16）。存在しても `manor check` の終了コードは変えない
+#: （ADR-006 D5・D14・ADR-008 D12・T30）。
+WARNING_ONLY_CHECKS: frozenset[str] = frozenset({"C10", "C11", "C13", "C16"})
 
 
 def _rows(conn: sqlite3.Connection, sql: str) -> list[dict[str, object]]:
@@ -277,6 +278,48 @@ def check_c15(conn: sqlite3.Connection) -> list[dict[str, object]]:
     return out
 
 
+#: 「頻度」行の語 → 何日空いたら鳴るか（v1 の O1。毎晩=3晩、週1=10日、終了=黙る）。
+_LEDGER_FREQUENCY_DAYS: dict[str, int | None] = {"毎晩": 3, "週1回": 10, "終了": None}
+_LEDGER_FREQUENCY_RE = re.compile(r"\*\*頻度[:：]\s*(毎晩|週1回|終了)\*\*")
+_LEDGER_ROUND_DATE_RE = re.compile(r"^## (\d{4}-\d{2}-\d{2})（", re.MULTILINE)
+LEDGER_PATH = Path("docs/reports/外部視点の台帳.md")
+
+
+def check_c16(*, today: str | None = None, ledger_path: Path | None = None) -> list[dict[str, object]]:
+    """外部視点の台帳（`docs/reports/外部視点の台帳.md`）の「頻度」行を読み、その周期を
+    超えて取り込みが空いていれば警告する（v1 の整合検査 O1。**v2 へ未移植だった**——T30）。
+
+    **警告のみ**——ここは③層（参考情報）の運用ペースの話であり、止めるほどのものではない。
+    ファイル・「頻度」行・晩の見出しのいずれかが読めなければ静かに `[]`（判定できないものを
+    誤検出にしない。C7 が「render 前は判定しない」とするのと同じ考え方）。
+
+    `ledger_path`: 試験用の差し替え口（本物の台帳を書き換えずに済ませるため。`run()` からは
+    渡さない。C10 の `extra_paths` と同じ考え方）。
+    """
+    path = ledger_path if ledger_path is not None else util.repo_root() / LEDGER_PATH
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return []
+    freq_match = _LEDGER_FREQUENCY_RE.search(text)
+    if freq_match is None:
+        return []
+    threshold = _LEDGER_FREQUENCY_DAYS[freq_match.group(1)]
+    if threshold is None:  # 終了
+        return []
+    round_dates = _LEDGER_ROUND_DATE_RE.findall(text)
+    if not round_dates:
+        return []
+    from datetime import date
+
+    last_round = max(date.fromisoformat(d) for d in round_dates)
+    ref = date.fromisoformat(today) if today else date.fromisoformat(util.today())
+    elapsed = (ref - last_round).days
+    if elapsed < threshold:
+        return []
+    return [{"frequency": freq_match.group(1), "last_round": last_round.isoformat(), "elapsed_days": elapsed}]
+
+
 def run(conn: sqlite3.Connection, home: Path) -> dict[str, list[object]]:
     return {
         "C1": check_c1(conn),
@@ -294,6 +337,7 @@ def run(conn: sqlite3.Connection, home: Path) -> dict[str, list[object]]:
         "C13": check_c13(home),
         "C14": check_c14(conn),
         "C15": check_c15(conn),
+        "C16": check_c16(),
     }
 
 
