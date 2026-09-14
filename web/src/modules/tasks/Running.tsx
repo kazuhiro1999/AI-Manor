@@ -76,9 +76,16 @@ export function Running({ readOnly: _readOnly }: { readOnly: boolean }) {
           </div>
         </div>
         {mode === "list" ? (
-          <RunningList board={board} onOpenCtx={setCtxId} />
+          <RunningList board={board} onOpenCtx={setCtxId} readOnly={_readOnly} onChanged={reload} />
         ) : (
-          <RunningTree board={board} onOpenCtx={setCtxId} treeOpen={treeOpen} setTreeOpen={setTreeOpen} />
+          <RunningTree
+            board={board}
+            onOpenCtx={setCtxId}
+            treeOpen={treeOpen}
+            setTreeOpen={setTreeOpen}
+            readOnly={_readOnly}
+            onChanged={reload}
+          />
         )}
       </section>
       <section className="panel" id="panel-relay">
@@ -224,7 +231,17 @@ function SummaryTiles({ board, onJumpJudge }: { board: Board; onJumpJudge: () =>
   );
 }
 
-function RunningList({ board, onOpenCtx }: { board: Board; onOpenCtx: (id: string) => void }) {
+function RunningList({
+  board,
+  onOpenCtx,
+  readOnly,
+  onChanged,
+}: {
+  board: Board;
+  onOpenCtx: (id: string) => void;
+  readOnly: boolean;
+  onChanged: () => void;
+}) {
   const t = useT();
   const tasks = board.tasks || [];
   const masterDoing = tasks.filter((tk) => tk.owner === "master" && tk.status === "doing");
@@ -256,7 +273,7 @@ function RunningList({ board, onOpenCtx }: { board: Board; onOpenCtx: (id: strin
               </div>
               <div className="rows">
                 {g.rows.map((tk) => (
-                  <TaskRow key={tk.id} board={board} t={tk} onOpenCtx={onOpenCtx} />
+                  <TaskRow key={tk.id} board={board} t={tk} onOpenCtx={onOpenCtx} readOnly={readOnly} onChanged={onChanged} />
                 ))}
               </div>
             </div>
@@ -268,7 +285,7 @@ function RunningList({ board, onOpenCtx }: { board: Board; onOpenCtx: (id: strin
             {t("tasks.group.doneRecent")}
             {t("tasks.group.countSuffix", { n: done.length })}
           </div>
-          <DoneDays board={board} items={done} scope="list" onOpenCtx={onOpenCtx} />
+          <DoneDays board={board} items={done} scope="list" onOpenCtx={onOpenCtx} readOnly={readOnly} onChanged={onChanged} />
         </div>
       )}
       {withdrawn.length > 0 && (
@@ -276,7 +293,7 @@ function RunningList({ board, onOpenCtx }: { board: Board; onOpenCtx: (id: strin
           <div className="status-block-head">{t("tasks.group.withdrawn")}</div>
           <FoldBlock storageKey="withdrawn-recent" label={t("tasks.group.withdrawnRecent")} count={withdrawn.length}>
             {withdrawn.map((tk) => (
-              <TaskRow key={tk.id} board={board} t={tk} onOpenCtx={onOpenCtx} />
+              <TaskRow key={tk.id} board={board} t={tk} onOpenCtx={onOpenCtx} readOnly={readOnly} onChanged={onChanged} />
             ))}
           </FoldBlock>
         </div>
@@ -291,11 +308,15 @@ function RunningTree({
   onOpenCtx,
   treeOpen,
   setTreeOpen,
+  readOnly,
+  onChanged,
 }: {
   board: Board;
   onOpenCtx: (id: string) => void;
   treeOpen: Set<string>;
   setTreeOpen: (s: Set<string>) => void;
+  readOnly: boolean;
+  onChanged: () => void;
 }) {
   const t = useT();
   const tasks = [...(board.tasks || []), ...(board.withdrawn_recent || [])];
@@ -393,11 +414,29 @@ function RunningTree({
                       {t("tasks.group.countSuffix", { n: items.length })}
                     </div>
                     {block.isDone ? (
-                      <DoneDays board={board} items={items} scope={"tree:" + key} pj={title} parentProject={proj} onOpenCtx={onOpenCtx} />
+                      <DoneDays
+                        board={board}
+                        items={items}
+                        scope={"tree:" + key}
+                        pj={title}
+                        parentProject={proj}
+                        onOpenCtx={onOpenCtx}
+                        readOnly={readOnly}
+                        onChanged={onChanged}
+                      />
                     ) : (
                       <div className="rows">
                         {items.map((tk) => (
-                          <TaskRow key={tk.id} board={board} t={tk} pj={title} parentProject={proj} onOpenCtx={onOpenCtx} />
+                          <TaskRow
+                            key={tk.id}
+                            board={board}
+                            t={tk}
+                            pj={title}
+                            parentProject={proj}
+                            onOpenCtx={onOpenCtx}
+                            readOnly={readOnly}
+                            onChanged={onChanged}
+                          />
                         ))}
                       </div>
                     )}

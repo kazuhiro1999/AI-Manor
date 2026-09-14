@@ -10,6 +10,8 @@ export function DoneDays({
   pj,
   parentProject,
   onOpenCtx,
+  readOnly,
+  onChanged,
 }: {
   board: Board;
   items: Task[];
@@ -17,6 +19,8 @@ export function DoneDays({
   pj?: string;
   parentProject?: Project | null;
   onOpenCtx: (id: string) => void;
+  readOnly?: boolean;
+  onChanged?: () => void;
 }) {
   const groups = doneDateGroups(items);
   const latestId = groups.length && groups[0].items.length ? groups[0].items[0].id : null;
@@ -33,6 +37,8 @@ export function DoneDays({
               latest={item.id === latestId}
               parentProject={parentProject}
               onOpenCtx={onOpenCtx}
+              readOnly={readOnly}
+              onChanged={onChanged}
             />
           ))}
         </FoldBlock>

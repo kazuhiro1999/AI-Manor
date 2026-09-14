@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, afterEach, beforeEach } from "vitest";
-import { render, cleanup, screen, waitFor } from "@testing-library/react";
+import { render, cleanup, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { Running } from "./Running";
@@ -55,7 +55,9 @@ describe("Running status order", () => {
   it("主人の作業（進行中）ブロックが実行中（執事）より先に出る", async () => {
     render(
       <MemoryRouter>
-        <Running readOnly={false} />
+        <ToastProvider>
+          <Running readOnly={false} />
+        </ToastProvider>
       </MemoryRouter>
     );
     await waitFor(() => expect(screen.getByText(/主人のタスク/)).toBeTruthy());
@@ -70,7 +72,9 @@ describe("Running status order", () => {
   it("完了したタスクは既定で畳まれている（body が hidden）", async () => {
     render(
       <MemoryRouter>
-        <Running readOnly={false} />
+        <ToastProvider>
+          <Running readOnly={false} />
+        </ToastProvider>
       </MemoryRouter>
     );
     await waitFor(() => expect(screen.getByText(/完了したタスク/)).toBeTruthy());
@@ -187,5 +191,77 @@ describe("Running — 伝達（ADR-013 D3: メモの追加を画面から）", (
 
     expect(screen.getByText("本文は必須です")).toBeTruthy();
     expect(calls.some((c) => c.url.includes("/api/v1/tasks/note") && (c.init?.method || "").toUpperCase() === "POST")).toBe(false);
+  });
+});
+
+describe("Running — 一覧の行から1クリックで進める（T55・意見箱）", () => {
+  const originalFetch = globalThis.fetch;
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+    cleanup();
+  });
+
+  function mockFetchFor(onFetch?: (url: string, init?: RequestInit) => void) {
+    const board = makeBoard();
+    globalThis.fetch = vi.fn().mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      onFetch?.(url, init);
+      return { ok: true, status: 200, json: async () => board };
+    }) as unknown as typeof fetch;
+  }
+
+  it("doing の行に「完了」ボタンが出て、押すと status/doneをPOSTする", async () => {
+    const calls: { url: string; init?: RequestInit }[] = [];
+    mockFetchFor((url, init) => calls.push({ url, init }));
+
+    const user = userEvent.setup();
+    render(
+      <MemoryRouter>
+        <ToastProvider>
+          <Running readOnly={false} />
+        </ToastProvider>
+      </MemoryRouter>
+    );
+    await waitFor(() => expect(screen.getByText(/執事のタスク/)).toBeTruthy());
+
+    const row = screen.getByText(/執事のタスク/).closest(".row-item") as HTMLElement;
+    const { getByRole } = within(row);
+    await user.click(getByRole("button", { name: "完了" }));
+
+    await waitFor(() =>
+      expect(calls.some((c) => c.url.includes("/api/v1/tasks/task/T2/status") && (c.init?.method || "").toUpperCase() === "POST")).toBe(true)
+    );
+    const postCall = calls.find((c) => c.url.includes("/api/v1/tasks/task/T2/status"));
+    const sent = JSON.parse(String(postCall?.init?.body));
+    expect(sent.status).toBe("done");
+  });
+
+  it("readOnly ではクイック操作ボタンを出さない", async () => {
+    mockFetchFor();
+    render(
+      <MemoryRouter>
+        <ToastProvider>
+          <Running readOnly={true} />
+        </ToastProvider>
+      </MemoryRouter>
+    );
+    await waitFor(() => expect(screen.getByText(/執事のタスク/)).toBeTruthy());
+    const row = screen.getByText(/執事のタスク/).closest(".row-item") as HTMLElement;
+    expect(within(row).queryByRole("button", { name: "完了" })).toBeNull();
+  });
+
+  it("done の行にはクイック操作ボタンを出さない", async () => {
+    mockFetchFor();
+    render(
+      <MemoryRouter>
+        <ToastProvider>
+          <Running readOnly={false} />
+        </ToastProvider>
+      </MemoryRouter>
+    );
+    await waitFor(() => expect(screen.getByText(/完了したタスク/)).toBeTruthy());
+    const row = screen.getByText(/完了したタスク/).closest(".row-item") as HTMLElement;
+    expect(within(row).queryByRole("button", { name: "着手" })).toBeNull();
+    expect(within(row).queryByRole("button", { name: "完了" })).toBeNull();
   });
 });

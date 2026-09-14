@@ -820,6 +820,8 @@ export const en: { [K in TranslationKey]: MirrorEntry<K> } = {
   "tasks.row.ownerArrow": (p) => `→ ${p.owner}`,
   "tasks.row.latest": "Latest",
   "tasks.row.context": "Context",
+  "tasks.row.quickStart": "Start",
+  "tasks.row.quickDone": "Done",
   "tasks.ctx.title": (p) => `Context for ${p.id}`,
   "tasks.ctx.changeStatus": "Change status",
   "tasks.ctx.newStatusAria": "New status",

@@ -822,6 +822,8 @@ export const ja = {
   "tasks.row.ownerArrow": (p) => `→ ${p.owner}`,
   "tasks.row.latest": "最新",
   "tasks.row.context": "文脈",
+  "tasks.row.quickStart": "着手",
+  "tasks.row.quickDone": "完了",
   "tasks.ctx.title": (p) => `${p.id} の文脈`,
   "tasks.ctx.changeStatus": "状態を変える",
   "tasks.ctx.newStatusAria": "新しい状態",
