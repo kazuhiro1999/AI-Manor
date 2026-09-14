@@ -38,6 +38,8 @@ def register(subparsers: "argparse._SubParsersAction") -> None:
     _add_report(sub)
     _add_review(sub)
     _add_progress(sub)
+    _add_pause(sub)
+    _add_resume(sub)
 
 
 def _add_run(sub: "argparse._SubParsersAction") -> None:
@@ -266,6 +268,44 @@ def _outcome_line(result: dict, verb: str) -> str:
     # 引数ゼロの `format` が先に走って I18nError で落ちる（2026-09-06 の検分で実測）——
     # 「失敗を隠さない」ために足した経路が、そこだけ例外で落ちる形になっていた。
     return i18n.t(f"night.{verb}.failed", returncode=result.get("returncode"), detail=detail)
+
+
+def _add_pause(sub: "argparse._SubParsersAction") -> None:
+    p = sub.add_parser("pause", help=i18n.t("cli.night.pause.help"))
+    p.add_argument("--until", required=True, help=i18n.t("cli.night.pause.until.help"))
+    p.add_argument("--reason", required=True, help=i18n.t("cli.night.pause.reason.help"))
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=_cmd_pause, is_write=False, needs_db=False)
+
+
+def _cmd_pause(args: "argparse.Namespace") -> int:
+    home = util.manor_home()
+    try:
+        data = runner.pause(home, until=args.until, reason=args.reason)
+    except ValueError as exc:
+        print(str(exc))
+        return 1
+    if args.json:
+        print(json.dumps(data, ensure_ascii=False, indent=2))
+    else:
+        print(i18n.t("night.pause.done", until=data["until"], reason=data["reason"]))
+    return 0
+
+
+def _add_resume(sub: "argparse._SubParsersAction") -> None:
+    p = sub.add_parser("resume", help=i18n.t("cli.night.resume.help"))
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=_cmd_resume, is_write=False, needs_db=False)
+
+
+def _cmd_resume(args: "argparse.Namespace") -> int:
+    home = util.manor_home()
+    data = runner.resume(home)
+    if args.json:
+        print(json.dumps(data, ensure_ascii=False, indent=2))
+    else:
+        print(i18n.t("night.resume.done" if data["was_paused"] else "night.resume.was_not_paused"))
+    return 0
 
 
 def _add_report(sub: "argparse._SubParsersAction") -> None:

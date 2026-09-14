@@ -640,6 +640,99 @@ def test_status_reports_last_run_after_a_run(home_path: Path):
     assert data["last_run"]["status"] == "done"
 
 
+# --- pause / resume（N8: 一時停止の仕組み） ------------------------------------------
+
+
+def test_read_pause_is_none_when_never_paused(home_path: Path):
+    assert runner.read_pause(home_path) is None
+
+
+def test_pause_then_read_pause_returns_it(home_path: Path):
+    runner.pause(home_path, until="2026-09-20", reason="主人のご指示")
+    data = runner.read_pause(home_path, today="2026-09-15")
+    assert data is not None
+    assert data["until"] == "2026-09-20"
+    assert data["reason"] == "主人のご指示"
+
+
+def test_read_pause_includes_the_until_day_itself(home_path: Path):
+    runner.pause(home_path, until="2026-09-15", reason="x")
+    assert runner.read_pause(home_path, today="2026-09-15") is not None
+
+
+def test_read_pause_auto_clears_the_day_after_until(home_path: Path):
+    runner.pause(home_path, until="2026-09-14", reason="x")
+    assert runner.read_pause(home_path, today="2026-09-15") is None
+
+
+def test_pause_rejects_bad_date_format(home_path: Path):
+    with pytest.raises(ValueError):
+        runner.pause(home_path, until="9/20", reason="x")
+
+
+def test_resume_clears_pause_before_until(home_path: Path):
+    runner.pause(home_path, until="2026-09-20", reason="x")
+    result = runner.resume(home_path)
+    assert result["was_paused"] is True
+    assert runner.read_pause(home_path, today="2026-09-15") is None
+
+
+def test_resume_when_not_paused_reports_that(home_path: Path):
+    result = runner.resume(home_path)
+    assert result["was_paused"] is False
+
+
+def test_run_does_not_launch_while_paused(home_path: Path, tmp_path: Path):
+    _write_tasks(home_path)
+    runner.pause(home_path, until="2026-09-20", reason="主人「今夜は止めて」")
+    marker = tmp_path / "launched.txt"
+    exec_cmd = _marker_command(marker)
+
+    result = runner.run(home_path, now="2026-09-15T01:00:00", exec_cmd=exec_cmd, echo=False)
+
+    assert result["status"] == "paused"
+    assert result["pause"]["until"] == "2026-09-20"
+    assert not marker.exists()
+
+
+def test_run_while_paused_still_writes_last_run(home_path: Path, tmp_path: Path):
+    _write_tasks(home_path)
+    runner.pause(home_path, until="2026-09-20", reason="x")
+
+    runner.run(home_path, now="2026-09-15T01:00:00", exec_cmd=_marker_command(tmp_path / "m.txt"), echo=False)
+
+    data = runner.status(home_path)
+    assert data["last_run"]["status"] == "paused"
+
+
+def test_run_launches_again_the_day_after_until(home_path: Path, tmp_path: Path):
+    _write_tasks(home_path)
+    runner.pause(home_path, until="2026-09-14", reason="x")
+    marker = tmp_path / "launched.txt"
+    exec_cmd = _marker_command(marker, exit_code=0, result_text="done")
+
+    result = runner.run(home_path, now="2026-09-15T01:00:00", exec_cmd=exec_cmd, echo=False)
+
+    assert result["status"] == "done"
+    assert marker.exists()
+
+
+def test_status_shows_pause_info(home_path: Path):
+    runner.pause(home_path, until="2026-09-20", reason="主人のご指示")
+    data = runner.status(home_path)
+    assert data["pause"]["until"] == "2026-09-20"
+    text = runner.format_status(data)
+    assert "停止中" in text
+    assert "2026-09-20" in text
+
+
+def test_format_review_shows_pause_info_first():
+    result = {"date": "2026-09-15", "pause": {"until": "2026-09-20", "reason": "x"}, "health": {"ok": True, "reasons": []}, "items": {"found": False}}
+    text = runner.format_review(result)
+    lines = text.splitlines()
+    assert "停止中" in lines[1]
+
+
 # --- report ------------------------------------------------------------------------
 
 

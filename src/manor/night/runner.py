@@ -60,6 +60,9 @@ LOCK_FILE_NAME = "night.lock"
 LAST_RUN_FILE_NAME = "last-run.json"
 #: `--dry-run` の記録。**本番の `last-run.json` は塗り替えない**（検分 S11）。
 LAST_RUN_DRY_FILE_NAME = "last-run.dry.json"
+#: 一時停止の記録（N8。主人 2026-09-14「9/12 に止めてと言い、戻す段取りが無かった」）。
+PAUSE_FILE_NAME = "pause.json"
+_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 DEFAULT_DEADLINE = "06:30"
 DEFAULT_MIN_MINUTES = 20
@@ -155,6 +158,55 @@ def reports_dir(home: Path) -> Path:
 
 def logs_dir(home: Path) -> Path:
     return night_dir(home) / LOGS_DIR_NAME
+
+
+def pause_path(home: Path) -> Path:
+    return night_dir(home) / PAUSE_FILE_NAME
+
+
+def read_pause(home: Path, *, today: str | None = None) -> dict[str, Any] | None:
+    """停止中なら `{"until", "reason", "paused_at"}` を返す。**`until` を過ぎていれば
+    自動解除**（`None` を返す。ファイルは消さない——`resume` を呼ばなくても、次の判定は
+    毎回ここを通るので古い記録が悪さをしない）。壊れたファイルも `None`（安全側）。
+    """
+    p = pause_path(home)
+    if not p.is_file():
+        return None
+    try:
+        data = json.loads(p.read_text(encoding="utf-8"))
+    except Exception:  # noqa: BLE001
+        return None
+    if not isinstance(data, dict) or not _DATE_RE.match(str(data.get("until") or "")):
+        return None
+    ref = today or util.today()
+    if str(data["until"]) < ref:
+        return None
+    return data
+
+
+def pause(home: Path, *, until: str, reason: str) -> dict[str, Any]:
+    """`manor night pause --until <YYYY-MM-DD> --reason "…"`。主人が「今夜は止めて」と
+    言われたときの一時停止を、次の執事が起動時に必ず見る場所（DB→射影の代わりに、
+    ここでは `pause.json`→`status`/`review`/`active` の3か所）へ映す。
+    """
+    if not _DATE_RE.match(until):
+        raise ValueError(f"until は YYYY-MM-DD 形式にしてください: {until!r}")
+    data = {"until": until, "reason": reason, "paused_at": datetime.now().isoformat()}
+    p = pause_path(home)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    return data
+
+
+def resume(home: Path) -> dict[str, Any]:
+    """一時停止を解く。**`until` を待たずに戻したいとき**の口（自動解除は `read_pause` が
+    `until` を見て行うので、こちらは明示的な早期解除専用）。
+    """
+    p = pause_path(home)
+    was_paused = p.is_file()
+    if was_paused:
+        p.unlink()
+    return {"was_paused": was_paused}
 
 
 def lock_path(home: Path) -> Path:
@@ -684,8 +736,27 @@ def run(
 ) -> dict[str, Any]:
     """`manor night run` の入口。D10: まず戻し、それから消音する。**声の失敗（VOICEVOX 未設定
     含む）で夜勤自体は止めない**——本体（`_run_impl`）は変えず、その前後を薄く包むだけ。
+
+    **停止中（N8）は、ここで真っ先に降りる。** ロックも声も `--diary` も触らない——
+    「今夜は何もしない」を字面どおりにする。記録だけは必ず残す（`status: paused`）。
     """
     home = Path(home)
+    # `--now` で偽装された日付で判定する（テスト・検証用。実運用では実時刻と同じ）。
+    pause_info = read_pause(home, today=parse_now(now).date().isoformat())
+    if pause_info is not None:
+        NightLog(home, echo=echo).write(
+            "INFO",
+            f"夜勤は停止中です（〜{pause_info['until']}・{pause_info['reason']}）。今夜は何もしません",
+        )
+        now_iso = datetime.now().isoformat()
+        result: dict[str, Any] = {
+            "status": "paused",
+            "started_at": now_iso,
+            "ended_at": now_iso,
+            "pause": pause_info,
+        }
+        _write_last_run(home, result, dry_run=dry_run)
+        return result
     _voice_restore_safely(home)
     _voice_mute_safely(home)
     result: dict[str, Any] = {}
@@ -1427,11 +1498,17 @@ def status(home: Path, *, task_name: str = DEFAULT_TASK_NAME) -> dict[str, Any]:
         "last_run": _read_last_run(home),
         "last_dry_run": _read_last_run(home, dry_run=True),
         "scheduled": _query_scheduled_task(task_name),
+        "pause": read_pause(home),
     }
 
 
 def format_status(data: dict[str, Any]) -> str:
     lines: list[str] = []
+    pause_info = data.get("pause")
+    if pause_info:
+        lines.append(
+            f"夜勤: 停止中（〜{pause_info.get('until')}・{pause_info.get('reason')}）"
+        )
     lock = data.get("lock", {})
     if lock.get("locked"):
         alive = "生存" if lock.get("alive") else "不在"
@@ -1755,6 +1832,7 @@ def review(home: Path, *, date: str | None = None, record: bool = True) -> dict[
         "date": target,
         "health": health(home),
         "items": pending_items(home, target),
+        "pause": read_pause(home, today=target),
     }
 
     path = _streak_path(home)
@@ -1799,6 +1877,9 @@ def review(home: Path, *, date: str | None = None, record: bool = True) -> dict[
 def format_review(result: dict[str, Any]) -> str:
     """`manor night review` の人が読む形。**異常が先、保留が次**（走ったかのほうが大事）。"""
     lines: list[str] = [f"朝の点検 {result.get('date')}"]
+    pause_info = result.get("pause")
+    if pause_info:
+        lines.append(f"  夜勤: 停止中（〜{pause_info.get('until')}・{pause_info.get('reason')}）")
     health_info = dict(result.get("health") or {})
     reasons = list(health_info.get("reasons") or [])
     if reasons:

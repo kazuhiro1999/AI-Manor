@@ -20,8 +20,10 @@ import sys
 from .. import i18n
 from . import (
     _add_install,
+    _add_pause,
     _add_progress,
     _add_report,
+    _add_resume,
     _add_review,
     _add_run,
     _add_status,
@@ -39,6 +41,8 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     _add_report(sub)
     _add_review(sub)
     _add_progress(sub)
+    _add_pause(sub)
+    _add_resume(sub)
     return parser
 
 

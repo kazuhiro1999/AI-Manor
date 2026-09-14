@@ -16,6 +16,19 @@
 
 ---
 
+## 2026-09-15（夜勤の一時停止を仕組みにする。N8）
+
+### 追加: `manor night pause`／`manor night resume`
+
+主人「今夜は夜勤を止めて」の一時停止が、次の執事の目に入る場所（`home/LOG.md` だけ）
+に無く、9/13 に誰も戻し忘れに気づかなかった件の対応。`manor night pause --until
+<YYYY-MM-DD> --reason "…"` で `home/night/pause.json` に記録し、`until` を過ぎたら自動
+解除（`manor night resume` は待たずに早期解除する口）。`night run` は停止中なら claude
+を起動せず `--diary` も止めるが、`status: paused` を必ず `last-run.json` に残す。
+`manor night status`・`manor night review`・**起動時に hook が注入する `manor active`
+の射影**（`render.active_text`）の先頭に「夜勤: 停止中（〜日付・理由）」を出すため、
+次の執事が読まずに素通りできない。
+
 ## 2026-09-15（意見箱・タスク一覧の進捗更新を、アプリからボタンポチでできるように。T55・T61）
 
 ### 追加: タスク一覧の行から着手・完了をワンクリックで進められる（T55）

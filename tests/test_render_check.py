@@ -36,6 +36,20 @@ def test_render_reflects_current_db_state(conn, home: Path):
     assert "demo" in projects_text
 
 
+def test_active_text_shows_night_pause_first(conn, home: Path):
+    """N8: 夜勤の一時停止が、起動時の射影（`manor active`）の先頭に出ること。"""
+    from manor.night import runner as night_runner
+
+    night_runner.pause(home, until="2026-09-20", reason="主人のご指示")
+    text = render_mod.active_text(conn)
+    assert text.splitlines()[0] == "夜勤: 停止中（〜2026-09-20・主人のご指示）"
+
+
+def test_active_text_has_no_night_pause_line_when_not_paused(conn, home: Path):
+    text = render_mod.active_text(conn)
+    assert "夜勤: 停止中" not in text
+
+
 def test_check_passes_right_after_render(conn, home: Path):
     task_mod.add(conn, "設計を書く")
     render_mod.render(conn, home)

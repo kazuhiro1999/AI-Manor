@@ -137,8 +137,11 @@ def active_data(conn: sqlite3.Connection, *, user_id: str | None = None) -> dict
     }
 
 
-def format_active(data: dict[str, object], *, width: int = 88) -> str:
+def format_active(data: dict[str, object], *, width: int = 88, night_pause: dict[str, object] | None = None) -> str:
     out: list[str] = []
+    if night_pause:
+        out.append(f"夜勤: 停止中（〜{night_pause.get('until')}・{night_pause.get('reason')}）")
+        out.append("")
     open_decisions = list(data["open_decisions"])  # type: ignore[arg-type]
     section_a = list(data["section_a"])  # type: ignore[arg-type]
     section_b = list(data["section_b"])  # type: ignore[arg-type]
@@ -218,7 +221,22 @@ def format_active(data: dict[str, object], *, width: int = 88) -> str:
 
 
 def active_text(conn: sqlite3.Connection) -> str:
-    return format_active(active_data(conn))
+    return format_active(active_data(conn), night_pause=_night_pause())
+
+
+def _night_pause() -> dict[str, object] | None:
+    """N8: 夜勤の一時停止を、起動時の射影（次の執事が必ず通る場所）へ映す。
+
+    v1 の失敗（2026-09-14 GROWTH）は「一時的な運用の変更が、次の執事の目に入る場所に
+    無かった」こと——`home/LOG.md` は誰かが開かなければ読まれない。ここは hook が
+    `active_text` をそのまま注入するので、読まれない余地が無い。
+    """
+    try:
+        from .night import runner as night_runner
+
+        return night_runner.read_pause(util.manor_home())
+    except Exception:  # noqa: BLE001 - 射影は夜勤の記録が壊れていても出す
+        return None
 
 
 # --- 射影ファイル ---------------------------------------------------------------
