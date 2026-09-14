@@ -16,6 +16,18 @@
 
 ---
 
+## 2026-09-15（manor web に stop / restart を足す。T23）
+
+### 追加: `manor web stop` / `manor web restart`
+
+止めるには PID を手で殺すか、デスクトップのショートカット（`launch-manor.cmd`。
+④環境固有・git 管理外）しか無かった。`launch-manor.cmd` が持っていた「ポートで
+待ち受けているサーバがあれば止める」手順（`netstat`→`taskkill`）を
+`src/manor/web/_process.py` へ core として持ち上げ、`manor web stop`（止めるだけ）・
+`manor web restart`（止める→ビルド→起動。`serve` と同じく Ctrl+C まで戻らない）を
+追加した。ランチャー側は環境固有ファイルのため今回は書き換えていない
+（次に `manor shortcut create` を見直すときに、そちらもこの関数を呼ぶ形へ寄せるのが筋）。
+
 ## 2026-09-15（意見箱の仕上げ。T54）
 
 ### 修正: 意見箱の唯一の入口 `add_idea` が空白だけの本文を弾いていなかった

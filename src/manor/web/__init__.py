@@ -23,6 +23,8 @@ def register(subparsers: "argparse._SubParsersAction") -> None:
     p = subparsers.add_parser("web", help=i18n.t("cli.web.help"))
     sub = p.add_subparsers(dest="verb")
     _add_serve(sub)
+    _add_stop(sub)
+    _add_restart(sub)
     _add_build(sub)
     _add_install(sub)
     _add_uninstall(sub)
@@ -68,6 +70,69 @@ def _cmd_serve(conn: object, home: Path, args: "argparse.Namespace") -> None:
         open_browser=args.open_browser,
         discovery=False if getattr(args, "no_discovery", False) else None,
     )
+    return None
+
+
+# --- stop / restart（T23。止めるには PID を殺すしかなかった） --------------------
+
+
+def _add_stop(sub: "argparse._SubParsersAction") -> None:
+    p = sub.add_parser("stop", help=i18n.t("cli.web.stop.help"))
+    p.add_argument("--port", type=int, default=8789)
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=_cmd_stop, is_write=False, needs_db=False)
+
+
+def _cmd_stop(args: "argparse.Namespace") -> int:
+    """待ち受けているプロセスを `taskkill` で止める（`launch-manor.cmd` にあった手順を
+    core へ持ち上げた。Windows 以外では「止めるものが無い」を返す）。
+    """
+    from . import _process
+
+    result = _process.stop(port=args.port)
+    if args.json:
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+    elif result["found"]:
+        print(i18n.t("web.stop.killed", port=args.port, pids=", ".join(str(p) for p in result["killed"])))
+    else:
+        print(i18n.t("web.stop.nothing", port=args.port))
+    return 0 if result["ok"] else 1
+
+
+def _add_restart(sub: "argparse._SubParsersAction") -> None:
+    p = sub.add_parser("restart", help=i18n.t("cli.web.restart.help"))
+    p.add_argument("--host", default=None, help=i18n.t("cli.web.serve.host.help"))
+    p.add_argument("--port", type=int, default=8789)
+    p.add_argument("--read-only", action="store_true", dest="read_only")
+    p.add_argument("--open", action="store_true", dest="open_browser", help=i18n.t("cli.web.serve.open.help"))
+    p.add_argument(
+        "--no-discovery", action="store_true", dest="no_discovery",
+        help=i18n.t("cli.web.serve.no_discovery.help"),
+    )
+    p.add_argument("--skip-build", action="store_true", help=i18n.t("cli.web.restart.skip_build.help"))
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=_cmd_restart, is_write=False)
+
+
+def _cmd_restart(conn: object, home: Path, args: "argparse.Namespace") -> None:
+    """`manor web restart` の本体: 止める → ビルド → 起動（`serve` と同じく Ctrl+C まで
+    戻らない）。ビルドが失敗したら起動へは進まない（壊れたままの画面を出さない）。
+    """
+    from . import _process
+
+    stop_result = _process.stop(port=args.port)
+    if not args.json:
+        if stop_result["found"]:
+            print(i18n.t("web.stop.killed", port=args.port, pids=", ".join(str(p) for p in stop_result["killed"])))
+        else:
+            print(i18n.t("web.stop.nothing", port=args.port))
+
+    if not args.skip_build:
+        build_rc = _cmd_build(args)
+        if build_rc != 0:
+            raise SystemExit(build_rc)
+
+    _cmd_serve(conn, home, args)
     return None
 
 
