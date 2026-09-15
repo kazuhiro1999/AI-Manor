@@ -28,11 +28,14 @@ VALID_RISK: frozenset[str] = frozenset({"", "low", "medium", "high"})
 
 #: 許される遷移（ADR-001 §4 の図を読み下したもの）。
 #: waiting/hold は「止まっている」クラスタとして同居し、互いに行き来できる。
+#: waiting → done は「待っていたものが来て、それで終わる」（主人のご確認待ち → OK。
+#: 意見箱の確認の往復・ADR-001 §4 追補 18・2026-09-15）。hold → done は無い——保留は
+#: 「やらないと決めている」状態で、終わるには一度動かす。
 #: resident は withdrawn にしかなれない。done/withdrawn は終端。
 ALLOWED_TRANSITIONS: dict[str, frozenset[str]] = {
     "todo": frozenset({"doing", "waiting", "hold", "resident", "withdrawn"}),
     "doing": frozenset({"done", "waiting", "hold", "withdrawn"}),
-    "waiting": frozenset({"doing", "todo", "hold", "withdrawn"}),
+    "waiting": frozenset({"doing", "todo", "hold", "done", "withdrawn"}),
     "hold": frozenset({"doing", "todo", "waiting", "withdrawn"}),
     "resident": frozenset({"withdrawn"}),
     "done": frozenset(),

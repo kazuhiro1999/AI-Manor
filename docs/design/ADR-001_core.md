@@ -178,7 +178,7 @@ CREATE VIEW v_open_decisions AS  -- A 待ちの一覧と滞留日数
 ```
 todo ──→ doing ──→ done
  │  ↖     │ ↕        (done_at を自動で入れる)
- │   └── waiting / hold ──→ doing / todo
+ │   └── waiting / hold ──→ doing / todo   （waiting ──→ done も可。追補 18）
  └──→ resident（終わらない。done にできない。withdrawn のみ）
 どの状態からも → withdrawn（理由必須）
 done / withdrawn → 他へは戻せない（戻したいなら新しいタスクを起こし supersedes を張る）
@@ -370,3 +370,4 @@ hooks は **DB を書き換えない。読むだけ**。
 | 15 | （振る舞い試験 S6 再試験）decision は積むようになったが、執事が `--level L1 --class human_gate`（存在しないクラス）や `--level L3` で外部送信を起票した | **クラスが level の出どころ。** `--class` を渡したら明示の `--level` は無視してクラスから決める。存在しないクラスは拒否（一覧を示す）。`task add --help` にクラス一覧と既定レベルを出す（執事は起票前に --help を読む）。CLAUDE.md に「level を自分で決めない」の1行。2026-09-02 実装・試験2本 |
 | 16 | （主人の指摘 2026-09-02）「入力せずに却下できないのは仕様か」 | **仕様を変えた。** 裁定は「OK／こう直して／却下」の一言でよい。承認・却下は文が無ければ既定の一言（「承認」「却下」）を入れる。**修正だけは指示文が必須**（`decision.rule`）。試験2本 |
 | 17 | （board で2度起きた）JS が参照する id が HTML に無い（`panel-running` → 切り替え不能／`panel-judge` → 入力中の再描画ガードが効かずフォーカスが外れる） | **機構にした。** `tests/board/test_frontend_parity.py` が `app.js` の `getElementById`／`querySelector('#…')`／`isEditingWithin("…")` の id を集め、`index.html`（か JS 自身の生成）に存在することを検算する。2026-09-02 |
+| 18 | （主人 2026-09-15）意見箱の件を夜勤が「報告だけで確認もせずに完了」にしていた。実装後は主人に**ユーザー目線で**報告し、OK が出るまで FB→修正を繰り返す形にしたい | **`waiting` → `done` を許可。** 「主人のご確認待ち」を `waiting`（status_note＝報告）で表し、画面の OK で `done`、「もう少し」で FB を note に載せて `todo` へ戻す（翌晩の夜勤が `--night` で先頭に拾う）。`hold` → `done` は引き続き不可（保留は「やらないと決めている」状態） |

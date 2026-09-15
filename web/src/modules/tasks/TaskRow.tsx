@@ -20,7 +20,7 @@ import { MetaContext } from "../../app/MetaContext";
 const FALLBACK_TRANSITIONS: Partial<Record<TaskStatus, TaskStatus[]>> = {
   todo: ["doing", "hold", "resident", "waiting", "withdrawn"],
   doing: ["done", "hold", "waiting", "withdrawn"],
-  waiting: ["doing", "hold", "todo", "withdrawn"],
+  waiting: ["doing", "done", "hold", "todo", "withdrawn"],
   hold: ["doing", "todo", "waiting", "withdrawn"],
   resident: ["withdrawn"],
   done: [],

@@ -1,9 +1,15 @@
 /* manor web — 過去に登録した意見の一覧（`GET /api/v1/ideas`）。
- * 新しい順。状態の札（hold=仕分け待ち／todo=受付済み／doing・waiting・resident=対応中／
+ * 新しい順。状態の札（hold=仕分け待ち／todo=受付済み／doing・resident=対応中／waiting=ご確認待ち／
  * done=完了✓／withdrawn=見送り。夜勤 N6・主人のご要望 2026-09-08。todo を「対応中」と
  * 出していたのを 2026-09-14 に分けた——仕分け済みなだけで誰も着手していない件が「対応中」に見え、
  * 主人が「何がブロッカーか」と問われた）。
  * source='idea' のまま残るので、仕分け後に別プロジェクトへ移っても一覧から辿れる。
+ *
+ * 確認の往復（主人 2026-09-15「意見に対して何をしたかをユーザー目線で報告し、これでいいか
+ * 確認して、修正・追加が要ればまた夜勤で続きをやる」）: 夜勤は実装しても done にせず
+ * `waiting`（status_note＝ユーザー目線の報告）にする。この画面が報告を見せ、「OK」で done、
+ * 「もう少し」で FB を note に載せて todo へ戻す（翌晩の夜勤が `task list --night` で先頭に
+ * 拾い、status_note の FB を読んで続きをやる）。ADR-001 §4 追補 18。
  */
 import { useCallback, useEffect, useState } from "react";
 import { api, ApiError } from "../../app/api";
@@ -58,6 +64,7 @@ export function IdeaList({ reloadKey }: { reloadKey: number }) {
   const [error, setError] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [withdrawingId, setWithdrawingId] = useState<string | null>(null);
+  const [reviewingId, setReviewingId] = useState<string | null>(null);
 
   const load = useCallback(() => {
     api<{ items: Task[] }>("/ideas")
@@ -105,6 +112,16 @@ export function IdeaList({ reloadKey }: { reloadKey: number }) {
                   }}
                   onCancel={() => setEditingId(null)}
                 />
+              ) : reviewingId === it.id ? (
+                <IdeaFeedbackRow
+                  key={it.id}
+                  item={it}
+                  onDone={() => {
+                    setReviewingId(null);
+                    load();
+                  }}
+                  onCancel={() => setReviewingId(null)}
+                />
               ) : withdrawingId === it.id ? (
                 <IdeaWithdrawRow
                   key={it.id}
@@ -127,6 +144,15 @@ export function IdeaList({ reloadKey }: { reloadKey: number }) {
                       {it.body}
                     </div>
                   )}
+                  {it.status === "waiting" && it.status_note && (
+                    <IdeaReport label={t("ideas.list.reportLabel")} text={it.status_note} />
+                  )}
+                  {it.status === "todo" && it.status_note && (
+                    <IdeaReport label={t("ideas.list.feedbackLabel")} text={it.status_note} />
+                  )}
+                  {it.status === "waiting" && (
+                    <IdeaReviewButtons item={it} onApproved={load} onRequestMore={() => setReviewingId(it.id)} />
+                  )}
                   {EDITABLE_STATUSES.includes(it.status) && (
                     <>
                       <button className="btn btn-small btn-ghost" type="button" onClick={() => setEditingId(it.id)}>
@@ -143,6 +169,91 @@ export function IdeaList({ reloadKey }: { reloadKey: number }) {
         </div>
       )}
     </section>
+  );
+}
+
+function IdeaReport({ label, text }: { label: string; text: string }) {
+  return (
+    <div className="detail-box" style={{ flexBasis: "100%", marginTop: 4 }}>
+      <strong>{label}: </strong>
+      {text}
+    </div>
+  );
+}
+
+function IdeaReviewButtons({ item, onApproved, onRequestMore }: { item: Task; onApproved: () => void; onRequestMore: () => void }) {
+  const t = useT();
+  const { show } = useToast();
+  const [busy, setBusy] = useState(false);
+
+  const approve = async () => {
+    setBusy(true);
+    try {
+      await api(`/tasks/task/${encodeURIComponent(item.id)}/status`, { method: "POST", body: { status: "done" } });
+      show(t("ideas.list.approved", { id: item.id }), "ok", 3000);
+      onApproved();
+    } catch (err) {
+      show(err instanceof ApiError ? err.message : t("ideas.list.reviewFailed"), "error");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <>
+      <button className="btn btn-small btn-primary" type="button" disabled={busy} onClick={approve}>
+        {t("ideas.list.approve")}
+      </button>
+      <button className="btn btn-small btn-ghost" type="button" disabled={busy} onClick={onRequestMore}>
+        {t("ideas.list.requestMore")}
+      </button>
+    </>
+  );
+}
+
+//: 「もう少し」: FB を note に載せて todo へ戻す。夜勤は `task list --night --json` の
+//: status_note でこの FB を読む——書く場所を1つにしておく（本文に追記しない）。
+function IdeaFeedbackRow({ item, onDone, onCancel }: { item: Task; onDone: () => void; onCancel: () => void }) {
+  const t = useT();
+  const { show } = useToast();
+  const [note, setNote] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const sendBack = async () => {
+    if (!note.trim()) return;
+    setBusy(true);
+    try {
+      await api(`/tasks/task/${encodeURIComponent(item.id)}/status`, { method: "POST", body: { status: "todo", note: note.trim() } });
+      show(t("ideas.list.sentBack", { id: item.id }), "ok", 3000);
+      onDone();
+    } catch (err) {
+      show(err instanceof ApiError ? err.message : t("ideas.list.reviewFailed"), "error");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="row-item form-inline" style={{ flexWrap: "wrap" }}>
+      <span className="row-id">{item.id}</span>
+      <span className="row-title">{item.title}</span>
+      {item.status_note && <IdeaReport label={t("ideas.list.reportLabel")} text={item.status_note} />}
+      <textarea
+        className="form-textarea"
+        style={{ flexBasis: "100%", minHeight: 60 }}
+        placeholder={t("ideas.list.feedbackPlaceholder")}
+        aria-label={t("ideas.list.feedbackPlaceholder")}
+        value={note}
+        onChange={(e) => setNote(e.target.value)}
+        disabled={busy}
+      />
+      <button className="btn btn-small btn-primary" type="button" disabled={busy || !note.trim()} onClick={sendBack}>
+        {t("ideas.list.feedbackConfirm")}
+      </button>
+      <button className="btn btn-small" type="button" disabled={busy} onClick={onCancel}>
+        {t("common.cancel")}
+      </button>
+    </div>
   );
 }
 

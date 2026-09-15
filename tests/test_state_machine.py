@@ -94,6 +94,35 @@ def test_hg_gate_modified_also_passes(conn):
     assert result["status"] == "done"
 
 
+def test_waiting_can_become_done(conn):
+    """ADR-001 §4 追補 18: 「待っていたものが来て、それで終わる」——主人のご確認待ち
+    （waiting・status_note＝報告）に画面の OK で done。意見箱の確認の往復（2026-09-15）。
+    """
+    tid = task_mod.add(conn, "意見箱の件")
+    task_mod.status(conn, tid, "doing")
+    task_mod.status(conn, tid, "waiting", note="主人のご確認待ち: 画面で○○ができるようになりました")
+    result = task_mod.status(conn, tid, "done")
+    assert result["status"] == "done"
+
+
+def test_waiting_back_to_todo_keeps_feedback_in_status_note(conn):
+    """「もう少し」: FB を note に載せて todo へ戻す。夜勤は status_note で FB を読む。"""
+    tid = task_mod.add(conn, "意見箱の件")
+    task_mod.status(conn, tid, "waiting", note="ご確認待ち")
+    result = task_mod.status(conn, tid, "todo", note="ボタンではなくドロップダウンにしてほしい")
+    assert result["status"] == "todo"
+    row = conn.execute("SELECT status_note FROM task WHERE id = ?", (tid,)).fetchone()
+    assert row["status_note"] == "ボタンではなくドロップダウンにしてほしい"
+
+
+def test_hold_still_cannot_become_done(conn):
+    """保留は「やらないと決めている」状態。終わるには一度動かす（追補 18 で変えていない）。"""
+    tid = task_mod.add(conn, "設計")
+    task_mod.status(conn, tid, "hold")
+    with pytest.raises(ManorError):
+        task_mod.status(conn, tid, "done")
+
+
 def test_resident_cannot_become_done(conn):
     tid = task_mod.add(conn, "見張り")
     task_mod.status(conn, tid, "resident")
