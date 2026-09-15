@@ -3,7 +3,8 @@ import { render, cleanup, screen, waitFor, within } from "@testing-library/react
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { Running } from "./Running";
-import type { Board } from "../../app/types";
+import type { Board, Meta } from "../../app/types";
+import { MetaContext, type MetaContextValue } from "../../app/MetaContext";
 import { ToastBanner, ToastProvider } from "../../components/Toast";
 
 function makeBoard(): Board {
@@ -194,15 +195,14 @@ describe("Running — 伝達（ADR-013 D3: メモの追加を画面から）", (
   });
 });
 
-describe("Running — 一覧の行から1クリックで進める（T55・意見箱）", () => {
+describe("Running — 一覧の行から状態を選んで変える（T55・意見箱。2026-09-15 ドロップダウンへ）", () => {
   const originalFetch = globalThis.fetch;
   afterEach(() => {
     globalThis.fetch = originalFetch;
     cleanup();
   });
 
-  function mockFetchFor(onFetch?: (url: string, init?: RequestInit) => void) {
-    const board = makeBoard();
+  function mockFetchFor(onFetch?: (url: string, init?: RequestInit) => void, board: Board = makeBoard()) {
     globalThis.fetch = vi.fn().mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       onFetch?.(url, init);
@@ -210,58 +210,113 @@ describe("Running — 一覧の行から1クリックで進める（T55・意見
     }) as unknown as typeof fetch;
   }
 
-  it("doing の行に「完了」ボタンが出て、押すと status/doneをPOSTする", async () => {
-    const calls: { url: string; init?: RequestInit }[] = [];
-    mockFetchFor((url, init) => calls.push({ url, init }));
-
-    const user = userEvent.setup();
-    render(
+  function renderRunning(readOnly = false, meta: Partial<Meta> | null = null) {
+    const tree = (
       <MemoryRouter>
         <ToastProvider>
-          <Running readOnly={false} />
+          <Running readOnly={readOnly} />
         </ToastProvider>
       </MemoryRouter>
     );
-    await waitFor(() => expect(screen.getByText(/執事のタスク/)).toBeTruthy());
+    const ctx: MetaContextValue = {
+      meta: meta as Meta,
+      reload: async () => {},
+      setupJustCompleted: false,
+      markSetupJustCompleted: () => {},
+    };
+    return render(meta ? <MetaContext.Provider value={ctx}>{tree}</MetaContext.Provider> : tree);
+  }
 
-    const row = screen.getByText(/執事のタスク/).closest(".row-item") as HTMLElement;
-    const { getByRole } = within(row);
-    await user.click(getByRole("button", { name: "完了" }));
+  async function rowOf(text: RegExp) {
+    await waitFor(() => expect(screen.getByText(text)).toBeTruthy());
+    return screen.getByText(text).closest(".row-item") as HTMLElement;
+  }
 
+  function optionValues(select: HTMLElement): string[] {
+    return Array.from((select as HTMLSelectElement).options).map((o) => o.value);
+  }
+
+  it("doing の行の選択肢は「いまの状態＋行ける先」（done・hold・waiting・withdrawn）", async () => {
+    mockFetchFor();
+    renderRunning();
+    const row = await rowOf(/執事のタスク/);
+    const select = within(row).getByRole("combobox", { name: /T2/ });
+    expect(optionValues(select)).toEqual(["doing", "done", "hold", "waiting", "withdrawn"]);
+  });
+
+  it("done を選ぶと status/done を即 POST する", async () => {
+    const calls: { url: string; init?: RequestInit }[] = [];
+    mockFetchFor((url, init) => calls.push({ url, init }));
+    const user = userEvent.setup();
+    renderRunning();
+    const row = await rowOf(/執事のタスク/);
+    await user.selectOptions(within(row).getByRole("combobox", { name: /T2/ }), "done");
     await waitFor(() =>
       expect(calls.some((c) => c.url.includes("/api/v1/tasks/task/T2/status") && (c.init?.method || "").toUpperCase() === "POST")).toBe(true)
     );
     const postCall = calls.find((c) => c.url.includes("/api/v1/tasks/task/T2/status"));
     const sent = JSON.parse(String(postCall?.init?.body));
-    expect(sent.status).toBe("done");
+    expect(sent).toEqual({ status: "done" });
   });
 
-  it("readOnly ではクイック操作ボタンを出さない", async () => {
-    mockFetchFor();
-    render(
-      <MemoryRouter>
-        <ToastProvider>
-          <Running readOnly={true} />
-        </ToastProvider>
-      </MemoryRouter>
-    );
-    await waitFor(() => expect(screen.getByText(/執事のタスク/)).toBeTruthy());
-    const row = screen.getByText(/執事のタスク/).closest(".row-item") as HTMLElement;
-    expect(within(row).queryByRole("button", { name: "完了" })).toBeNull();
+  it("進行中→保留に戻せる（主人 2026-09-15）", async () => {
+    const calls: { url: string; init?: RequestInit }[] = [];
+    mockFetchFor((url, init) => calls.push({ url, init }));
+    const user = userEvent.setup();
+    renderRunning();
+    const row = await rowOf(/執事のタスク/);
+    await user.selectOptions(within(row).getByRole("combobox", { name: /T2/ }), "hold");
+    await waitFor(() => expect(calls.some((c) => c.url.includes("/api/v1/tasks/task/T2/status"))).toBe(true));
+    const sent = JSON.parse(String(calls.find((c) => c.url.includes("/T2/status"))?.init?.body));
+    expect(sent.status).toBe("hold");
   });
 
-  it("done の行にはクイック操作ボタンを出さない", async () => {
+  it("waiting を選ぶと「何を待つか」の入力欄が出て、確定するまで POST しない", async () => {
+    const calls: { url: string; init?: RequestInit }[] = [];
+    mockFetchFor((url, init) => calls.push({ url, init }));
+    const user = userEvent.setup();
+    renderRunning();
+    const row = await rowOf(/執事のタスク/);
+    await user.selectOptions(within(row).getByRole("combobox", { name: /T2/ }), "waiting");
+    const noteInput = within(row).getByRole("textbox", { name: "何を待つか" });
+    expect(calls.some((c) => c.url.includes("/T2/status"))).toBe(false);
+    const confirm = within(row).getByRole("button", { name: "確定" });
+    expect((confirm as HTMLButtonElement).disabled).toBe(true);
+    await user.type(noteInput, "先生の返事");
+    await user.click(confirm);
+    await waitFor(() => expect(calls.some((c) => c.url.includes("/T2/status"))).toBe(true));
+    const sent = JSON.parse(String(calls.find((c) => c.url.includes("/T2/status"))?.init?.body));
+    expect(sent).toEqual({ status: "waiting", note: "先生の返事" });
+  });
+
+  it("選択肢は meta の task_transitions（状態機械）から取る——画面に表を持たない", async () => {
     mockFetchFor();
-    render(
-      <MemoryRouter>
-        <ToastProvider>
-          <Running readOnly={false} />
-        </ToastProvider>
-      </MemoryRouter>
-    );
-    await waitFor(() => expect(screen.getByText(/完了したタスク/)).toBeTruthy());
-    const row = screen.getByText(/完了したタスク/).closest(".row-item") as HTMLElement;
-    expect(within(row).queryByRole("button", { name: "着手" })).toBeNull();
-    expect(within(row).queryByRole("button", { name: "完了" })).toBeNull();
+    // 状態機械が「doing からは done だけ」に変わった、という meta を渡す
+    renderRunning(false, { task_transitions: { doing: ["done"] }, task_note_required: [] });
+    const row = await rowOf(/執事のタスク/);
+    expect(optionValues(within(row).getByRole("combobox", { name: /T2/ }))).toEqual(["doing", "done"]);
+  });
+
+  it("常駐（resident）は取り下げにしか行けない（状態機械どおり）", async () => {
+    const board = makeBoard();
+    board.tasks = [...board.tasks, { id: "T4", project_id: "P1", status: "resident", owner: "butler", title: "常駐のタスク" } as Board["tasks"][number]];
+    mockFetchFor(undefined, board);
+    renderRunning();
+    const row = await rowOf(/常駐のタスク/);
+    expect(optionValues(within(row).getByRole("combobox", { name: /T4/ }))).toEqual(["resident", "withdrawn"]);
+  });
+
+  it("readOnly では状態の選択を出さない", async () => {
+    mockFetchFor();
+    renderRunning(true);
+    const row = await rowOf(/執事のタスク/);
+    expect(within(row).queryByRole("combobox")).toBeNull();
+  });
+
+  it("done の行（終端）には状態の選択を出さない", async () => {
+    mockFetchFor();
+    renderRunning();
+    const row = await rowOf(/完了したタスク/);
+    expect(within(row).queryByRole("combobox")).toBeNull();
   });
 });

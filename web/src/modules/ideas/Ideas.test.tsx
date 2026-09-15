@@ -129,6 +129,27 @@ describe("IdeaList — 読込中・空・失敗・状態の札", () => {
     expect(screen.getByText("完了 ✓")).toBeTruthy();
   });
 
+  it("本文は済んだ意見でも読める。題名と同じ本文（1行の意見）は重ねて出さない（主人 2026-09-15）", async () => {
+    const items = [
+      ...makeItems(),
+      { id: "T12", project_id: null, status: "done", owner: "master", title: "一行だけの意見", body: "一行だけの意見", source: "idea" } as Task,
+    ];
+    globalThis.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ items }),
+    }) as unknown as typeof fetch;
+    render(
+      <ToastProvider>
+        <IdeaList reloadKey={0} />
+      </ToastProvider>
+    );
+    await waitFor(() => expect(screen.getByText("先に入れた意見")).toBeTruthy());
+    expect(screen.getByText("本文1")).toBeTruthy();
+    expect(screen.getByText("本文2")).toBeTruthy(); // done の行でも本文は出る
+    expect(screen.getAllByText("一行だけの意見")).toHaveLength(1); // 題名だけ、本文は重ねない
+  });
+
   it("新しい順（id の数値の降順）に並べる", async () => {
     globalThis.fetch = vi.fn().mockResolvedValue({
       ok: true,

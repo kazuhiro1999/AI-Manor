@@ -120,6 +120,13 @@ export function IdeaList({ reloadKey }: { reloadKey: number }) {
                   <span className="row-id">{it.id}</span>
                   <span className="row-title">{it.title}</span>
                   <IdeaStatusBadge status={it.status} />
+                  {/* 本文は済んだ意見でも読める（主人 2026-09-15「一覧から内容の確認ができそうに
+                      なかった」——題名は本文の1行目を切ったものなので、同じなら重ねて出さない） */}
+                  {it.body && it.body.trim() !== it.title.trim() && (
+                    <div className="detail-box" style={{ flexBasis: "100%", marginTop: 4 }}>
+                      {it.body}
+                    </div>
+                  )}
                   {EDITABLE_STATUSES.includes(it.status) && (
                     <>
                       <button className="btn btn-small btn-ghost" type="button" onClick={() => setEditingId(it.id)}>

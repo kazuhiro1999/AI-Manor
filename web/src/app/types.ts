@@ -274,6 +274,10 @@ export interface Meta {
   task_classes?: TaskClass[];
   // ADR-010 D2: 非アーカイブの task_kind 一覧（画面がここから追加の往復なしにフォームを組める）。
   task_kinds?: TaskKind[];
+  // T55: 状態機械（ADR-001 §4）。`task_transitions[いまの状態]` が行ける先、
+  // `task_note_required` は入るときに note（何を待つか・理由）が要る状態。
+  task_transitions?: Partial<Record<TaskStatus, TaskStatus[]>>;
+  task_note_required?: TaskStatus[];
   home_name: string;
   // ADR-007 D4: 初回セットアップが済んでいるか（フロントの誘導用）。
   // バックエンドがまだ足していない間は undefined になりうるので、

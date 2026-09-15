@@ -1,21 +1,41 @@
-import { useState } from "react";
-import type { Board, Project, Task } from "../../app/types";
+import { useContext, useState } from "react";
+import type { Board, Project, Task, TaskStatus } from "../../app/types";
 import { StatusBadge } from "../../components/StatusBadge";
 import { projectLabel, stripLeadingProjectBracket } from "./utils";
-import { useT } from "../../app/i18n";
+import { useT, type TranslationKey } from "../../app/i18n";
 import { AGENT_LABEL_KEY } from "../../app/agentMeta";
 import { api, ApiError } from "../../app/api";
 import { useToast } from "../../components/Toast";
+import { MetaContext } from "../../app/MetaContext";
 
-//: 一覧の行から1クリックで進める、いちばんよく使う遷移だけ（T55・意見箱「Claudeを
-//: 介すまでもない進捗更新はボタンポチでやりたい」）。それ以外の遷移（waiting/hold
-//: への退避や取り下げ）は「詳しく」ボタン→CtxModal に任せる——note が要る遷移や
-//: level=HG の完了（decision 経由の承認が要る）は、そちらの厚いフォームのままでよい。
-const QUICK_NEXT_STATUS: Partial<Record<Task["status"], "doing" | "done">> = {
-  todo: "doing",
-  waiting: "doing",
-  hold: "doing",
-  doing: "done",
+//: 一覧の行から状態を変える（T55・意見箱「Claudeを介すまでもない進捗更新はアプリで
+//: 完結させたい」）。最初は「着手／完了」の1ボタンだったが、主人 2026-09-15「進行中の
+//: ものを保留に戻せない・常駐は変更できない。ドロップダウンで自分で設定したい」。
+//: 選択肢は `GET /api/v1/meta` の `task_transitions`（状態機械 ADR-001 §4）から
+//: 「いまの状態から行ける先」だけを出す。note が要る状態（`task_note_required`。
+//: waiting=何を待つか／withdrawn=理由）は選んだあとに入力欄を出して確定させる。
+//: 常駐（resident）が取り下げにしか行けないのは状態機械の設計で、画面の都合ではない。
+//: level=HG の完了は decision 経由の承認が要るので選択肢に出さない（「詳しく」→CtxModal）。
+//: meta がまだ無い（起動直後・古いバックエンド）ときだけ、下の写しにフォールバックする。
+const FALLBACK_TRANSITIONS: Partial<Record<TaskStatus, TaskStatus[]>> = {
+  todo: ["doing", "hold", "resident", "waiting", "withdrawn"],
+  doing: ["done", "hold", "waiting", "withdrawn"],
+  waiting: ["doing", "hold", "todo", "withdrawn"],
+  hold: ["doing", "todo", "waiting", "withdrawn"],
+  resident: ["withdrawn"],
+  done: [],
+  withdrawn: [],
+};
+const FALLBACK_NOTE_REQUIRED: TaskStatus[] = ["waiting", "withdrawn"];
+
+const STATUS_LABEL_KEY: Record<TaskStatus, TranslationKey> = {
+  doing: "taskStatus.doing",
+  resident: "taskStatus.resident",
+  todo: "taskStatus.todo",
+  hold: "taskStatus.hold",
+  waiting: "taskStatus.waiting",
+  done: "taskStatus.done",
+  withdrawn: "taskStatus.withdrawn",
 };
 
 export function TaskRow({
@@ -42,16 +62,29 @@ export function TaskRow({
   // という形の props 名に依存しているため、ここを改名すると影響範囲が大きい。
   const tr = useT();
   const { show } = useToast();
+  // Provider の外（試験・login 画面）でも落ちないよう useMetaContext ではなく素の useContext。
+  const meta = useContext(MetaContext)?.meta ?? null;
   const [busy, setBusy] = useState(false);
+  // note が要る状態を選んだあと、入力を待っている状態（null なら待っていない）。
+  const [pendingStatus, setPendingStatus] = useState<TaskStatus | null>(null);
+  const [note, setNote] = useState("");
   const finished = t.status === "done";
-  const quickNext = t.level === "HG" ? undefined : QUICK_NEXT_STATUS[t.status];
 
-  const quickAdvance = async () => {
-    if (!quickNext) return;
+  const transitions = meta?.task_transitions ?? FALLBACK_TRANSITIONS;
+  const noteRequired = meta?.task_note_required ?? FALLBACK_NOTE_REQUIRED;
+  const nextStatuses = (transitions[t.status] ?? []).filter((s) => !(s === "done" && t.level === "HG"));
+  const canChange = !readOnly && nextStatuses.length > 0;
+
+  const post = async (status: TaskStatus, noteText?: string) => {
     setBusy(true);
     try {
-      await api(`/tasks/task/${encodeURIComponent(t.id)}/status`, { method: "POST", body: { status: quickNext } });
-      show(tr("tasks.judge.ruledToast", { id: t.id, status: quickNext }), "ok", 3000);
+      await api(`/tasks/task/${encodeURIComponent(t.id)}/status`, {
+        method: "POST",
+        body: noteText ? { status, note: noteText } : { status },
+      });
+      show(tr("tasks.judge.ruledToast", { id: t.id, status: tr(STATUS_LABEL_KEY[status]) }), "ok", 3000);
+      setPendingStatus(null);
+      setNote("");
       onChanged?.();
     } catch (err) {
       show(tr("tasks.ctx.rejected", { reason: err instanceof ApiError ? err.message : tr("common.unknown") }), "error");
@@ -59,6 +92,21 @@ export function TaskRow({
       setBusy(false);
     }
   };
+
+  const onSelect = (value: string) => {
+    const status = value as TaskStatus;
+    if (status === t.status) {
+      setPendingStatus(null);
+      return;
+    }
+    if (noteRequired.includes(status)) {
+      setPendingStatus(status);
+      setNote("");
+      return;
+    }
+    void post(status);
+  };
+
   const owner =
     t.owner === "master" ? (
       <span className="owner-tag master">{tr("tasks.row.masterOwner")}</span>
@@ -80,14 +128,47 @@ export function TaskRow({
       </span>
       {latest && <span className="badge-latest">{tr("tasks.row.latest")}</span>}
       {owner}
-      {!readOnly && quickNext && (
-        <button className="btn btn-small btn-ghost" type="button" disabled={busy} onClick={quickAdvance}>
-          {quickNext === "doing" ? tr("tasks.row.quickStart") : tr("tasks.row.quickDone")}
-        </button>
+      {canChange && (
+        <select
+          className="form-select"
+          style={{ flex: "0 0 auto", minWidth: 0, padding: "2px 6px", fontSize: 11.5 }}
+          aria-label={tr("tasks.row.statusSelectAria", { id: t.id })}
+          value={pendingStatus ?? t.status}
+          disabled={busy}
+          onChange={(e) => onSelect(e.target.value)}
+        >
+          <option value={t.status}>{tr(STATUS_LABEL_KEY[t.status])}</option>
+          {nextStatuses.map((s) => (
+            <option key={s} value={s}>
+              {tr(STATUS_LABEL_KEY[s])}
+            </option>
+          ))}
+        </select>
       )}
       <button className="btn btn-small btn-ghost btn-ctx" type="button" onClick={() => onOpenCtx(t.id)}>
         {tr("tasks.row.context")}
       </button>
+      {pendingStatus && (
+        <div className="form-inline" style={{ flexBasis: "100%" }}>
+          <input
+            className="form-input"
+            placeholder={pendingStatus === "waiting" ? tr("tasks.row.noteWaiting") : tr("tasks.row.noteReason")}
+            aria-label={pendingStatus === "waiting" ? tr("tasks.row.noteWaiting") : tr("tasks.row.noteReason")}
+            value={note}
+            disabled={busy}
+            onChange={(e) => setNote(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && note.trim()) void post(pendingStatus, note.trim());
+            }}
+          />
+          <button className="btn btn-small btn-primary" type="button" disabled={busy || !note.trim()} onClick={() => void post(pendingStatus, note.trim())}>
+            {tr("tasks.row.noteConfirm")}
+          </button>
+          <button className="btn btn-small" type="button" disabled={busy} onClick={() => setPendingStatus(null)}>
+            {tr("common.cancel")}
+          </button>
+        </div>
+      )}
     </div>
   );
 }

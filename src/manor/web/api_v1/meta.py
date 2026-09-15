@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from fastapi import FastAPI, Request
 
-from ... import policy, profile as profile_mod, task_kind as task_kind_mod, user as user_mod, util
+from ... import policy, profile as profile_mod, task as task_mod, task_kind as task_kind_mod, user as user_mod, util
 from .. import config as web_config
 from .._common import WebContext, module_list, open_conn, viewing_user_id
 from ..app import _STARTED_AT, runtime_stale
@@ -59,6 +59,12 @@ def register(app: FastAPI, ctx: WebContext) -> None:
             "modules": modules,
             "task_classes": _task_classes(),
             "task_kinds": task_kinds,  # ADR-010 D2（タスクの種類）
+            # T55（主人 2026-09-15「ボタン一つで進行よりドロップダウンで自分で設定したい」）:
+            # 状態機械（ADR-001 §4）をそのまま返す。画面は「いまの状態から行ける先」だけを
+            # 選択肢に出し、note が要る状態（waiting/withdrawn）では入力欄を出す。表を画面側に
+            # 持たない——持つと状態機械を変えたときにずれる（B139「列挙は完全性に全依存」）。
+            "task_transitions": {k: sorted(v) for k, v in task_mod.ALLOWED_TRANSITIONS.items()},
+            "task_note_required": sorted(task_mod.NOTE_REQUIRED),
             "setup_done": setup_done,  # ADR-007 D4（フロントの /setup 誘導用）
             # home のフルパスは返さない（ADR-005 §2）。最後のフォルダ名だけ。
             "home_name": ctx.home.name,

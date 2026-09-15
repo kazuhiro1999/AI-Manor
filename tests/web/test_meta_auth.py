@@ -38,6 +38,21 @@ def test_meta_shape(home: Path) -> None:
     assert str(home) not in str(body)
 
 
+def test_meta_exposes_task_state_machine(home: Path) -> None:
+    """T55: 画面のドロップダウンが「行ける先」だけを出せるよう、状態機械を meta に載せる。
+    表は `task.ALLOWED_TRANSITIONS` / `task.NOTE_REQUIRED` そのもの（画面側に写しを持たない）。
+    """
+    from manor import task as task_mod
+
+    body = make_client(home).get("/api/v1/meta").json()
+    assert body["task_transitions"] == {k: sorted(v) for k, v in task_mod.ALLOWED_TRANSITIONS.items()}
+    assert body["task_note_required"] == sorted(task_mod.NOTE_REQUIRED)
+    # 終端（done/withdrawn）は空、常駐（resident）は取り下げのみ——ADR-001 §4 のまま
+    assert body["task_transitions"]["done"] == []
+    assert body["task_transitions"]["resident"] == ["withdrawn"]
+    assert "hold" in body["task_transitions"]["doing"]
+
+
 def test_meta_language_defaults_to_auto_and_is_public(home: Path) -> None:
     """ADR-012 §3 D11: /meta は認証なしで読める唯一の経路——login・setup 画面が
     起動直後から言語を得られるように、認証モードが loopback でなくても読める。"""
