@@ -150,6 +150,10 @@ export function IdeaList({ reloadKey }: { reloadKey: number }) {
                   {it.status === "todo" && it.status_note && (
                     <IdeaReport label={t("ideas.list.feedbackLabel")} text={it.status_note} />
                   )}
+                  {/* T68「完了になった意見の詳細はまだ見れない」——done でも報告（対応内容）は残す */}
+                  {it.status === "done" && it.status_note && (
+                    <IdeaReport label={t("ideas.list.reportLabel")} text={it.status_note} />
+                  )}
                   {it.status === "waiting" && (
                     <IdeaReviewButtons item={it} onApproved={load} onRequestMore={() => setReviewingId(it.id)} />
                   )}

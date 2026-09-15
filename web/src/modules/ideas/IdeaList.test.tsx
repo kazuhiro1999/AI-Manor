@@ -203,4 +203,24 @@ describe("IdeaList — 確認の往復（主人 2026-09-15: 報告→OK／もう
     expect(within(row).getByText(/前回のご指摘/)).toBeTruthy();
     expect(within(row).getByText(/ボタンではなくドロップダウンで/)).toBeTruthy();
   });
+
+  it("完了した意見に status_note があれば「執事からの報告」として読める（T68）", async () => {
+    const items: Task[] = [
+      { id: "T8", project_id: null, status: "done", owner: "master", title: "済んだ意見2", body: "済んだ意見2", status_note: "ドロップダウンを付けました", source: "idea" } as Task,
+    ];
+    globalThis.fetch = vi.fn().mockImplementation(async () => ({ ok: true, status: 200, json: async () => ({ items }) })) as unknown as typeof fetch;
+    renderList();
+    await waitFor(() => expect(screen.getByText("済んだ意見2")).toBeTruthy());
+    const row = screen.getByText("済んだ意見2").closest(".row-item") as HTMLElement;
+    expect(within(row).getByText(/執事からの報告/)).toBeTruthy();
+    expect(within(row).getByText(/ドロップダウンを付けました/)).toBeTruthy();
+  });
+
+  it("完了した意見に status_note が無ければ報告は出ない", async () => {
+    mockFetchFor();
+    renderList();
+    await waitFor(() => expect(screen.getByText("済んだ意見")).toBeTruthy());
+    const row = screen.getByText("済んだ意見").closest(".row-item") as HTMLElement;
+    expect(within(row).queryByText(/執事からの報告/)).toBeNull();
+  });
 });
