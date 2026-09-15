@@ -257,6 +257,38 @@ def test_claude_nonzero_exit_is_a_failure_and_records_it(home: Path, conn, monke
     assert rows[0]["exit_reason"] == "failed"
 
 
+def test_max_turns_says_so_instead_of_just_an_exit_code(home: Path, conn, monkeypatch: pytest.MonkeyPatch) -> None:
+    """T56: `--max-turns` に当たると stdout に JSON が出て stderr は空になる。
+    それまでは stderr の最終行しか見ておらず「終了コード 1」しか主人に届かなかった。"""
+    _fix_clock(monkeypatch)
+    max_turns_json = json.dumps({"is_error": True, "num_turns": 160, "terminal_reason": "max_turns"})
+    proc = Mock(returncode=1, stdout=max_turns_json, stderr="")
+    monkeypatch.setattr(talk_session.subprocess, "run", Mock(return_value=proc))
+    speak_mock = _mute_voice(monkeypatch)
+
+    result = talk_session.ask(home, "こんにちは")
+
+    assert result["ok"] is False
+    assert "ターン上限" in result["reply"]
+    assert "160" in result["reply"]
+    speak_mock.assert_not_called()
+    rows = [dict(r) for r in conn.execute("SELECT * FROM run WHERE kind = 'talk'").fetchall()]
+    assert "ターン上限" in rows[0]["note"]
+
+
+def test_stderr_only_failure_still_reads_the_stderr_tail(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """stderr にしか出ない失敗（trust の警告など）は、従来どおり最終行を読む。"""
+    _fix_clock(monkeypatch)
+    proc = Mock(returncode=1, stdout="", stderr="line1\nthis workspace has not been trusted")
+    monkeypatch.setattr(talk_session.subprocess, "run", Mock(return_value=proc))
+    _mute_voice(monkeypatch)
+
+    result = talk_session.ask(home, "こんにちは")
+
+    assert result["ok"] is False
+    assert "this workspace has not been trusted" in result["reply"]
+
+
 def test_empty_text_is_refused_without_counting(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     _fix_clock(monkeypatch)
     run_mock = Mock()

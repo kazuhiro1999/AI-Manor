@@ -25,6 +25,7 @@ import sys
 from pathlib import Path
 
 from manor import db as db_mod
+from manor import runlog
 from manor.night import runner
 
 
@@ -67,11 +68,11 @@ MAX_TURNS_JSON = json.dumps(
 )
 
 
-# --- diagnose（純粋関数） ------------------------------------------------------------
+# --- diagnose（純粋関数。T56で runlog.py へ移設——夜勤・小窓の両方が使う関心） -------------
 
 
 def test_diagnose_reads_terminal_reason() -> None:
-    diag = runner.diagnose(json.loads(MAX_TURNS_JSON), code=1, killed=False)
+    diag = runlog.diagnose(json.loads(MAX_TURNS_JSON), code=1, killed=False)
     assert diag["terminal_reason"] == "max_turns"
     assert diag["num_turns"] == 160
     assert diag["usage"]["cache_read_input_tokens"] == 190000
@@ -80,7 +81,7 @@ def test_diagnose_reads_terminal_reason() -> None:
 
 def test_diagnose_says_so_when_the_output_was_not_json() -> None:
     """**推測で埋めない。** 読めなかったことが分かる形で残す。"""
-    diag = runner.diagnose(None, code=1, killed=False)
+    diag = runlog.diagnose(None, code=1, killed=False)
     assert diag["parsed"] is False
     assert "terminal_reason" not in diag
 

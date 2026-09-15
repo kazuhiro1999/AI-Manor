@@ -572,37 +572,6 @@ FAILURE_KEEP = 30
 FAILURE_TAIL_CHARS = 4000
 
 
-def diagnose(parsed: dict[str, Any] | None, *, code: int, killed: bool) -> dict[str, Any]:
-    """`claude` の結果 JSON から「なぜ終わったか」を抜く（**推測で埋めない**）。
-
-    2026-09-10 の夜勤が exit=1 で落ちたとき、記録に残っていたのは「（理由不明）」だけだった。
-    `_RESULT_FIELD_RE` が `"result"` フィールドしか見ておらず、**失敗の JSON には
-    `"result"` が無い**ためである（実測: `--max-turns 1` で落とすと
-    `{"is_error":true, ..., "terminal_reason":"max_turns"}` が返り、`"result"` は無い）。
-
-    `terminal_reason` は CLI が明示的に入れてくる——`max_turns` などが直に読める。
-    **手がかりを1つに頼らない**ので、`subtype`・`is_error`・`num_turns` も一緒に持つ。
-    """
-    out: dict[str, Any] = {"exit_code": code, "killed": killed}
-    if not isinstance(parsed, dict):
-        out["parsed"] = False
-        return out
-    out["parsed"] = True
-    for key in ("terminal_reason", "subtype", "is_error", "num_turns", "duration_api_ms", "total_cost_usd"):
-        if key in parsed:
-            out[key] = parsed[key]
-    usage = parsed.get("usage")
-    if isinstance(usage, dict):
-        out["usage"] = {
-            k: usage.get(k)
-            for k in ("input_tokens", "output_tokens", "cache_creation_input_tokens", "cache_read_input_tokens")
-        }
-    denials = parsed.get("permission_denials")
-    if isinstance(denials, list):
-        out["permission_denials"] = len(denials)
-    return out
-
-
 def write_failure_dump(
     home: Path, *, attempt: int, argv: list[str], stdout: str, stderr: str, diag: dict[str, Any]
 ) -> Path | None:
@@ -918,7 +887,7 @@ def _run_sitting(
     why = why_m.group(1) if why_m else "（理由不明）"
     _runlog_finish(run_conn, run_id, code=code, killed=killed, raw=raw, parsed=parsed, why=why)
 
-    diag = diagnose(parsed, code=code, killed=killed)
+    diag = runlog.diagnose(parsed, code=code, killed=killed)
 
     # ⚠ 拒まれた道具を捨てない（2026-09-08・主人のご要望）。
     denials: list[Any] = []

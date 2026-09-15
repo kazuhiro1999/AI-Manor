@@ -670,6 +670,16 @@ def _build_prompt(text: str, history: Sequence[dict[str, str]] | None) -> str:
     return "\n".join(lines)
 
 
+def _try_parse_json(stdout: str) -> dict[str, Any] | None:
+    """失敗経路の stdout を読めるだけ読む。**読めなくても例外にしない**——
+    `diagnose` に None のまま渡せば「読めなかった」と分かる形で返る。"""
+    try:
+        data = json.loads(stdout)
+    except ValueError:
+        return None
+    return data if isinstance(data, dict) else None
+
+
 def _parse_claude_json(stdout: str) -> dict[str, Any]:
     """`--output-format json` の出力を読む。**返事が空・エラー・JSON でない**は
     `TalkError`（呼び出し側が「失敗」として扱う。声には出さない）。
@@ -780,9 +790,19 @@ def ask(
         except OSError as exc:
             raise TalkError(f"呼び出せませんでした: {exc}") from exc
         if proc.returncode != 0:
+            # T56: `--max-turns` に当たると stdout に terminal_reason=max_turns の
+            # JSON が出て stderr には何も出ない。stderr の最終行しか見ない造りだと
+            # 「終了コード 1」しか主人に届かない（夜勤で直した穴と同じ形）。
+            diag = runlog.diagnose(_try_parse_json(proc.stdout), code=proc.returncode, killed=False)
+            if diag.get("terminal_reason") == "max_turns":
+                raise TalkError(
+                    f"ターン上限（{diag.get('num_turns')}）に達しました。もう少し狭い聞き方を"
+                    "していただくか、執事の画面でお尋ねください"
+                )
             tail_lines = (proc.stderr or "").strip().splitlines()
             tail = tail_lines[-1] if tail_lines else f"終了コード {proc.returncode}"
-            raise TalkError(f"返事を作れませんでした: {tail}")
+            detail = f"（{diag['subtype']}）" if diag.get("subtype") else ""
+            raise TalkError(f"返事を作れませんでした: {tail}{detail}")
         data = _parse_claude_json(proc.stdout)
     except TalkError as exc:
         seconds = round(time.time() - started, 1)

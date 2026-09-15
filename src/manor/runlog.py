@@ -120,6 +120,41 @@ def from_claude_result(result: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def diagnose(parsed: dict[str, Any] | None, *, code: int, killed: bool) -> dict[str, Any]:
+    """`claude` の結果 JSON から「なぜ終わったか」を抜く（**推測で埋めない**）。
+
+    2026-09-10 の夜勤が exit=1 で落ちたとき、記録に残っていたのは「（理由不明）」だけだった。
+    `"result"` フィールドしか見ていない読み方だと、**失敗の JSON には `"result"` が無い**
+    ので取れない（実測: `--max-turns 1` で落とすと `{"is_error":true, ...,
+    "terminal_reason":"max_turns"}` が返り、`"result"` は無い）。
+
+    `terminal_reason` は CLI が明示的に入れてくる——`max_turns` などが直に読める。
+    **手がかりを1つに頼らない**ので、`subtype`・`is_error`・`num_turns` も一緒に持つ。
+
+    夜勤（`night/runner.py`）だけでなく、小窓の通話（`talk_session.py`）も同じ「claude
+    の結果 JSON から理由を抜く」関心を持つので、`from_claude_result` の隣に置く
+    （T56・2026-09-16。夜勤で直した穴が小窓にも同じ形で開いていた）。
+    """
+    out: dict[str, Any] = {"exit_code": code, "killed": killed}
+    if not isinstance(parsed, dict):
+        out["parsed"] = False
+        return out
+    out["parsed"] = True
+    for key in ("terminal_reason", "subtype", "is_error", "num_turns", "duration_api_ms", "total_cost_usd"):
+        if key in parsed:
+            out[key] = parsed[key]
+    usage = parsed.get("usage")
+    if isinstance(usage, dict):
+        out["usage"] = {
+            k: usage.get(k)
+            for k in ("input_tokens", "output_tokens", "cache_creation_input_tokens", "cache_read_input_tokens")
+        }
+    denials = parsed.get("permission_denials")
+    if isinstance(denials, list):
+        out["permission_denials"] = len(denials)
+    return out
+
+
 def list_runs(
     conn: sqlite3.Connection, *, kind: str | None = None, days: int | None = None
 ) -> list[dict[str, Any]]:
