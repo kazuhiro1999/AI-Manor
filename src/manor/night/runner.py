@@ -1015,6 +1015,10 @@ def _conduct(
     resumed_from: datetime | None = None
     sitting_no = 0
     status = "done"
+    # `--now` の偽装（試験用）と実時刻の差を保って、2席目以降も同じ基準で測る
+    # （T69・2026-09-15実測: ここが実時刻そのものだったため、偽装した夕方〜夜に
+    # 回すテストで「締切まで残り」が大きく負になり、2席目に進めなかった）。
+    now_offset = datetime.now() - first_at
 
     while True:
         settled = progress.settled(home, date)
@@ -1023,7 +1027,7 @@ def _conduct(
             log.write("INFO", "今夜の指示は全部片付きました")
             break
 
-        at = datetime.now() if sitting_no else first_at
+        at = (datetime.now() - now_offset) if sitting_no else first_at
         left = int((deadline_at - at).total_seconds() // 60)
         if left < min_minutes:
             log.write("INFO", f"締切まで残り {left} 分（下限 {min_minutes} 分）。今夜はここまでにします")

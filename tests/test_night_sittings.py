@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import sys
+from datetime import datetime
 from pathlib import Path
 
 import pytest
@@ -47,6 +48,29 @@ def _fake_claude(tmp_path: Path, name: str, script_body: str) -> str:
     script = tmp_path / f"{name}.py"
     script.write_text("import sys, os, pathlib, json\n" + script_body, encoding="utf-8")
     return f'"{sys.executable}" "{script}"'
+
+
+def _freeze_clock(monkeypatch: pytest.MonkeyPatch, fixed: datetime) -> None:
+    """`runner.datetime.now()` を固定する（T69・G1と同型: 時刻に依る試験は時計を固定する）。
+    ここで `fixed` を実際の実行時刻の代わりに使うことで、`--now` の偽装（開始時刻）と
+    実行時刻が大きく離れた「夕方〜夜に回した」状況を、実行時刻に関わらず再現する。"""
+
+    class _FixedDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):  # noqa: ANN001
+            return fixed if tz is None else fixed.astimezone(tz)
+
+    monkeypatch.setattr(runner, "datetime", _FixedDateTime)
+
+
+def _far_apart_now_and_frozen_clock() -> tuple[datetime, datetime]:
+    """開始（`--now`）と実行時刻（固定する `datetime.now()`）を20時間4分離して返す。
+    日付は実際の「今日」に合わせる——`progress.today()` 等が使う `util.today()` は
+    ここではモックしないので、食い違うと台帳のパスがずれる。"""
+    today = datetime.now().date()
+    first_at = datetime(today.year, today.month, today.day, 2, 0)
+    frozen_now = datetime(today.year, today.month, today.day, 22, 4)
+    return first_at, frozen_now
 
 
 # --- 指示書を数える（純粋関数） --------------------------------------------------------
@@ -93,14 +117,20 @@ def test_a_broken_ledger_does_not_stop_the_night(home_path: Path) -> None:
 
 
 def test_the_night_continues_after_a_sitting_runs_out_of_turns(
-    home_path: Path, tmp_path: Path
+    home_path: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """**これがこの作り直しの本題。**
 
     1席目はターン上限で切れる。2席目が残りを片付ける。それまでの造りでは
     1席目で晩が終わっていた。
+
+    実行時刻は「開始（`--now=02:00`）から20時間4分後」に固定する（T69: 2席目の
+    「締切まで残り」を実時刻そのものに任せていた造りでは、pytest を夕方〜夜に
+    回すと `left` が大きく負になり、2席目に進めなかった）。
     """
     _write_tasks(home_path)
+    first_at, frozen_now = _far_apart_now_and_frozen_clock()
+    _freeze_clock(monkeypatch, frozen_now)
     db_mod.init(home_path)
     counter = tmp_path / "count.txt"
     cmd = _fake_claude(
@@ -136,7 +166,7 @@ sys.exit(0)
 
     runner._run_sitting = spy  # type: ignore[assignment]
     try:
-        result = runner.run(home_path, now="02:00", exec_cmd=cmd, echo=False)
+        result = runner.run(home_path, now=first_at.isoformat(), exec_cmd=cmd, echo=False)
     finally:
         runner._run_sitting = original  # type: ignore[assignment]
 
@@ -147,14 +177,19 @@ sys.exit(0)
 
 
 def test_a_sitting_that_declares_nothing_twice_is_marked_stuck(
-    home_path: Path, tmp_path: Path
+    home_path: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """**空回りの歯止め。** 何も宣言しない席が2回続いたら、その指示は詰まりにして次へ。"""
+    """**空回りの歯止め。** 何も宣言しない席が2回続いたら、その指示は詰まりにして次へ。
+
+    実行時刻を開始（`--now`）から20時間4分後に固定する（T69。上のテストと同じ理由）。
+    """
     _write_tasks(home_path, "| N1 | 進まない仕事 | 10分 |\n")
+    first_at, frozen_now = _far_apart_now_and_frozen_clock()
+    _freeze_clock(monkeypatch, frozen_now)
     db_mod.init(home_path)
     cmd = _fake_claude(tmp_path, "barren", f'sys.stdout.write({DONE_JSON!r})\nsys.exit(0)\n')
 
-    result = runner.run(home_path, now="02:00", exec_cmd=cmd, echo=False)
+    result = runner.run(home_path, now=first_at.isoformat(), exec_cmd=cmd, echo=False)
 
     assert result["progress"]["stuck"] == ["N1"]
     assert result["sittings"] == 2, "3席目を設けてはいけない"
