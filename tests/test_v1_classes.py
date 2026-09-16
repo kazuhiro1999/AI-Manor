@@ -81,6 +81,27 @@ def test_v1_class_2_doing_with_no_activity_for_days(conn):
     assert tid in stale_ids
 
 
+def test_c2_skips_masters_own_doing_but_projection_still_shows_it(conn):
+    """C2 は執事が動かすものだけ。主人ご自身の進行中（owner=master）は夜勤が触れないので
+    鳴らさず、起動時の射影（`render.active_data` の `stale_doing`）が主人に知らせる
+    （T66・D19。主人 2026-09-16「N1 はなぜ保留？」）。
+    """
+    from manor import render as render_mod
+
+    mine = task_mod.add(conn, "執事の作業")
+    task_mod.status(conn, mine, "doing")
+    masters = task_mod.add(conn, "主人の研究", owner="master")
+    task_mod.status(conn, masters, "doing", owner="master")
+    old_at = (datetime.now() - timedelta(days=4)).isoformat(timespec="seconds")
+    conn.execute("UPDATE task_event SET at = ? WHERE task_id IN (?, ?)", (old_at, mine, masters))
+
+    stale_ids = [r["id"] for r in check_mod.check_c2(conn)]
+    assert mine in stale_ids
+    assert masters not in stale_ids
+    projected = [r["id"] for r in render_mod.active_data(conn)["stale_doing"]]
+    assert masters in projected  # 主人向けの知らせは残る
+
+
 def test_v1_class_3_id_scoped_update_no_collateral_damage(conn):
     """③「sed の過剰一致で隣の行が壊れる」。v1: B28 の状態が sed の過剰一致で壊れた。
 

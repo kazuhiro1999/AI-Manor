@@ -306,7 +306,7 @@ hooks は **DB を書き換えない。読むだけ**。
 | ID | 何を見るか | 由来（v1 の不整合8類型との対応） |
 |---|---|---|
 | C1 | `v_blocked_ready`（ブロッカーが片付いたのに待っている） | ①依存が行になった |
-| C2 | `v_stale_doing`（3日動いていない doing） | ②updated_at がある |
+| C2 | `v_stale_doing`（3日動いていない doing）。**執事が動かすもの（owner≠master）のみ**——主人ご自身の進行中は起動時の射影が知らせる（2026-09-16・T66/D19） | ②updated_at がある |
 | C3 | `waiting` で status_note が空 | 語彙の運用 |
 | C4 | `section='A'` で recommendation が空、または decided_by の decision が無い | A の作法 |
 | C5 | `HG` で done なのに approved/modified の decision が無い（**入らないはず**。入っていたら DB を直接触った証拠） | 人間の門 |

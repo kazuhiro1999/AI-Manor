@@ -12,7 +12,7 @@ from . import voice
 
 CHECK_LABELS: dict[str, str] = {
     "C1": "ブロッカーが片付いたのに waiting/hold のまま（v_blocked_ready）",
-    "C2": "3日動いていない doing（v_stale_doing）",
+    "C2": "3日動いていない doing（v_stale_doing。執事が動かすもののみ——主人ご自身の進行中は起動時の射影へ）",
     "C3": "waiting なのに status_note が空",
     "C4": "section=A なのに recommendation が空、または decided_by の decision が無い",
     "C5": "level=HG で done なのに done への遷移の authorized_by が approved/modified の decision を指していない",
@@ -27,6 +27,7 @@ CHECK_LABELS: dict[str, str] = {
     "C14": "task.user_id / project.user_id が user 表に無い・畳んだ利用者を指している",
     "C15": "role='principal' がちょうど1件、role='butler' がちょうど1件（畳んでいないもの）",
     "C16": "外部視点の台帳の取り込みが「頻度」行の周期を超えて空いている（v1 の O1。T30）",
+    "C17": "decision が approved/modified なのに decided_by 先の task が todo のまま（T46）",
 }
 
 #: 警告のみの check（C10・C11・C13・C16）。存在しても `manor check` の終了コードは変えない
@@ -43,7 +44,19 @@ def check_c1(conn: sqlite3.Connection) -> list[dict[str, object]]:
 
 
 def check_c2(conn: sqlite3.Connection) -> list[dict[str, object]]:
-    return _rows(conn, "SELECT id, last_at FROM v_stale_doing ORDER BY id")
+    """3日動いていない doing のうち、**執事が動かすもの（owner≠master）だけ**を鳴らす。
+
+    主人ご自身の進行中（owner=master）は夜勤が触れないので、ここで鳴らしても
+    「保留」を重ねるだけだった（B145 で 9/10〜9/16 の5晩。主人 2026-09-16「N1 はなぜ保留？」）。
+    主人向けの知らせは起動時の射影の「3日以上動きの無い進行中」欄（`render.active_data` の
+    `stale_doing`。ビューはそのまま）が担う——二重に鳴らさない（C10・外部視点 E28 と同型:
+    対応できない側に鳴らす警告は狼少年）。T66・D19。
+    """
+    return _rows(
+        conn,
+        "SELECT v.id, v.last_at FROM v_stale_doing v JOIN task t ON t.id = v.id"
+        " WHERE t.owner != 'master' ORDER BY v.id",
+    )
 
 
 def check_c3(conn: sqlite3.Connection) -> list[dict[str, object]]:
@@ -320,6 +333,24 @@ def check_c16(*, today: str | None = None, ledger_path: Path | None = None) -> l
     return [{"frequency": freq_match.group(1), "last_round": last_round.isoformat(), "elapsed_days": elapsed}]
 
 
+def check_c17(conn: sqlite3.Connection) -> list[dict[str, object]]:
+    """主人の裁定（approved/modified）が下りたのに、`decided_by` 先の task が
+    `todo` のまま——着手すらされていない（T46。外部視点E31・採用）。
+
+    C1（`v_blocked_ready`）は waiting/hold が対象で、todo は見ない。ここが見るのは
+    「裁定は下りたが、まだ拾われていない」——2026-09-11 実測で D11・D12・D16 に紐づく
+    T36・T39・T15 が2日 todo のまま放置され、誰も気づかなかった。
+    """
+    return _rows(
+        conn,
+        "SELECT DISTINCT t.id FROM task t"
+        " JOIN edge e ON e.src = t.id AND e.rel = 'decided_by'"
+        " JOIN decision d ON d.id = e.dst"
+        " WHERE d.status IN ('approved', 'modified') AND t.status = 'todo'"
+        " ORDER BY t.id",
+    )
+
+
 def run(conn: sqlite3.Connection, home: Path) -> dict[str, list[object]]:
     return {
         "C1": check_c1(conn),
@@ -338,6 +369,7 @@ def run(conn: sqlite3.Connection, home: Path) -> dict[str, list[object]]:
         "C14": check_c14(conn),
         "C15": check_c15(conn),
         "C16": check_c16(),
+        "C17": check_c17(conn),
     }
 
 
