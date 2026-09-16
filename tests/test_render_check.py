@@ -75,3 +75,25 @@ def test_check_c7_silent_before_first_render(conn, home: Path):
     # まだ render していない DB を検査しても誤検出にしない
     results = check_mod.run(conn, home)
     assert results["C7"] == []
+
+
+def test_active_text_shows_idea_waiting_in_section_a(conn, home: Path):
+    """N10: 意見箱（source=idea）の waiting が、A. 主人待ちへ確認待ちとして出る。"""
+    tid = task_mod.add(conn, "タスク一覧の状態をドロップダウンで選べるように", source="idea")
+    task_mod.status(conn, tid, "waiting", note="タスク一覧の各行に状態のドロップダウンが付きました")
+    text = render_mod.active_text(conn)
+    assert f"意見箱のご確認待ち: {tid}" in text
+    assert "タスク一覧の各行に状態のドロップダウンが付きました" in text
+
+
+def test_active_text_no_idea_waiting_line_when_absent(conn, home: Path):
+    text = render_mod.active_text(conn)
+    assert "意見箱のご確認待ち" not in text
+
+
+def test_active_text_ignores_non_idea_waiting(conn, home: Path):
+    """source=idea でない waiting は意見箱の行として出さない。"""
+    tid = task_mod.add(conn, "普通のタスク")
+    task_mod.status(conn, tid, "waiting", note="何かを待っている")
+    text = render_mod.active_text(conn)
+    assert "意見箱のご確認待ち" not in text

@@ -257,6 +257,24 @@ def test_mechanical_brief_works_with_claude_absent(
     assert "【ご判断ください】" in result["text"]
 
 
+def test_mechanical_brief_shows_idea_waiting(
+    home: Path, conn, monkeypatch: pytest.MonkeyPatch, leak_terms
+):
+    """N10: 意見箱（source=idea）の waiting が朝の Slack ブリーフにも載る。"""
+    leak_terms([])
+    monkeypatch.setattr(slack_mod.subprocess, "run", lambda *a, **k: (_ for _ in ()).throw(AssertionError))
+    monkeypatch.setattr(slack_mod.shutil, "which", lambda name: None)
+
+    tid = task_mod.add(conn, "タスク一覧の状態をドロップダウンで選べるように", source="idea")
+    task_mod.status(conn, tid, "waiting", note="タスク一覧の各行に状態のドロップダウンが付きました")
+    conn.commit()
+
+    result = slack_mod.brief(home, generate=False, dry_run=True)
+
+    assert f"意見箱のご確認待ち: {tid}" in result["text"]
+    assert "タスク一覧の各行に状態のドロップダウンが付きました" in result["text"]
+
+
 def test_generate_falls_back_to_mechanical_when_claude_missing(
     home: Path, conn, monkeypatch: pytest.MonkeyPatch, leak_terms
 ):

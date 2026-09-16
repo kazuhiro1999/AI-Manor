@@ -125,6 +125,28 @@ def active_data(conn: sqlite3.Connection, *, user_id: str | None = None) -> dict
             conn, "SELECT id, last_at FROM v_stale_doing ORDER BY CAST(substr(id, 2) AS INTEGER)"
         )
     milestones = graph.milestone_list(conn, upcoming_days=7, include_done=False, user_id=user_id)
+    # T46: 主人の裁定（approved/modified）が下りたのに、decided_by 先の task が todo の
+    # まま着手されていない。`check.py` の C17 と同じ条件（2026-09-11実測: D11・D12・D16に
+    # 紐づく T36・T39・T15 が2日 todo のまま放置され、誰も気づかなかった）。
+    decided_pending = _rows(
+        conn,
+        "SELECT DISTINCT t.id, n.title AS title, e.dst AS decision_id"
+        " FROM task t JOIN node n ON n.id = t.id"
+        " JOIN edge e ON e.src = t.id AND e.rel = 'decided_by'"
+        " JOIN decision d ON d.id = e.dst"
+        " WHERE d.status IN ('approved', 'modified') AND t.status = 'todo'"
+        f"{user_filter}"
+        " ORDER BY CAST(substr(t.id, 2) AS INTEGER)",
+        user_params,
+    )
+    idea_waiting = _rows(
+        conn,
+        "SELECT t.*, n.title AS title FROM task t JOIN node n ON n.id = t.id"
+        " WHERE t.source = 'idea' AND t.status = 'waiting'"
+        f"{user_filter}"
+        " ORDER BY CAST(substr(t.id, 2) AS INTEGER)",
+        user_params,
+    )
     return {
         "open_decisions": open_decisions,
         "section_a": section_a,
@@ -134,6 +156,8 @@ def active_data(conn: sqlite3.Connection, *, user_id: str | None = None) -> dict
         "blocked_ready": blocked_ready,
         "stale_doing": stale_doing,
         "milestones": milestones,
+        "idea_waiting": idea_waiting,
+        "decided_pending": decided_pending,
     }
 
 
@@ -141,6 +165,12 @@ def format_active(data: dict[str, object], *, width: int = 88, night_pause: dict
     out: list[str] = []
     if night_pause:
         out.append(f"夜勤: 停止中（〜{night_pause.get('until')}・{night_pause.get('reason')}）")
+        out.append("")
+    decided_pending = list(data.get("decided_pending", []))  # type: ignore[arg-type]
+    if decided_pending:
+        out.append(f"⚠ 主人の裁定（未着手）: {len(decided_pending)}件")
+        for t in decided_pending:
+            out.append(f"  {t['id']}（裁定 {t['decision_id']}）{_clip(t['title'], width)}")
         out.append("")
     open_decisions = list(data["open_decisions"])  # type: ignore[arg-type]
     section_a = list(data["section_a"])  # type: ignore[arg-type]
@@ -150,8 +180,10 @@ def format_active(data: dict[str, object], *, width: int = 88, night_pause: dict
     blocked_ready = list(data["blocked_ready"])  # type: ignore[arg-type]
     stale_doing = list(data["stale_doing"])  # type: ignore[arg-type]
     milestones = list(data["milestones"])  # type: ignore[arg-type]
+    idea_waiting = list(data.get("idea_waiting", []))  # type: ignore[arg-type]
 
-    out.append(f"■ A. 主人待ち: {len(section_a)}件（判断待ち {len(open_decisions)}件）")
+    idea_tally = f"／意見箱 {len(idea_waiting)}件" if idea_waiting else ""
+    out.append(f"■ A. 主人待ち: {len(section_a)}件（判断待ち {len(open_decisions)}件{idea_tally}）")
     for d in open_decisions:
         out.append(f"  {d['id']}（{d['days']}日）{_clip(d['title'], width)}")
     for t in section_a:
@@ -159,7 +191,9 @@ def format_active(data: dict[str, object], *, width: int = 88, night_pause: dict
         rec = _clip(t["recommendation"], width - 8)
         if rec:
             out.append(f"      推奨: {rec}（risk {t['risk'] or '—'}）")
-    if not open_decisions and not section_a:
+    for t in idea_waiting:
+        out.append(f"  意見箱のご確認待ち: {t['id']} {_clip(t['status_note'], 40)}")
+    if not open_decisions and not section_a and not idea_waiting:
         out.append("  （なし）")
 
     by_status: dict[str, list[dict[str, object]]] = {}

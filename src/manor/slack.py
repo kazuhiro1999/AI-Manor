@@ -433,6 +433,8 @@ def format_mechanical_brief(data: dict[str, object]) -> str:
     """
     open_decisions = list(data["open_decisions"])  # type: ignore[arg-type]
     section_a = list(data["section_a"])  # type: ignore[arg-type]
+    decided_pending = list(data.get("decided_pending") or [])  # type: ignore[arg-type]
+    idea_waiting = list(data.get("idea_waiting") or [])  # type: ignore[arg-type]
     section_b = list(data.get("section_b") or [])  # type: ignore[arg-type]
     milestones = list(data["milestones"])  # type: ignore[arg-type]
     today_events = list(data.get("today_events") or [])  # type: ignore[arg-type]
@@ -443,6 +445,14 @@ def format_mechanical_brief(data: dict[str, object]) -> str:
     today = util.today()
 
     lines: list[str] = [f"{today} の状況です。"]
+
+    # T46: 主人の裁定（approved/modified）が下りたのに、執事がまだ着手していない
+    # タスク——主人には「もう答えたのに動いていない」と気づける場所に出す。
+    if decided_pending:
+        lines.append("")
+        lines.append(f"【裁定済み・未着手】{len(decided_pending)}件")
+        for t in decided_pending:
+            lines.append(f"- {t['id']}（裁定 {t['decision_id']}）{_clip(t['title'], 60)}")
 
     lines.append("")
     lines.append("【本日の予定】")
@@ -481,8 +491,9 @@ def format_mechanical_brief(data: dict[str, object]) -> str:
             lines.append(f"- {(when + ' ') if when else ''}{_clip(r.get('text'), 50)}")
 
     lines.append("")
-    lines.append(f"【ご判断ください】判断 {len(open_decisions)}件 / タスク {len(section_a)}件")
-    if not open_decisions and not section_a:
+    idea_tail = f" / 意見箱 {len(idea_waiting)}件" if idea_waiting else ""
+    lines.append(f"【ご判断ください】判断 {len(open_decisions)}件 / タスク {len(section_a)}件{idea_tail}")
+    if not open_decisions and not section_a and not idea_waiting:
         lines.append("- ありません")
     for d in open_decisions:
         lines.append(f"- {d['id']}（{d['days']}日）{_clip(d['title'], 70)}")
@@ -490,6 +501,8 @@ def format_mechanical_brief(data: dict[str, object]) -> str:
         rec = _clip(t.get("recommendation") or "", 40)
         tail = f"（推奨: {rec}）" if rec else ""
         lines.append(f"- {t['id']} {_clip(t['title'], 60)}{tail}")
+    for t in idea_waiting:
+        lines.append(f"- 意見箱のご確認待ち: {t['id']} {_clip(t.get('status_note') or '', 40)}")
 
     # 【期限】——直近7日の milestone と、期日の付いた未完了タスク。
     today_milestones = [m for m in milestones if str(m["date"]) == today]
@@ -507,7 +520,7 @@ def format_mechanical_brief(data: dict[str, object]) -> str:
             head = f"{mark} {tid} " if tid else f"{mark} "
             lines.append(f"- {head}{_clip(title, 50)}")
 
-    if not today_events and not today_milestones and not open_decisions and not section_a:
+    if not today_events and not today_milestones and not open_decisions and not section_a and not idea_waiting:
         lines.append("")
         lines.append("本日ご対応いただくものはありません。")
     return "\n".join(lines)
