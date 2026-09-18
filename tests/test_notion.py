@@ -193,6 +193,16 @@ def test_generate_falls_back_to_mechanical_when_claude_missing(
     assert "claude が見つからない" in result["generate_note"]
 
 
+def test_generate_argv_uses_an_empty_allow_list_not_a_deny_list() -> None:
+    """B174: slack.py と同じく、生成の段は allow-list を空にする（deny-list は
+    「一覧に無い道具が増えたとき」に素通りする。B139）。"""
+    argv = notion_mod._claude_generate_argv(model="sonnet", claude_bin="claude")
+
+    assert "--disallowed-tools" not in argv
+    i = argv.index("--allowed-tools")
+    assert argv[i + 1] == ""
+
+
 # --- 本文の組み立て（機械組み。task_event / decision / milestone / 夜勤） ----------------------
 
 

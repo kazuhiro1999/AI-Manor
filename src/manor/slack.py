@@ -89,19 +89,10 @@ GENERATE_MAX_TURNS = 4
 GENERATE_TIMEOUT_SECONDS = 180.0
 
 #: 生成ステップに道具を持たせない（本文を書くだけの仕事に副作用を持ち込まない）。
-#: v1 `watch-inbox.ps1` の `--disallowed-tools WebFetch WebSearch` を踏襲しつつ、
-#: ここでは判断（本文執筆）と送受信（このファイルの他の関数）をさらに厳密に分けるため
-#: ファイル操作・実行系もまとめて塞ぐ。
-GENERATE_DISALLOWED_TOOLS: tuple[str, ...] = (
-    "Bash",
-    "Read",
-    "Write",
-    "Edit",
-    "Glob",
-    "Grep",
-    "WebFetch",
-    "WebSearch",
-)
+#: B174・2026-09-19: **allow-list へ寄せた**（deny-list は「一覧に無い道具が増えたとき」に
+#: 素通りする。B139「列挙は完全性に全依存する」）。空の `--allowed-tools ""` で
+#: `claude -p` が正常に動くことを実測済み（`permission_denials: []`）——生成の段は
+#: 散文を書くだけで道具が1つも要らない。
 
 #: 禁止語彙リストの既定の置き場（`.githooks/pre-commit` と同じ。リポジトリの外）。
 LEAK_TERMS_ENV = "MANOR_LEAK_TERMS"
@@ -631,8 +622,8 @@ def _claude_generate_argv(*, model: str, claude_bin: str | None) -> list[str]:
         str(GENERATE_MAX_TURNS),
         "--model",
         model,
-        "--disallowed-tools",
-        *GENERATE_DISALLOWED_TOOLS,
+        "--allowed-tools",
+        "",
     ]
 
 

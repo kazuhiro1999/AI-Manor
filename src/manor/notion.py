@@ -104,17 +104,8 @@ GENERATE_MODEL = "sonnet"
 GENERATE_MAX_TURNS = 4
 GENERATE_TIMEOUT_SECONDS = 180.0
 
-#: 生成ステップに道具を持たせない（slack.py の GENERATE_DISALLOWED_TOOLS と同じ理由）。
-GENERATE_DISALLOWED_TOOLS: tuple[str, ...] = (
-    "Bash",
-    "Read",
-    "Write",
-    "Edit",
-    "Glob",
-    "Grep",
-    "WebFetch",
-    "WebSearch",
-)
+#: 生成ステップに道具を持たせない（B174・2026-09-19: slack.py と同じく allow-list へ
+#: 寄せた。空の `--allowed-tools ""` で `claude -p` が正常に動くことを実測済み）。
 
 #: 投函するページの既定タグ（D18「プロパティ名は v1 と同じ」）。v1 の `post-diary.ps1`
 #: は実装上タグを送っていなかった（コネクションの Update content 権限を切っていたため、
@@ -568,8 +559,8 @@ def _claude_generate_argv(*, model: str, claude_bin: str | None) -> list[str]:
         str(GENERATE_MAX_TURNS),
         "--model",
         model,
-        "--disallowed-tools",
-        *GENERATE_DISALLOWED_TOOLS,
+        "--allowed-tools",
+        "",
     ]
 
 

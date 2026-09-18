@@ -292,6 +292,16 @@ def test_generate_falls_back_to_mechanical_when_claude_missing(
     assert "claude が見つからない" in result["generate_note"]
 
 
+def test_generate_argv_uses_an_empty_allow_list_not_a_deny_list() -> None:
+    """B174: 生成の段は道具を1つも要らないので、**allow-list を空にする**
+    （deny-list は「一覧に無い道具が増えたとき」に素通りする。B139）。"""
+    argv = slack_mod._claude_generate_argv(model="sonnet", claude_bin="claude")
+
+    assert "--disallowed-tools" not in argv
+    i = argv.index("--allowed-tools")
+    assert argv[i + 1] == ""
+
+
 # --- 受信: 1メッセージ=1decision の対応づけ・id優先・modified（D11 書き直し版） ------------------
 
 
