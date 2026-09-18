@@ -702,6 +702,7 @@ def run(
     echo: bool = True,
     sleep_back_after: bool = False,
     diary_after: bool = False,
+    check_gate_after: bool = False,
 ) -> dict[str, Any]:
     """`manor night run` の入口。D10: まず戻し、それから消音する。**声の失敗（VOICEVOX 未設定
     含む）で夜勤自体は止めない**——本体（`_run_impl`）は変えず、その前後を薄く包むだけ。
@@ -744,6 +745,7 @@ def run(
             no_resume=no_resume,
             lock_max_min=lock_max_min,
             echo=echo,
+            check_gate_after=check_gate_after,
         )
         # **日誌は夜勤の一部にする**（2026-09-08・主人のご要望「日誌を書くのは朝ではなく
         # 夜間タスクの1つにできませんか。トークン消費の面でも朝より夜中のほうがいい」）。
@@ -1106,6 +1108,7 @@ def _run_impl(
     no_resume: bool = False,
     lock_max_min: int = DEFAULT_LOCK_MAX_MIN,
     echo: bool = True,
+    check_gate_after: bool = False,
 ) -> dict[str, Any]:
     home = Path(home)
     repo_root = Path(repo_root) if repo_root else util.repo_root()
@@ -1188,8 +1191,49 @@ def _run_impl(
         return result
     finally:
         result["ended_at"] = datetime.now().isoformat()
+        if check_gate_after:
+            result["gate"] = check_gate(repo_root, log=log)
         release_lock(home)
         _write_last_run(home, result, dry_run=dry_run)
+
+
+#: `git status --porcelain` の行のうち、これで始まるパスだけを「コードの変更」と数える
+#: （`home/` や `docs/` の変更は歯止めの対象外——歯止めが守るのは①層のテスト・コミット）。
+_GATE_CODE_PREFIXES = ("src/", "tests/")
+
+
+def check_gate(repo_root: Path, *, log: NightLog | None = None) -> dict[str, Any]:
+    """夜勤の終わりに、歯止め（`tasks.md`「テストを通してから終わる」「1タスク1コミット」）が
+    守られたかを機械的に見る（T40・2026-09-19）。**Claude 自身の自己申告に頼らない安全網**。
+
+    ⚠ 重いので、`src/`・`tests/` に未コミットの変更が残っている晩だけ pytest を走らせる
+    （変更が無ければ、待つ理由が無い）。
+    """
+    gate: dict[str, Any] = {"uncommitted": [], "tests": None}
+    try:
+        status = subprocess.run(
+            ["git", "status", "--porcelain"],
+            cwd=repo_root, capture_output=True, text=True, timeout=30, check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        gate["error"] = f"git status に失敗: {exc}"
+        return gate
+    dirty = [line for line in status.stdout.splitlines() if line.strip()]
+    gate["uncommitted"] = dirty
+    code_touched = any(line[3:].strip().startswith(_GATE_CODE_PREFIXES) for line in dirty)
+    if not code_touched:
+        return gate
+    if log is not None:
+        log.write("INFO", "src/・tests/ に未コミットの変更が残っています。pytest で確かめます")
+    try:
+        proc = subprocess.run(
+            ["uv", "run", "pytest", "-q"],
+            cwd=repo_root, capture_output=True, text=True, timeout=1800, check=False,
+        )
+        gate["tests"] = {"exit_code": proc.returncode, "tail": (proc.stdout or "")[-2000:]}
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        gate["tests"] = {"exit_code": None, "error": str(exc)}
+    return gate
 
 
 # --- 眠りへ戻す（v1 `apps/night-shift/sleep-back.ps1` の移植。T6） ---------------
@@ -1732,6 +1776,19 @@ def health(home: Path, *, within_hours: float = 24.0) -> dict[str, Any]:
     if state == "done" and started[:10]:
         if not (reports_dir(home) / f"{started[:10]}.md").is_file():
             reasons.append(f"完了と記録されていますが、{started[:10]} の作業報告がありません")
+
+    # **歯止め（試験・コミット）が守られたか**（T40・2026-09-19）。`check_gate()` が
+    # 晩の終わりに書いた記録を読むだけ——ここでは何も実行しない（毎朝の点検は軽くあるべき）。
+    gate = info.get("gate")
+    if isinstance(gate, dict):
+        uncommitted = gate.get("uncommitted") or []
+        if uncommitted:
+            reasons.append(
+                f"夜勤が未コミットの変更を残したまま終わっています（{len(uncommitted)}件）"
+            )
+        tests = gate.get("tests")
+        if isinstance(tests, dict) and tests.get("exit_code") not in (None, 0):
+            reasons.append("夜勤の終わりに試験が赤でした")
 
     return {"ok": not reasons, "reasons": reasons, "last_run": info}
 

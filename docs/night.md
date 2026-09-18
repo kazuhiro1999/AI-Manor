@@ -101,13 +101,22 @@ uv run python -m manor.night report [DATE]
    `Bash(manor:*)` `Bash(uv run pytest:*)` `Edit` `Write`）＋ `--strict-mcp-config`
    （MCP を1本も載せない。v1 B174 の裁定を踏襲）。**外部送信の道具は道具立てに無い**
    （mcp__* / WebFetch / WebSearch / SendMessage のいずれも allowed-tools に無い）
+8. **歯止め（試験・コミット）の機械的な確認**（`check_gate()`。T40・2026-09-19）:
+   晩の終わりに `git status --porcelain` を見て、`src/`・`tests/` に未コミットの変更が
+   残っていれば `pytest -q` を走らせ、結果を `last-run.json` の `gate` へ書く。
+   **Claude 自身の「テストを通してから終わる」という自己申告に頼らない安全網**——
+   `manor night review` / `manor slack morning` が読む `health()` が、`gate.uncommitted`
+   や `gate.tests.exit_code` を見て朝に鳴らす。⚠ 変更が無い晩は pytest を走らせない
+   （毎晩7分待つ理由が無い）。⚠ `run()` の既定は `check_gate_after=False`——`repo_root`
+   の既定は本物の開発リポジトリなので、既定で有効だと `runner.run()` を呼ぶだけの試験が
+   本物の pytest を子として起動してしまう。CLI（`_cmd_run`）だけが明示的に `True` を渡す
 
 ## `run()` — CLI が使う関数
 
 ```python
 runner.run(home, *, repo_root=None, deadline="06:30", min_minutes=20, grace_minutes=15,
            dry_run=False, exec_cmd=None, now=None, model="sonnet", max_turns=80,
-           no_resume=False, lock_max_min=180, echo=True) -> dict
+           no_resume=False, lock_max_min=180, echo=True, check_gate_after=False) -> dict
 ```
 
 `status` は `dry_run`（渡す指示の表示のみ）／`empty`（`tasks.md` に指示行が0本）／

@@ -153,6 +153,47 @@ def test_health_notices_done_without_a_report(home_path: Path) -> None:
     assert "作業報告がありません" in reasons
 
 
+def test_health_notices_uncommitted_changes_left_by_the_gate(home_path: Path) -> None:
+    """歯止め「1タスク1コミット」が破られたまま朝を迎えたら鳴る（T40）。"""
+    assert cli.main(["init"]) == 0
+    today = datetime.now().date().isoformat()
+    _write_last_run(
+        home_path, started_at=f"{today}T02:00:00",
+        gate={"uncommitted": ["M src/manor/night/runner.py"], "tests": None},
+    )
+    _write_report(home_path, today)
+
+    reasons = " / ".join(runner.health(home_path)["reasons"])
+    assert "未コミット" in reasons
+
+
+def test_health_notices_a_red_test_run_from_the_gate(home_path: Path) -> None:
+    """歯止め「テストを通してから終わる」が破られたまま朝を迎えたら鳴る（T40）。"""
+    assert cli.main(["init"]) == 0
+    today = datetime.now().date().isoformat()
+    _write_last_run(
+        home_path, started_at=f"{today}T02:00:00",
+        gate={"uncommitted": ["M src/x.py"], "tests": {"exit_code": 1, "tail": "1 failed"}},
+    )
+    _write_report(home_path, today)
+
+    reasons = " / ".join(runner.health(home_path)["reasons"])
+    assert "試験が赤" in reasons
+
+
+def test_health_stays_quiet_when_the_gate_is_clean(home_path: Path) -> None:
+    """歯止めが守られていれば、gate があっても鳴らない。"""
+    assert cli.main(["init"]) == 0
+    today = datetime.now().date().isoformat()
+    _write_last_run(
+        home_path, started_at=f"{today}T02:00:00",
+        gate={"uncommitted": [], "tests": None},
+    )
+    _write_report(home_path, today)
+
+    assert runner.health(home_path)["ok"] is True
+
+
 def test_brief_carries_the_night_health(home_path: Path) -> None:
     """朝の便に異常が1行出ること。**報告の中身より先に**置く。"""
     assert cli.main(["init"]) == 0

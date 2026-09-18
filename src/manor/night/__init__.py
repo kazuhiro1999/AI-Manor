@@ -90,6 +90,7 @@ def _cmd_run(args: "argparse.Namespace") -> int:
         echo=not args.json,
         sleep_back_after=bool(getattr(args, "sleep_back", False)),
         diary_after=bool(getattr(args, "diary", False)),
+        check_gate_after=True,
     )
     if args.json:
         print(json.dumps(result, ensure_ascii=False, indent=2))

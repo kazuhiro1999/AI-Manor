@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 import sys
 import time
 from datetime import datetime, timedelta
@@ -420,6 +421,91 @@ def test_run_writes_log_and_last_run_json(home_path: Path):
     last_run = json.loads(runner.last_run_path(home_path).read_text(encoding="utf-8"))
     assert last_run["status"] == "done"
     assert "started_at" in last_run and "ended_at" in last_run
+
+
+# --- 歯止め（試験・コミット）を機構で確かめる（T40） --------------------------------
+
+
+def _init_git_repo(path: Path) -> None:
+    subprocess.run(["git", "init", "-q"], cwd=path, capture_output=True, check=True)
+    subprocess.run(["git", "config", "user.email", "test@test"], cwd=path, capture_output=True, check=True)
+    subprocess.run(["git", "config", "user.name", "test"], cwd=path, capture_output=True, check=True)
+    # `home_path` fixture が `tmp_path/home` を作るので、実物のリポジトリと同じく無視する
+    # （さもないと `home/manor.db` 等が untracked として拾われ、試験が実態と合わなくなる）。
+    (path / ".gitignore").write_text("home/\n", encoding="utf-8")
+    (path / "README.md").write_text("x", encoding="utf-8")
+    subprocess.run(["git", "add", "."], cwd=path, capture_output=True, check=True)
+    subprocess.run(["git", "commit", "-q", "-m", "init"], cwd=path, capture_output=True, check=True)
+
+
+def test_check_gate_is_quiet_when_nothing_changed(tmp_path: Path) -> None:
+    _init_git_repo(tmp_path)
+
+    gate = runner.check_gate(tmp_path)
+
+    assert gate["uncommitted"] == []
+    assert gate["tests"] is None
+
+
+def test_check_gate_skips_tests_when_only_non_code_files_changed(tmp_path: Path) -> None:
+    """`docs/` だけの変更では pytest を走らせない（重いので、対象外の変更で待たせない）。"""
+    _init_git_repo(tmp_path)
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "docs" / "note.md").write_text("y", encoding="utf-8")
+
+    gate = runner.check_gate(tmp_path)
+
+    assert gate["uncommitted"]
+    assert gate["tests"] is None
+
+
+def test_check_gate_runs_tests_when_src_changed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _init_git_repo(tmp_path)
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "x.py").write_text("1", encoding="utf-8")
+    captured: dict = {}
+    real_run = subprocess.run
+
+    def fake_run(argv, **kwargs):
+        if argv[0] == "uv":
+            captured["argv"] = argv
+            return subprocess.CompletedProcess(argv, 1, stdout="FAILED tests\n", stderr="")
+        return real_run(argv, **kwargs)
+
+    monkeypatch.setattr(runner.subprocess, "run", fake_run)
+
+    gate = runner.check_gate(tmp_path)
+
+    assert gate["uncommitted"]
+    assert captured["argv"][:2] == ["uv", "run"]
+    assert gate["tests"]["exit_code"] == 1
+    assert "FAILED" in gate["tests"]["tail"]
+
+
+def test_run_includes_gate_only_when_asked(home_path: Path, tmp_path: Path) -> None:
+    """既定（`check_gate_after=False`）では走らない——**テストの安全側**。
+    `runner.run()` の `repo_root` は既定で本物の開発リポジトリを指すので、これが既定で
+    有効だと、この関数を呼ぶだけの試験（本ファイルの大半）が本物の pytest を子として
+    起動してしまう（自己言及ループの手前）。CLI 側（`night/__init__.py`）だけが明示的に
+    `True` を渡す。"""
+    _write_tasks(home_path)
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    _init_git_repo(repo_root)
+    exec_cmd = _marker_command(tmp_path / "launched.txt", exit_code=0, result_text="done")
+
+    quiet = runner.run(
+        home_path, repo_root=repo_root, now="06:00", deadline="06:30", min_minutes=20,
+        exec_cmd=exec_cmd, echo=False,
+    )
+    assert "gate" not in quiet
+
+    asked = runner.run(
+        home_path, repo_root=repo_root, now="06:00", deadline="06:30", min_minutes=20,
+        exec_cmd=exec_cmd, echo=False, check_gate_after=True,
+    )
+    assert asked["gate"]["uncommitted"] == []
+    assert asked["gate"]["tests"] is None
 
 
 # --- run 表への記録（ADR-006 D10） ---------------------------------------------------
