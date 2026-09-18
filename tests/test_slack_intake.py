@@ -131,6 +131,9 @@ def _setup(
         slack_mod, "_extract_when",
         lambda body: {"ok": False, "code": "no_date", "reason": "日付として読めません"},
     )
+    # T59①: 既定では黙らせる。**時刻に依存させない**——モックしないと、07:30 以降に
+    # このテストを走らせただけで本物の `morning()`（Slack送信）が呼ばれてしまう。
+    monkeypatch.setattr(slack_mod, "_catch_up_missed_briefing", lambda conn, home, **kw: None)
     return posted
 
 
@@ -1045,6 +1048,99 @@ def test_an_unbreakable_body_is_filed_verbatim(
     assert conn.execute(
         "SELECT body FROM node WHERE title = '読めない依頼'"
     ).fetchone()["body"] == "読めない依頼"
+
+
+# --- T59①: 取り逃した朝のブリーフィングを、5分ごとの便が拾う ------------------------
+
+
+def _insert_brief_sent(conn, *, sent_at: str) -> None:
+    conn.execute(
+        "INSERT INTO slack_message (decision_id, channel, ts, sent_at) VALUES (NULL, 'C1', '1.1', ?)",
+        (sent_at,),
+    )
+    conn.commit()
+
+
+def test_catch_up_is_quiet_before_0730(conn, home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from datetime import datetime
+
+    called = []
+    monkeypatch.setattr(slack_mod, "morning", lambda *a, **kw: called.append(1))
+
+    result = slack_mod._catch_up_missed_briefing(conn, home, now=datetime(2026, 9, 19, 7, 29))
+
+    assert result is None
+    assert called == []
+
+
+def test_catch_up_is_quiet_when_todays_briefing_already_sent(
+    conn, home: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from datetime import datetime
+
+    _insert_brief_sent(conn, sent_at="2026-09-19T07:30:05")
+    called = []
+    monkeypatch.setattr(slack_mod, "morning", lambda *a, **kw: called.append(1))
+
+    result = slack_mod._catch_up_missed_briefing(conn, home, now=datetime(2026, 9, 19, 8, 0))
+
+    assert result is None
+    assert called == []
+
+
+def test_catch_up_calls_morning_when_briefing_is_missing(
+    conn, home: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from datetime import datetime
+
+    calls = []
+    monkeypatch.setattr(slack_mod, "morning", lambda h, **kw: calls.append((h, kw)) or {"ok": True})
+
+    result = slack_mod._catch_up_missed_briefing(conn, home, now=datetime(2026, 9, 19, 7, 31))
+
+    assert result == {"ok": True}
+    assert len(calls) == 1
+    assert calls[0][1] == {"generate": True, "dry_run": False}
+
+
+def test_catch_up_ignores_yesterdays_briefing(
+    conn, home: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """**昨日送っただけでは足りない。** 日付が変わったら、今日ぶんがもう一度要る。"""
+    from datetime import datetime
+
+    _insert_brief_sent(conn, sent_at="2026-09-18T07:30:05")
+    called = []
+    monkeypatch.setattr(slack_mod, "morning", lambda *a, **kw: called.append(1) or {"ok": True})
+
+    result = slack_mod._catch_up_missed_briefing(conn, home, now=datetime(2026, 9, 19, 8, 0))
+
+    assert called == [1]
+    assert result == {"ok": True}
+
+
+def test_intake_calls_catch_up_when_not_a_dry_run(
+    home: Path, conn, monkeypatch: pytest.MonkeyPatch, leak_terms
+) -> None:
+    _setup(home, monkeypatch, leak_terms, [])
+    calls = []
+    monkeypatch.setattr(slack_mod, "_catch_up_missed_briefing", lambda c, h, **kw: calls.append(1))
+
+    slack_mod.intake(home, dry_run=False)
+
+    assert calls == [1]
+
+
+def test_intake_skips_catch_up_on_a_dry_run(
+    home: Path, conn, monkeypatch: pytest.MonkeyPatch, leak_terms
+) -> None:
+    _setup(home, monkeypatch, leak_terms, [])
+    calls = []
+    monkeypatch.setattr(slack_mod, "_catch_up_missed_briefing", lambda c, h, **kw: calls.append(1))
+
+    slack_mod.intake(home, dry_run=True)
+
+    assert calls == []
 
 
 def test_the_extractor_only_offers_known_projects(conn) -> None:

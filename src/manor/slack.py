@@ -69,6 +69,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from datetime import date, datetime, timedelta
+from datetime import time as dt_time
 from pathlib import Path
 from typing import Any
 
@@ -1658,48 +1659,77 @@ def intake(home: Path, *, dry_run: bool = False) -> dict[str, Any]:
     try:
         token = bot_token()
         if not token:
-            return {"ok": False, "reason": "bot_token が未設定です", "taken": [], "replied": False}
+            result: dict[str, Any] = {"ok": False, "reason": "bot_token が未設定です", "taken": [], "replied": False}
+        else:
+            from . import user as user_mod
 
-        from . import user as user_mod
+            candidates: list[tuple[str, str]] = []  # (channel, user_id)
+            seen_channels: set[str] = set()
+            for u in user_mod.list_users(conn):
+                if u["role"] == "butler":
+                    continue
+                uid = str(u["id"])
+                ch = channel_id(home, uid)
+                if ch and ch not in seen_channels:
+                    candidates.append((ch, uid))
+                    seen_channels.add(ch)
 
-        candidates: list[tuple[str, str]] = []  # (channel, user_id)
-        seen_channels: set[str] = set()
-        for u in user_mod.list_users(conn):
-            if u["role"] == "butler":
-                continue
-            uid = str(u["id"])
-            ch = channel_id(home, uid)
-            if ch and ch not in seen_channels:
-                candidates.append((ch, uid))
-                seen_channels.add(ch)
+            if not candidates:
+                result = {"ok": False, "reason": "channel が未設定です", "taken": [], "replied": False}
+            elif len(candidates) == 1:
+                channel, uid = candidates[0]
+                result = _intake_one_channel(conn, home, channel=channel, user_id=uid, token=token, dry_run=dry_run)
+            else:
+                overall_ok = True
+                overall_replied = False
+                all_taken: list[dict[str, Any]] = []
+                channel_results: list[dict[str, Any]] = []
+                for channel, uid in candidates:
+                    one = _intake_one_channel(conn, home, channel=channel, user_id=uid, token=token, dry_run=dry_run)
+                    channel_results.append({"channel": channel, "user_id": uid, **one})
+                    all_taken.extend(one.get("taken") or [])
+                    if not one.get("ok", True):
+                        overall_ok = False
+                    if one.get("replied"):
+                        overall_replied = True
+                result = {
+                    "ok": overall_ok,
+                    "taken": all_taken,
+                    "replied": overall_replied,
+                    "channels": channel_results,
+                }
 
-        if not candidates:
-            return {"ok": False, "reason": "channel が未設定です", "taken": [], "replied": False}
-
-        if len(candidates) == 1:
-            channel, uid = candidates[0]
-            return _intake_one_channel(conn, home, channel=channel, user_id=uid, token=token, dry_run=dry_run)
-
-        overall_ok = True
-        overall_replied = False
-        all_taken: list[dict[str, Any]] = []
-        channel_results: list[dict[str, Any]] = []
-        for channel, uid in candidates:
-            result = _intake_one_channel(conn, home, channel=channel, user_id=uid, token=token, dry_run=dry_run)
-            channel_results.append({"channel": channel, "user_id": uid, **result})
-            all_taken.extend(result.get("taken") or [])
-            if not result.get("ok", True):
-                overall_ok = False
-            if result.get("replied"):
-                overall_replied = True
-        return {
-            "ok": overall_ok,
-            "taken": all_taken,
-            "replied": overall_replied,
-            "channels": channel_results,
-        }
+        # T59①: 5分ごとに走るこの経路が、07:30を過ぎても今日のブリーフィングがまだ
+        # 無いことに気づいたら拾う（D6の常時ご許可の範囲内・同じコマンドを回すだけ）。
+        if not dry_run:
+            result["missed_briefing"] = _catch_up_missed_briefing(conn, home)
+        return result
     finally:
         conn.close()
+
+
+def _catch_up_missed_briefing(
+    conn: sqlite3.Connection, home: Path, *, now: datetime | None = None
+) -> dict[str, Any] | None:
+    """T59①: 07:30 を過ぎても今日ぶんの朝のブリーフィング（まとめの通）がまだ
+    `slack_message` に無ければ、`manor slack morning` を回して拾う。
+
+    判定は `slack_message` の `decision_id IS NULL` の行（＝まとめの通。§798-810
+    で記録される）の `sent_at` が今日にあるか。**同じ表を見るので二重送信の歯止めも
+    同じ**——`morning()` が実際に送れば、次にこの関数が呼ばれたときはもう鳴らない。
+    07:30 より前は何もしない（まだ「出なかった」と言えないため）。
+    """
+    now = now or datetime.now()
+    if now.time() < dt_time(7, 30):
+        return None
+    today = now.date().isoformat()
+    row = conn.execute(
+        "SELECT 1 FROM slack_message WHERE decision_id IS NULL AND substr(sent_at, 1, 10) = ? LIMIT 1",
+        (today,),
+    ).fetchone()
+    if row is not None:
+        return None
+    return morning(home, generate=True, dry_run=False)
 
 
 #: 接頭辞ごとの書き方の例（本文が無い／読めないときに返す）。
