@@ -147,3 +147,34 @@ describe("Plan — プロジェクト俯瞰（ADR-013 D1: 作成・変更を画�
     expect(sent.code).toBeUndefined();
   });
 });
+
+describe("Plan — 完了したプロジェクトは目立たせない（主人 2026-09-20）", () => {
+  afterEach(() => {
+    cleanup();
+  });
+
+  it("done の行は既定で隠れ、「完了したプロジェクト N 件を表示」で末尾に薄く出る。件数は動いているものだけ", async () => {
+    const live = baseProject();
+    const done: Board["projects"][number] = { ...baseProject(), id: "P3", code: "yobi", title: "予備審査スライド", status: "done", due: "2026-09-09", days_left: null };
+    mockFetchFor(makeBoard([done, live]));
+
+    const user = userEvent.setup();
+    render(
+      <MemoryRouter initialEntries={["/projects"]}>
+        <ToastProvider>
+          <Plan readOnly={false} />
+        </ToastProvider>
+      </MemoryRouter>
+    );
+    await waitFor(() => expect(screen.getByText("語学の勉強")).toBeTruthy());
+    expect(screen.queryByText("予備審査スライド")).toBeNull();
+    expect(document.getElementById("projects-count")?.textContent).toContain("1");
+
+    await user.click(screen.getByRole("button", { name: "完了したプロジェクト 1 件を表示" }));
+    const row = screen.getByText("予備審査スライド").closest("tr") as HTMLElement;
+    expect(row.className).toContain("finished");
+    const rows = Array.from(document.querySelectorAll("#projects-table tbody tr"));
+    expect(rows[rows.length - 1]).toBe(row); // 末尾
+    expect(within(row).getByText("—")).toBeTruthy(); // 残日数は出ない（超過N日にならない）
+  });
+});

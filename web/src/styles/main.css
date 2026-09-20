@@ -241,6 +241,7 @@ main { flex: 1; padding: 16px 18px 40px; min-width: 0; }
 .row-id { font-size: 11px; color: var(--text-faint); font-family: "Cascadia Code", monospace; }
 .row-title { flex: 1; min-width: 160px; font-size: 12.5px; }
 .row-item.finished .row-title { color: var(--text-dim); text-decoration: line-through; }
+tr.finished td { color: var(--text-faint); }
 .row-item.withdrawn .row-title { color: var(--text-faint); text-decoration: line-through; }
 .badge-st { font-size: 10.5px; padding: 1px 7px; border-radius: 999px; white-space: nowrap; }
 .st-doing { background: var(--info); color: #06202f; }

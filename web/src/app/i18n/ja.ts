@@ -923,6 +923,8 @@ export const ja = {
   "tasks.projects.col.status": "状態",
   "tasks.projects.col.nextAction": "次の一手",
   "tasks.projects.col.due": "期限",
+  "tasks.projects.showDone": (p) => `完了したプロジェクト ${p.n} 件を表示`,
+  "tasks.projects.hideDone": (p) => `完了したプロジェクト ${p.n} 件を隠す`,
   "tasks.projects.col.daysLeft": "残日数",
   "tasks.projects.col.actions": "操作",
   /* ADR-013 D1: プロジェクトの作成・変更を画面から。 */

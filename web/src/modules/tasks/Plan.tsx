@@ -209,15 +209,21 @@ function PlanProjects() {
   const { data: board, error, reload } = usePolling<Board>("/tasks/board", 5000);
   const [adding, setAdding] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [showDone, setShowDone] = useState(false);
   if (error) return <p className="panel-note">{t("errors.loadFailed", { reason: error })}</p>;
   if (!board) return <p className="panel-note">{t("common.loading")}</p>;
-  const rows = board.projects || [];
+  const allRows = board.projects || [];
+  //: 畳んだ project（done）は既定で隠し、末尾に「完了 N 件を表示」で開く。終わった予備審査が
+  //: 俯瞰で「超過11日」と目立っていた（主人 2026-09-20「もう終わっているのに目立つのは避けたい」）。
+  const doneRows = allRows.filter((p) => p.status === "done");
+  const liveRows = allRows.filter((p) => p.status !== "done");
+  const rows = showDone ? [...liveRows, ...doneRows] : liveRows;
   return (
     <section className="panel" id="panel-projects">
       <div className="panel-head">
         <h2>{t("tasks.projects.heading")}</h2>
         <span className="count" id="projects-count">
-          {t("component.foldBlock.count", { count: rows.length })}
+          {t("component.foldBlock.count", { count: liveRows.length })}
         </span>
         <button className="btn btn-small btn-primary" style={{ marginLeft: "auto" }} type="button" onClick={() => setAdding(true)}>
           {t("tasks.projects.add")}
@@ -265,7 +271,7 @@ function PlanProjects() {
                   </td>
                 </tr>
               ) : (
-                <tr key={p.id}>
+                <tr key={p.id} className={p.status === "done" ? "finished" : undefined}>
                   <td className="col-nowrap">{p.code}</td>
                   <td className="col-wide">{p.title}</td>
                   <td className="col-nowrap">{p.kind || "—"}</td>
@@ -286,6 +292,11 @@ function PlanProjects() {
           </tbody>
         </table>
       </div>
+      {doneRows.length > 0 && (
+        <button className="detail-toggle" type="button" onClick={() => setShowDone((v) => !v)}>
+          {showDone ? t("tasks.projects.hideDone", { n: doneRows.length }) : t("tasks.projects.showDone", { n: doneRows.length })}
+        </button>
+      )}
     </section>
   );
 }

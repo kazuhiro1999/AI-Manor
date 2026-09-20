@@ -921,6 +921,8 @@ export const en: { [K in TranslationKey]: MirrorEntry<K> } = {
   "tasks.projects.col.status": "Status",
   "tasks.projects.col.nextAction": "Next step",
   "tasks.projects.col.due": "Due",
+  "tasks.projects.showDone": (p) => `Show ${p.n} completed project(s)`,
+  "tasks.projects.hideDone": (p) => `Hide ${p.n} completed project(s)`,
   "tasks.projects.col.daysLeft": "Days left",
   "tasks.projects.col.actions": "Actions",
   "tasks.projects.add": "+ Project",

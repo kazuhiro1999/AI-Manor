@@ -85,6 +85,23 @@ def test_board_empty_home_returns_200_with_shape(home: Path):
         assert key in body["counts"]
 
 
+def test_board_done_project_has_no_days_left(conn, home: Path):
+    """畳んだ project（done）に「超過N日」を出さない（主人 2026-09-20: 終わった予備審査が
+    俯瞰で目立っていた）。期限は残す、残日数だけ空。active は従来どおり。"""
+    project_mod.add(conn, "old", "終わった計画", priority=1, due="2026-01-01")
+    project_mod.set(conn, "old", status="done")
+    project_mod.add(conn, "live", "動いている計画", priority=1, due="2026-01-01")
+    conn.commit()
+    render_mod.render(conn, home)
+
+    body = make_client(home).get("/api/board").json()
+    by_code = {p["code"]: p for p in body["projects"]}
+    assert by_code["old"]["status"] == "done"
+    assert by_code["old"]["due"] == "2026-01-01"
+    assert by_code["old"]["days_left"] is None
+    assert by_code["live"]["days_left"] is not None and by_code["live"]["days_left"] < 0
+
+
 def test_board_reflects_synthetic_data(conn, home: Path):
     project_mod.add(conn, "demo", "デモ計画", priority=1, due="2026-12-31")
     tid = task_mod.add(
