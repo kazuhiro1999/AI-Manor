@@ -16,6 +16,7 @@ from pathlib import Path
 
 import pytest
 
+from manor import cli
 from manor import db as db_mod
 from manor import runlog as runlog_mod
 from manor import voice as voice_mod
@@ -754,6 +755,22 @@ def test_read_pause_auto_clears_the_day_after_until(home_path: Path):
 def test_pause_rejects_bad_date_format(home_path: Path):
     with pytest.raises(ValueError):
         runner.pause(home_path, until="9/20", reason="x")
+
+
+def test_cli_pause_tonight_resolves_to_tomorrow(home_path: Path, monkeypatch: pytest.MonkeyPatch, capsys):
+    """T75: 夜勤は深夜に走るので「今夜だけ」止めるには翌日の日付を until にする必要がある
+    （2026-09-20に主人が --until 当日を指定して今夜が止まらなかった）。--tonight はそれを
+    日付計算せずに指定できる口。
+    """
+    monkeypatch.setenv("MANOR_TODAY", "2026-09-20")
+    assert cli.main(["night", "pause", "--tonight", "--reason", "x", "--json"]) == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["until"] == "2026-09-21"
+
+
+def test_cli_pause_requires_until_or_tonight(home_path: Path):
+    with pytest.raises(SystemExit):
+        cli.main(["night", "pause", "--reason", "x"])
 
 
 def test_resume_clears_pause_before_until(home_path: Path):

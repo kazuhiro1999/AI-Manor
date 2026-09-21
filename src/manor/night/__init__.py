@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import argparse
 import json
+from datetime import date, timedelta
 
 from .. import i18n, util
 from . import runner
@@ -273,7 +274,9 @@ def _outcome_line(result: dict, verb: str) -> str:
 
 def _add_pause(sub: "argparse._SubParsersAction") -> None:
     p = sub.add_parser("pause", help=i18n.t("cli.night.pause.help"))
-    p.add_argument("--until", required=True, help=i18n.t("cli.night.pause.until.help"))
+    group = p.add_mutually_exclusive_group(required=True)
+    group.add_argument("--until", help=i18n.t("cli.night.pause.until.help"))
+    group.add_argument("--tonight", action="store_true", help=i18n.t("cli.night.pause.tonight.help"))
     p.add_argument("--reason", required=True, help=i18n.t("cli.night.pause.reason.help"))
     p.add_argument("--json", action="store_true")
     p.set_defaults(func=_cmd_pause, is_write=False, needs_db=False)
@@ -281,8 +284,13 @@ def _add_pause(sub: "argparse._SubParsersAction") -> None:
 
 def _cmd_pause(args: "argparse.Namespace") -> int:
     home = util.manor_home()
+    # 夜勤は深夜に走るので「今夜だけ」止めるには翌日の日付を until にする必要がある
+    # （T75: 2026-09-20 に主人が --until 当日を指定して今夜が止まらなかった）。
+    until = args.until
+    if args.tonight:
+        until = (date.fromisoformat(util.today()) + timedelta(days=1)).isoformat()
     try:
-        data = runner.pause(home, until=args.until, reason=args.reason)
+        data = runner.pause(home, until=until, reason=args.reason)
     except ValueError as exc:
         print(str(exc))
         return 1
