@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 
+from manor import project as project_mod
 from manor import slack as slack_mod
 from manor import task as task_mod
 from manor import user as user_mod
@@ -190,3 +191,42 @@ def test_intake_task_goes_to_the_channel_owners_user(
     assert any(t["title"].startswith("相方のタスク") for t in tasks)
     principal_tasks = task_mod.list_tasks(conn, user_id=user_mod.principal_id(conn))
     assert not any(t["title"].startswith("相方のタスク") for t in principal_tasks)
+
+
+def test_intake_task_guessed_as_butler_project_overrides_channel_owner(
+    home: Path, conn, monkeypatch: pytest.MonkeyPatch, leak_terms
+) -> None:
+    """project 推測（D16）が執事自身のプロジェクト（X系）に当たったときは、
+    チャンネル送信者ではなく執事の件にする（D18: explicit 指定を外し project_user_id に委ねる）。
+    """
+    leak_terms([])
+    _fix_clock(monkeypatch)
+    member = user_mod.add(conn, "相方")
+    project_mod.add(conn, "BUTLER", "執事の改良", kind=project_mod.BUTLER_PROJECT_KIND)
+    conn.commit()
+    _set_member_channel(home, member, "C-MEMBER")
+    monkeypatch.setattr(slack_mod, "bot_token", lambda: "xoxb-test-token")
+
+    def fake_api(method, token, *, params=None, timeout=0):  # noqa: ANN001
+        params = params or {}
+        if method == "conversations.history":
+            if params.get("channel") == "C-MEMBER":
+                return {
+                    "ok": True,
+                    "messages": [{"ts": "4000.0003", "text": "#task 執事の改良の件でログを直す"}],
+                }
+            return {"ok": True, "messages": []}
+        if method == "chat.postMessage":
+            return {"ok": True, "ts": "4000.0004"}
+        raise AssertionError(f"想定外の method です: {method}")
+
+    monkeypatch.setattr(slack_mod, "_slack_api", fake_api)
+    monkeypatch.setattr(slack_mod, "extract_task", lambda body, **kw: {"ok": False, "reason": "（試験）"})
+
+    result = slack_mod.intake(home)
+
+    assert result["ok"] is True
+    butler_tasks = task_mod.list_tasks(conn, user_id=user_mod.BUTLER_ID)
+    assert any(t["title"].startswith("執事の改良の件") for t in butler_tasks)
+    member_tasks = task_mod.list_tasks(conn, user_id=member)
+    assert not any(t["title"].startswith("執事の改良の件") for t in member_tasks)

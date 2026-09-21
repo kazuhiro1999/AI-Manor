@@ -1926,6 +1926,23 @@ def _guess_project(conn: sqlite3.Connection, body: str) -> str | None:
     return best[1] if best else None
 
 
+def _intake_user_for(conn: sqlite3.Connection, project_code: str | None, user_id: str | None) -> str | None:
+    """`#task` の明示 `user_id` を、執事自身のプロジェクト（X系）に当たったときだけ外す（D18）。
+
+    `task.add` の `user` 引数は `resolve_default` の explicit（最優先）になるため、
+    Slack 送信者を明示したままだと project 推測（D16）が当たっても `project_user_id`
+    （＝執事）に負けてしまう。X系プロジェクトに当たったときだけ明示を外し、解決を委ねる。
+    """
+    if project_code is None:
+        return user_id
+    from . import project as project_mod
+
+    prow = project_mod.resolve(conn, project_code)
+    if str(prow["kind"]) == project_mod.BUTLER_PROJECT_KIND:
+        return None
+    return user_id
+
+
 def _create_from_intake(
     conn: sqlite3.Connection,
     *,
@@ -1948,9 +1965,10 @@ def _create_from_intake(
     if kind == "task":
         from . import task as task_mod
 
+        guessed_project = _guess_project(conn, body)
         return task_mod.add(
             conn, title, cls="general", now="Slack から受け取りました（#task）", body=body,
-            user=user_id, project=_guess_project(conn, body),
+            user=_intake_user_for(conn, guessed_project, user_id), project=guessed_project,
         )
     if kind == "idea":
         from . import task as task_mod
@@ -2414,14 +2432,15 @@ def _take_task(
 
     lines: list[str] = []
     for item in broken.get("tasks") or []:
+        item_project = str(item["project"]) or None
         task_id = task_mod.add(
             conn, str(item["title"]),
-            project=str(item["project"]) or None,
+            project=item_project,
             due=str(item["due"]) or None,
             cls="general",
             now="Slack から受け取りました（#task）",
             body=body,
-            user=user_id,
+            user=_intake_user_for(conn, item_project, user_id),
         )
         label = _project_label(conn, str(item["project"]))
         due = f"／期限 {item['due']}" if item["due"] else ""
