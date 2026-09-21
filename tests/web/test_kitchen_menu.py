@@ -199,10 +199,16 @@ def test_plan_forbidden_when_read_only(conn, home: Path, stocked: dict[str, int]
 # --- 利用者（台所は共通。ADR-014 D4・ADR-018 §4） -----------------------------------
 
 
-def test_menu_is_shared_across_viewing_users(conn, home: Path, stocked: dict[str, int]) -> None:
+def test_menu_is_shared_across_viewing_users(
+    conn, home: Path, stocked: dict[str, int], monkeypatch: pytest.MonkeyPatch
+) -> None:
     """**動画リストと逆の判断**——献立は誰が開いても同じものが出る（食卓は1つ）。
     `viewing_user_id` は応答に載るが、候補の絞りには使わない。
     """
+    # recommend の繰り返し回避は直近 history_days(既定7日)以内の計画だけを見る
+    # （score_candidates）。TODAY を固定しないと実日付との差が7日を超えたとき
+    # に計画済みレシピが履歴から外れ、減点されなくなる（T86: 2026-09-20 に実際踏んだ）。
+    monkeypatch.setenv("MANOR_TODAY", TODAY)
     other_id = user_mod.add(conn, name="同居人")
     conn.commit()
     client = make_client(home)
