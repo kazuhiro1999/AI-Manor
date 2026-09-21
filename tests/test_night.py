@@ -803,7 +803,8 @@ def test_run_launches_again_the_day_after_until(home_path: Path, tmp_path: Path)
     assert marker.exists()
 
 
-def test_status_shows_pause_info(home_path: Path):
+def test_status_shows_pause_info(home_path: Path, monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv("MANOR_TODAY", "2026-09-15")  # until より前に固定（さもないと日付が進むと自動解除されて落ちる）
     runner.pause(home_path, until="2026-09-20", reason="主人のご指示")
     data = runner.status(home_path)
     assert data["pause"]["until"] == "2026-09-20"

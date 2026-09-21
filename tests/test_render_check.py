@@ -36,10 +36,11 @@ def test_render_reflects_current_db_state(conn, home: Path):
     assert "demo" in projects_text
 
 
-def test_active_text_shows_night_pause_first(conn, home: Path):
+def test_active_text_shows_night_pause_first(conn, home: Path, monkeypatch):
     """N8: 夜勤の一時停止が、起動時の射影（`manor active`）の先頭に出ること。"""
     from manor.night import runner as night_runner
 
+    monkeypatch.setenv("MANOR_TODAY", "2026-09-15")  # until より前に固定（さもないと日付が進むと自動解除されて落ちる）
     night_runner.pause(home, until="2026-09-20", reason="主人のご指示")
     text = render_mod.active_text(conn)
     assert text.splitlines()[0] == "夜勤: 停止中（〜2026-09-20・主人のご指示）"
