@@ -1523,9 +1523,13 @@ def format_status(data: dict[str, Any]) -> str:
     lines: list[str] = []
     pause_info = data.get("pause")
     if pause_info:
-        lines.append(
-            f"夜勤: 停止中（〜{pause_info.get('until')}・{pause_info.get('reason')}）"
-        )
+        until = str(pause_info.get("until"))
+        # T75: --tonight で立てた停止（＝翌日の日付）は「今夜は休み」と読めるほうが分かりやすい。
+        tonight_until = (datetime.strptime(util.today(), "%Y-%m-%d") + timedelta(days=1)).date().isoformat()
+        if until == tonight_until:
+            lines.append(f"夜勤: 今夜は休み（{pause_info.get('reason')}）")
+        else:
+            lines.append(f"夜勤: 停止中（〜{until}・{pause_info.get('reason')}）")
     lock = data.get("lock", {})
     if lock.get("locked"):
         alive = "生存" if lock.get("alive") else "不在"

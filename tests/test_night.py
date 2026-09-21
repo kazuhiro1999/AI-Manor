@@ -830,6 +830,15 @@ def test_status_shows_pause_info(home_path: Path, monkeypatch: pytest.MonkeyPatc
     assert "2026-09-20" in text
 
 
+def test_status_shows_tonight_off_when_until_is_tomorrow(home_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """T75: --tonight（＝翌日の日付）で止めたときは、日付でなく『今夜は休み』と読める形にする。"""
+    monkeypatch.setenv("MANOR_TODAY", "2026-09-20")
+    runner.pause(home_path, until="2026-09-21", reason="来客のため")
+    text = runner.format_status(runner.status(home_path))
+    assert "今夜は休み" in text
+    assert "来客のため" in text
+
+
 def test_format_review_shows_pause_info_first():
     result = {"date": "2026-09-15", "pause": {"until": "2026-09-20", "reason": "x"}, "health": {"ok": True, "reasons": []}, "items": {"found": False}}
     text = runner.format_review(result)
