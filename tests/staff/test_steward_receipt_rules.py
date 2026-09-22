@@ -333,3 +333,98 @@ def test_inclusive_single_rate_is_applied_to_items() -> None:
     }))
     assert [i["tax_rate"] for i in d["items"]] == [10, 10]
     assert rc.run_checks(d)["tax_10"]["ok"] is True
+
+
+# --- さらに別の型（喫茶店。2026-09-23 主人の3枚目の実物から） --------------------------------
+#
+# 取りこぼしていた点: ⓐ明細の見出し「商品名 数量 合計」の `合計` を合計欄と取り違えて明細が 0 行
+# ⓑ小計の**後**に引かれる値引き（`JAF5% -148`）が明細に入らない ⓒ検算が「Σ明細（値引き込み）＝小計」
+# しか知らない（この店は 小計＝値引き前・合計＝小計−値引き） ⓓ「数量」の列の数字が品名に混ざる
+# ⓔ `(内税 ¥256)` を税額として拾えない ⓕ店名が `卓番:28`（一番大きい字）になる
+
+
+def synthetic_cafe_receipt() -> list[dict]:
+    """内税・列の見出しあり・小計の後の値引き。1,595 + 1,375 = 2,970、JAF −148、合計 2,822（内税 256）。"""
+    rows: list[dict] = []
+    y = 100.0
+
+    def line(cells: list[tuple[float, float, str]], h: float = 34.0) -> None:
+        nonlocal y
+        for x, w, text in cells:
+            rows.append(_box(x, y, w, h, text))
+        y += h + 16
+
+    line([(300, 220, "ネコ珈琲店 各務原店")])
+    line([(300, 260, "岐阜県各務原市那加緑町1丁目21-1")])
+    line([(300, 230, "TEL.0583-71-2434")])
+    line([(300, 330, "企業登録番号:T4011801013144")])
+    line([(300, 150, "ご利用明細")])
+    line([(300, 300, "毎度ありがとうございます。")])
+    line([(300, 140, "卓番:28")], h=80)          # 一番大きい字だが店名ではない
+    line([(300, 180, "人数:2名様")])
+    line([(300, 330, "日時:2026/09/22 22:18")])
+    line([(300, 190, "担当:管理者")])
+    line([(300, 140, "商品名"), (640, 110, "数量"), (820, 110, "合計")])   # 列の見出し
+    price_x = 820
+    line([(300, 330, "モンブランパフェ"), (660, 40, "1"), (price_x, 130, "1,595")])
+    line([(300, 260, "プリンパフェ"), (660, 40, "2"), (price_x, 130, "1,375")])
+    line([(300, 120, "小計"), (price_x, 140, "2,970")])
+    line([(300, 150, "JAF5%"), (price_x + 20, 120, "-148")])
+    line([(320, 260, "税率10%対象"), (price_x, 140, "2,822")])
+    line([(320, 200, "(税率10%"), (price_x + 20, 120, "256)")])
+    line([(300, 140, "合計"), (price_x - 60, 200, "¥2,822")], h=44)
+    line([(300, 130, "(内税"), (price_x + 10, 150, "¥256)")])
+    line([(300, 150, "カード"), (price_x - 20, 180, "¥2,822")])
+    line([(300, 160, "お預り"), (price_x - 20, 180, "¥2,822")])
+    line([(300, 160, "お釣り"), (price_x + 60, 80, "¥0")])
+    line([(300, 420, "No.26092200100112")])
+    return rows
+
+
+def test_cafe_receipt_with_discount_after_subtotal() -> None:
+    raw = rp.parse_boxes(synthetic_cafe_receipt())
+    d, checks, review = _finish(raw)
+    assert d["store"]["name"] == "ネコ珈琲店 各務原店"     # ⓕ札・住所・挨拶は店名にしない
+    assert d["store"]["registration_number"] == "T4011801013144"
+    assert d["purchased_at"] == "2026-09-22T22:18"
+    assert d["tax_mode"] == "inclusive"
+    assert d["subtotal"] == 2970 and d["total"] == 2822   # ⓐ見出しの `合計` を取り違えない
+    assert d["taxes"] == [{"rate": 10, "amount": 256}]    # ⓔ `(内税 ¥256)`
+    assert d["payment_method"] == "credit"
+    assert [(i["name"], i["qty"], i["amount"], i["is_discount"]) for i in d["items"]] == [
+        ("モンブランパフェ", 1, 1595, False),
+        ("プリンパフェ", 2, 1375, False),                  # ⓓ「数量」の列を数量として読む
+        ("JAF5%", 1, -148, True),                          # ⓑ小計の後の値引き
+    ]
+    assert checks["items_sum"] == {"ok": True, "expected": 2970, "actual": 2970}   # ⓒ小計＝値引き前
+    assert checks["total"] == {"ok": True, "expected": 2822, "actual": 2822}       #    合計＝小計−値引き
+    assert checks["tax_10"]["ok"] is True and checks["change"]["ok"] is True
+    assert review == "ok"
+
+
+def test_checks_accept_both_discount_conventions() -> None:
+    """値引きが明細の中にある店（小計＝値引き後）も、小計の後に引く店も、同じ検算で通る。"""
+    inside = rc.derive_missing(rc.normalize_draft({
+        "store": {"name": "店"}, "purchased_at": "2026-09-20", "tax_mode": "inclusive",
+        "items": [{"name": "A", "amount": 1000}, {"name": "値引き", "amount": -100, "is_discount": True}],
+        "subtotal": 900, "total": 900,
+    }))
+    after = rc.derive_missing(rc.normalize_draft({
+        "store": {"name": "店"}, "purchased_at": "2026-09-20", "tax_mode": "inclusive",
+        "items": [{"name": "A", "amount": 1000}, {"name": "値引き", "amount": -100, "is_discount": True}],
+        "subtotal": 1000, "total": 900,
+    }))
+    for d in (inside, after):
+        checks = rc.run_checks(d)
+        assert checks["items_sum"]["ok"] is True, checks
+        assert checks["total"]["ok"] is True, checks
+        assert rc.review_from_checks(d, checks) == "ok"
+
+
+def test_store_name_candidate_filters() -> None:
+    assert rp._store_name_candidate("ネコ珈琲店 各務原店")
+    assert not rp._store_name_candidate("卓番:28")              # 札
+    assert not rp._store_name_candidate("岐阜県各務原市那加緑町")  # 住所
+    assert not rp._store_name_candidate("1丁目21-1")
+    assert not rp._store_name_candidate("ご利用明細")            # 見出し
+    assert not rp._store_name_candidate("毎度ありがとうございます。")

@@ -246,7 +246,12 @@ def run_checks(d: dict[str, object]) -> dict[str, dict[str, object]]:
     items: list[dict[str, object]] = [i for i in (d.get("items") or []) if i.get("amount") is not None]  # type: ignore[union-attr]
     subtotal = d.get("subtotal") if isinstance(d.get("subtotal"), int) else None
     total = d.get("total") if isinstance(d.get("total"), int) else None
-    items_sum = sum(int(i["amount"]) for i in items) if items else None  # type: ignore[arg-type]
+    gross = sum(int(i["amount"]) for i in items if not i.get("is_discount"))  # type: ignore[arg-type]
+    discount = sum(int(i["amount"]) for i in items if i.get("is_discount"))  # type: ignore[arg-type]
+    # 値引きが**小計の後**に引かれる店（小計＝値引き前、合計＝小計＋値引き）と、
+    # 値引きが明細の中に入っている店（小計＝値引き後）の両方がある。どちらに合うかで決める。
+    discount_after = bool(discount) and subtotal is not None and subtotal != gross + discount and subtotal == gross
+    items_sum = (gross if discount_after else gross + discount) if items else None
     qty_sum = sum(int(i["qty"]) for i in items if not i.get("is_discount")) if items else None  # type: ignore[arg-type]
     t8, t10 = tax_amount(d, 8), tax_amount(d, 10)
 
@@ -279,14 +284,15 @@ def run_checks(d: dict[str, object]) -> dict[str, dict[str, object]]:
     ok8, ok10 = _tax_ok(*best)
 
     tax_sum = sum(t["amount"] for t in (d.get("taxes") or []))  # type: ignore[index, union-attr]
+    base_total = (subtotal + discount) if (subtotal is not None and discount_after) else subtotal
     if d.get("tax_mode") == "inclusive":
-        total_expected = subtotal
+        total_expected = base_total
     elif d.get("tax_mode") == "exclusive":
-        total_expected = (subtotal + tax_sum) if subtotal is not None else None
+        total_expected = (base_total + tax_sum) if base_total is not None else None
     else:
         total_expected = None
-        if subtotal is not None and total is not None:
-            total_expected = subtotal + tax_sum if total != subtotal else subtotal
+        if base_total is not None and total is not None:
+            total_expected = base_total + tax_sum if total != base_total else base_total
 
     checks: dict[str, dict[str, object]] = {
         "items_sum": _check(subtotal, items_sum),

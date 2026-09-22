@@ -116,9 +116,9 @@ _TOTAL_KEYS: tuple[tuple[str, "re.Pattern[str]"], ...] = (
     ("tax8", re.compile(r"(?:外|内)?(?:消費)?税[額客頁等]*\s*8(?!\d)")),
     ("tax10", re.compile(r"(?:外|内)?(?:消費)?税[額客頁等]*\s*10(?!\d)")),
     ("item_count", re.compile(r"点数|買上点|買上")),
-    ("tax_included", re.compile(r"^[（(]?\s*内税[額客頁]|^[（(]?\s*消費税[額客頁]$|^[（(]?\s*税[額客頁]$")),
+    ("tax_included", re.compile(r"^[（(]?\s*内税|^[（(]?\s*消費税[額客頁]?$|^[（(]?\s*税[額客頁]$")),
     ("subtotal", re.compile(r"小計|小駄|小言十|小計十")),
-    ("tendered", re.compile(r"お預|預り|預かり|おり$|お豹|予貢り|予買り|お預り金")),
+    ("tendered", re.compile(r"お預|預り|預かり|おり$|お豹|予貢り|予買り|お預り金|お頭|お項")),
     ("change", re.compile(r"お釣|釣り|おつり|釣")),
     ("total", re.compile(r"合計|合十|盒言十|急言十|合言十|総合計|十晨")),
 )
@@ -150,6 +150,25 @@ def _compose_kana(t: str) -> str:
             continue
         out.append(ch)
     return "".join(out)
+
+
+#: 店名にならない行（見出し・挨拶・札）。住所は別に正規表現で落とす。
+_NOT_STORE_WORDS: tuple[str, ...] = (
+    "明細", "領収", "控", "ありがとう", "いらっしゃい", "お買上", "お買い上げ", "レシート", "証",
+)
+_ADDRESS_RE = re.compile(r"丁目|番地|[都道府県].*?[市区町村]|\d{3}-\d{4}")
+
+
+def _store_name_candidate(text: str) -> bool:
+    """店名になりうる行か。`卓番:28` のような札、住所、挨拶・見出しを外す。"""
+    t = text.replace(" ", "")
+    if len(re.sub(r"[^\w]", "", t)) < 2:
+        return False
+    if ":" in t or "：" in t:
+        return False
+    if any(w in t for w in _NOT_STORE_WORDS) or _ADDRESS_RE.search(t):
+        return False
+    return not re.fullmatch(r"[\d\-‐−–—./]+", t)
 
 
 def _kana_skeleton(s: str) -> str:
@@ -384,7 +403,7 @@ def parse_boxes(boxes: list[dict[str, Any]]) -> dict[str, Any]:
             break
     if not draft["store"]["name"] and header_lines:
         # 店名はたいてい**一番大きい字**（ロゴの下の店名）。目立つ行が無ければ、最も文字らしい行。
-        named = [b for b in header_lines if len(re.sub(r"[^\w]", "", b["text"])) >= 2]
+        named = [b for b in header_lines if _store_name_candidate(b["text"])]
         big = [b for b in named if b["h"] >= 1.4 * h_med]
         if big:
             cand = max(big, key=lambda b: (b["h"], b["score"]))
@@ -450,6 +469,10 @@ def parse_boxes(boxes: list[dict[str, Any]]) -> dict[str, Any]:
         if key == "item_count" and value is None:
             mc = re.search(r"(\d{1,3})点(?![\s\d]*回)", all_text.replace(" ", "")[int(len(all_text) * 0.5):])
             value = int(mc.group(1)) if mc else None
+        if value is None:
+            # 値の無い行は合計欄ではない——明細の見出し「商品名 数量 合計」の `合計` を
+            # 取り違えると、そこで明細が終わってしまう（キャッツカフェのレシートで実測）。
+            continue
         value_box = mates[0][1] if mates else None
         total_rows[key] = {"box": b, "value": value, "value_box": value_box}
         for box in (b, value_box):
@@ -527,8 +550,31 @@ def parse_boxes(boxes: list[dict[str, Any]]) -> dict[str, Any]:
             draft["payment_method"] = method
             break
 
+    # 明細の列の見出し（「商品名 数量 合計」）。2 語以上が同じ行に並んでいたら見出しとみなし、
+    # ①その行から下を明細とする（`合計` を合計欄と取り違えない）②「数量」の列の位置を覚える。
+    qty_col: tuple[float, float] | None = None
+    header_row_bottom: float | None = None
+    for b in items_boxes:
+        if not re.fullmatch(r"[（(]?(商品名|品名|品目|数量|数|単価|金額|合計|点数)[）)]?", b["text"].replace(" ", "")):
+            continue
+        same_row = [
+            c for c in items_boxes
+            if c is not b and _overlap(c, b) > 0.3
+            and re.fullmatch(r"[（(]?(商品名|品名|品目|数量|数|単価|金額|合計|点数)[）)]?", c["text"].replace(" ", ""))
+        ]
+        if not same_row:
+            continue
+        header_row_bottom = max(x["y1"] for x in [b, *same_row])
+        for c in [b, *same_row]:
+            if re.fullmatch(r"[（(]?(数量|数)[）)]?", c["text"].replace(" ", "")):
+                pad = 1.5 * h_med
+                qty_col = (c["x0"] - pad, c["x1"] + pad)
+        break
+
     # --- 明細（価格の錨） ----------------------------------------------------------
     items_top = header_end + 0.4 * h_med
+    if header_row_bottom is not None:
+        items_top = max(items_top, header_row_bottom + 0.1 * h_med)
     items_bottom = first_total_y if first_total_y is not None else items_boxes[-1]["cy"] + 1
     totals_box_ids = {id(x) for r in total_rows.values() for x in (r["box"], r.get("value_box")) if x is not None}
     region = [
@@ -554,10 +600,16 @@ def parse_boxes(boxes: list[dict[str, Any]]) -> dict[str, Any]:
     anchors.sort(key=lambda b: b["cy"])
 
     # 品名の候補（価格でも税印でも数量行でもない箱）
+    def _in_qty_col(b: dict[str, Any]) -> bool:
+        if qty_col is None:
+            return False
+        center = (b["x0"] + b["x1"]) / 2
+        return qty_col[0] <= center <= qty_col[1] and bool(re.fullmatch(r"\d{1,3}", b["text"].replace(" ", "")))
+
     name_boxes = [
         b for b in region
         if b["price"] is None and b.get("inline_price") is None and not b["is_taxmark"]
-        and parse_qty_row(b["text"]) is None
+        and parse_qty_row(b["text"]) is None and not _in_qty_col(b)
     ]
     name_boxes.sort(key=lambda b: b["cy"])
     # 系統的なずれ: 錨ごとに最も近い品名の箱との cy の差の中央値（残った傾きのぶん）
@@ -632,6 +684,15 @@ def parse_boxes(boxes: list[dict[str, Any]]) -> dict[str, Any]:
         if tax is None:
             tax = pending_tax
         pending_tax = None
+        # 「数量」の列に数字があれば数量（単価は金額から割る）
+        col_qty: int | None = None
+        if qty_col is not None:
+            for b in region:
+                if id(b) in used or not _in_qty_col(b) or abs(b["cy"] - target) > 0.45 * pitch:
+                    continue
+                col_qty = int(b["text"].replace(" ", ""))
+                used.add(id(b))
+                break
         # 価格の付いた数量行（`(@132×2個) ¥264` のように 1 行に収まっている店）は直前の明細へ
         qty_row = parse_qty_row(name)
         if qty_row and items:
@@ -647,7 +708,9 @@ def parse_boxes(boxes: list[dict[str, Any]]) -> dict[str, Any]:
             continue
         if not name:
             notes.append(f"price_without_name:{amount}")
-        items.append({"name": name, "qty": 1, "unit_price": None, "amount": amount, "tax_rate": tax, "is_discount": False, "source": "ocr", "_cy": a["cy"]})
+        qty = col_qty if col_qty and col_qty > 0 else 1
+        unit = (amount // qty) if (qty > 1 and amount is not None and amount % qty == 0) else None
+        items.append({"name": name, "qty": qty, "unit_price": unit, "amount": amount, "tax_rate": tax, "is_discount": False, "source": "ocr", "_cy": a["cy"]})
 
     # 錨に付かなかった箱: 税印だけの行は直後の明細の税率、数量行は直前の明細、それ以外は品名だけの行
     leftovers = [b for b in region if id(b) not in used]
@@ -688,6 +751,27 @@ def parse_boxes(boxes: list[dict[str, Any]]) -> dict[str, Any]:
     # 合計欄が明細の中に紛れていたら外す（`小計` の値が明細の錨に取られたとき）
     if draft.get("subtotal") is not None:
         items = [i for i in items if not (i["amount"] == draft["subtotal"] and not i["name"])]
+
+    # 小計の**後**に引かれる値引き（`JAF5%  -148`）。合計欄の中にあるので明細の領域には入らない。
+    if first_total_y is not None:
+        total_row_y = total_rows["total"]["box"]["cy"] if "total" in total_rows else None
+        for p in price_boxes:
+            if p["price"] is None or p["price"] >= 0 or id(p) in totals_box_ids:
+                continue
+            if p["cy"] <= first_total_y - 0.3 * h_med:
+                continue  # 明細の中の値引きは通常の経路で拾っている
+            if total_row_y is not None and p["cy"] >= total_row_y - 0.3 * h_med:
+                continue
+            left = [
+                b for b in items_boxes
+                if b is not p and id(b) not in totals_box_ids and b["x1"] <= p["x0"] and _overlap(b, p) > 0.3
+            ]
+            name = " ".join(b["text"] for b in sorted(left, key=lambda b: b["x0"])).strip()
+            items.append({
+                "name": name or "値引き", "qty": 1, "unit_price": None, "amount": p["price"],
+                "tax_rate": None, "is_discount": True, "source": "ocr",
+            })
+            notes.append("discount_after_subtotal")
 
     draft["items"] = items
     draft["parse"]["notes"].extend(notes)
