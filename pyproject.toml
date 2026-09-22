@@ -27,6 +27,14 @@ manor = "manor.cli:main"
 # pytest-xdist: 試験を並列で回す（2026-09-07 主人のご質問）。24コアの機械で
 # 1本ずつ回していた。試験どうしは tmp_path で隔離されているので分けて走らせられる。
 dev = ["pytest>=8.0", "httpx>=0.27", "pytest-xdist>=3.6"]
+# ADR-020 D2（2026-09-22）: レシートの OCR。PaddleOCR のモデルを ONNX Runtime で動かす
+# （torch 不要・約 250 MB）。core の依存ではなく既定の group——`uv sync --no-group ocr` で
+# 外せ、無ければレシートは Claude だけで読む（同じ検算・同じ画面）。GPU（Windows）は
+# `uv pip install onnxruntime-directml` で差し替える（`uv run` は余分な包を消さない）。
+ocr = ["rapidocr>=3.9", "onnxruntime>=1.20"]
+
+[tool.uv]
+default-groups = ["dev", "ocr"]
 
 [build-system]
 requires = ["hatchling"]

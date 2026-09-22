@@ -36,6 +36,7 @@ from ..errors import ManorError
 from ..web import config as web_config
 from . import calendar as _calendar_mod
 from . import notion as _notion_mod
+from . import receipt_ocr as _receipt_ocr_mod
 from . import slack as _slack_mod
 from . import tailscale as _tailscale_mod
 from . import voicevox as _voicevox_mod
@@ -102,6 +103,7 @@ _MODULES: tuple[ModuleType, ...] = (
     _slack_mod,
     _notion_mod,
     _calendar_mod,
+    _receipt_ocr_mod,  # ADR-020 D2（レシート OCR。任意の追加パッケージの状態）
 )
 
 _ENTRIES: dict[str, _Entry] = {}

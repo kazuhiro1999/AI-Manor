@@ -347,6 +347,8 @@ def init(home: Path, *, seed_chef_food: bool = False) -> list[str]:
         # ADR-005 §2「imports」: 既存 DB の steward_expense に import_hash 列を冪等に足す。
         # staff のスキーマ（CREATE UNIQUE INDEX）より先に列を用意する必要がある。
         _add_column_if_missing(conn, "steward_expense", "import_hash", "TEXT")
+        # ADR-020 D8（2026-09-22）: レシートから登録した支出の束ね（NULL＝レシート由来でない）。
+        _add_column_if_missing(conn, "steward_expense", "receipt_id", "INTEGER")
 
         # ADR-006 §2「承認に証跡を付ける」(D5・D8): 既存 CREATE TABLE 文は変えず、
         # ここで冪等に列を足す。新規 DB でも core.sql の CREATE TABLE の直後にこの

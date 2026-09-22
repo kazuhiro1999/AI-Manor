@@ -703,6 +703,190 @@ export interface MoneyData {
   recent_expenses?: MoneyExpense[];
 }
 
+/* ---------- money: レシートの読み取り（ADR-020。`/api/v1/money/receipts*`） ---------- */
+
+export type ReceiptStatus = "reading" | "draft" | "committed" | "failed" | "discarded";
+export type ReceiptReview = "ok" | "needs_review" | "fixed";
+// "" は「まだ読んでいない」（ADR-020 §「GET .../receipts」）。
+export type ReceiptMethod = "ocr" | "claude" | "ocr+claude" | "manual" | "";
+export type ReceiptTaxMode = "exclusive" | "inclusive" | "unknown";
+export type ReceiptPaymentMethod = "cash" | "credit" | "qr" | "ic" | "unknown";
+export type ReceiptItemSource = "ocr" | "claude" | "rule" | "alias" | "manual";
+export type ReceiptTaxRate = 8 | 10;
+
+// `POST /money/receipts` 応答の簡易チェック（ADR-020 D9）。issues の符牒は
+// 画面側で訳す（サーバは文を組まない——他の reason/mood の符牒と同じ約束）。
+export type QuickIssue = "no_paper" | "corners_cut" | "blurry" | "too_dark" | "no_total" | "ocr_unavailable";
+
+export interface Quick {
+  ok: boolean;
+  issues: QuickIssue[];
+  paper: boolean;
+  corners_inside: boolean;
+  sharpness: number | null;
+  found: { total: boolean; date: boolean };
+}
+
+// `POST /money/receipts` 自体の応答（受付／簡易チェック不合格／重複のどれか）。
+export interface ReceiptUploadResult {
+  id: number | null;
+  status: "reading" | "rejected" | "duplicate";
+  quick: Quick;
+  duplicate_of?: number;
+}
+
+export interface ReceiptSummary {
+  id: number;
+  status: ReceiptStatus;
+  review: ReceiptReview;
+  store_name: string;
+  purchased_at: string | null;
+  total: number | null;
+  item_count: number;
+  method: ReceiptMethod;
+  reason: string;
+  created_at: string;
+  committed_at: string | null;
+}
+
+export interface ReceiptsOcrInfo {
+  available: boolean;
+  device: "cpu" | "dml" | null;
+  model: string | null;
+}
+
+// `GET /money/receipts` の応答全体。
+export interface ReceiptsListResponse {
+  items: ReceiptSummary[];
+  ocr: ReceiptsOcrInfo;
+  today: { count: number; limit: number };
+}
+
+// `ok: null` は「判定できない（材料が無い）」（ADR-020 D9 の Check 定義）。
+export interface ReceiptCheck {
+  ok: boolean | null;
+  expected: number | null;
+  actual: number | null;
+}
+
+export interface ReceiptChecks {
+  items_sum: ReceiptCheck;
+  item_count: ReceiptCheck;
+  tax_8: ReceiptCheck;
+  tax_10: ReceiptCheck;
+  total: ReceiptCheck;
+  change: ReceiptCheck;
+}
+
+export interface ReceiptItem {
+  id: number;
+  line_no: number;
+  name: string;
+  name_normalized: string;
+  qty: string;
+  unit_price: number | null;
+  amount: number;
+  tax_rate: ReceiptTaxRate | null;
+  is_discount: boolean;
+  category: string;
+  subcategory: string;
+  item_kind: string;
+  source: ReceiptItemSource;
+}
+
+export interface ReceiptTax {
+  rate: ReceiptTaxRate;
+  amount: number;
+}
+
+export interface ReceiptStoreInfo {
+  name: string;
+  branch: string | null;
+  tel: string | null;
+  registration_number: string | null;
+}
+
+// `ReceiptDetail.expenses` の1行——`steward_expense` の全欄ではなく契約どおりの
+// 5つだけ（`MoneyExpense` と似ているが `kind` を持たない別の形）。
+export interface ReceiptExpenseRef {
+  id: number;
+  date: string;
+  amount: number;
+  category: string;
+  memo?: string | null;
+}
+
+export interface ReceiptDetail {
+  id: number;
+  status: ReceiptStatus;
+  review: ReceiptReview;
+  method: ReceiptMethod;
+  reads: number;
+  reason: string;
+  created_at: string;
+  committed_at: string | null;
+  created_by: string;
+  store: ReceiptStoreInfo;
+  purchased_at: string | null;
+  receipt_no: string | null;
+  tax_mode: ReceiptTaxMode;
+  payment_method: ReceiptPaymentMethod;
+  subtotal: number | null;
+  taxes: ReceiptTax[];
+  total: number | null;
+  item_count_declared: number | null;
+  tendered: number | null;
+  change: number | null;
+  items: ReceiptItem[];
+  checks: ReceiptChecks;
+  notes: string[];
+  image_url: string;
+  expenses: ReceiptExpenseRef[];
+}
+
+// `PUT /money/receipts/{id}` の1明細（送るのは全行——ADR-020 D9「画面は全行を送る」）。
+export interface ReceiptItemUpdate {
+  line_no: number;
+  name: string;
+  qty: string;
+  unit_price: number | null;
+  amount: number;
+  tax_rate: ReceiptTaxRate | null;
+  is_discount: boolean;
+  category: string;
+  subcategory: string;
+  item_kind: string;
+}
+
+// `PUT /money/receipts/{id}` の body（全部任意。送った鍵だけ上書き）。
+export interface ReceiptUpdatePayload {
+  store_name?: string;
+  purchased_at?: string | null;
+  total?: number | null;
+  subtotal?: number | null;
+  tax_mode?: ReceiptTaxMode;
+  payment_method?: ReceiptPaymentMethod;
+  taxes?: ReceiptTax[];
+  items?: ReceiptItemUpdate[];
+  learn_aliases?: boolean;
+}
+
+export interface ReceiptRereadResult {
+  id: number;
+  status: "reading";
+}
+
+// `GET /money/categories`。マネーフォワード ME の大項目・中項目＋manor 独自の品目。
+export interface MoneyCategory {
+  name: string;
+  subcategories: string[];
+}
+
+export interface MoneyCategoriesResponse {
+  categories: MoneyCategory[];
+  item_kinds: string[];
+}
+
 /* ---------- secretary ---------- */
 
 export interface AgendaItem {

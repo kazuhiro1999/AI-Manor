@@ -359,6 +359,139 @@ def cmd_budget_set(conn: sqlite3.Connection, home, args) -> object:
 # --- パーサ組み立て --------------------------------------------------------------------
 
 
+# --- money receipt（ADR-020） ------------------------------------------------------------
+
+
+def _receipt_line(s: dict[str, object]) -> str:
+    return i18n.t(
+        "money.receipt.line",
+        id=s["id"], status=s["status"], review=s["review"], date=str(s.get("purchased_at") or "")[:16],
+        store=s.get("store_name") or "-", total=s.get("total") if s.get("total") is not None else "-",
+        items=s.get("item_count") if s.get("item_count") is not None else "-", method=s.get("method") or "-",
+        reason=s.get("reason") or "",
+    )
+
+
+def _summary_of(d: dict[str, object]) -> dict[str, object]:
+    store = d.get("store") if isinstance(d.get("store"), dict) else {}
+    return {**d, "store_name": store.get("name") or "", "item_count": len(d.get("items") or [])}  # type: ignore[arg-type]
+
+
+def cmd_receipt_read(conn: sqlite3.Connection, home, args) -> object:
+    """画像ファイルを取り込んで読み、登録まで進める（背景ジョブと同じ経路を同期で回す）。"""
+    from . import receipts  # noqa: PLC0415
+
+    lines: list[str] = []
+    results: list[dict[str, object]] = []
+    for raw in args.images:
+        src = Path(raw)
+        if not src.is_file():
+            raise ManorError(f"画像が見つかりません: {raw!r}", code=2, key="error.money.receipt_image_missing", params={"path": repr(raw)})
+        ext = src.suffix.lower().lstrip(".") or "jpg"
+        rel = receipts.store_image(Path(home), src.read_bytes(), ext="png" if ext == "png" else "jpg")
+        rid = receipts.create(conn, rel, created_by=getattr(args, "user", "") or "")
+        conn.commit()
+        d = receipts.process(conn, Path(home), rid)
+        results.append(d)
+        lines.append(_receipt_line(_summary_of(d)))
+        checks = d.get("checks") or {}
+        if isinstance(checks, dict):
+            bad = [k for k, v in checks.items() if isinstance(v, dict) and v.get("ok") is False]
+            if bad:
+                lines.append("  " + i18n.t("money.receipt.checks_failed", keys=", ".join(bad)))
+    if getattr(args, "json", False):
+        return results if len(results) > 1 else (results[0] if results else {})
+    return "\n".join(lines)
+
+
+def cmd_receipt_quick(conn: sqlite3.Connection, home, args) -> object:
+    from . import receipts  # noqa: PLC0415
+
+    src = Path(args.image)
+    if not src.is_file():
+        raise ManorError(f"画像が見つかりません: {args.image!r}", code=2, key="error.money.receipt_image_missing", params={"path": repr(args.image)})
+    q = receipts.quick_check(src.read_bytes(), Path(home))
+    if getattr(args, "json", False):
+        return q
+    return i18n.t("money.receipt.quick", ok=i18n.t("common.yes") if q["ok"] else i18n.t("common.no"), issues=", ".join(q["issues"]) or "-")
+
+
+def cmd_receipt_list(conn: sqlite3.Connection, home, args) -> object:
+    from . import receipts  # noqa: PLC0415
+
+    rows = receipts.list_rows(conn, status=args.status, limit=args.limit)
+    if getattr(args, "json", False):
+        return rows
+    if not rows:
+        return i18n.t("common.none")
+    return "\n".join(_receipt_line(r) for r in rows)
+
+
+def cmd_receipt_show(conn: sqlite3.Connection, home, args) -> object:
+    from . import receipts  # noqa: PLC0415
+
+    d = receipts.detail(conn, int(args.id))
+    if d is None:
+        raise ManorError(f"レシートが見つかりません: {args.id}", code=2, key="error.money.receipt_not_found", params={"id": args.id})
+    if getattr(args, "json", False):
+        return d
+    lines = [_receipt_line(_summary_of(d))]
+    for c_key, c in (d.get("checks") or {}).items():
+        mark = "?" if c.get("ok") is None else ("OK" if c.get("ok") else "NG")
+        lines.append(f"  [{mark}] {c_key}: {c.get('expected')} / {c.get('actual')}")
+    for it in d["items"]:
+        lines.append(
+            i18n.t(
+                "money.receipt.item_line", line=it["line_no"], name=it["name"], qty=it["qty"], amount=it["amount"],
+                tax=it["tax_rate"] if it["tax_rate"] is not None else "-", category=it["category"] or "-",
+                kind=it["item_kind"] or "-",
+            )
+        )
+    for e in d["expenses"]:
+        lines.append(i18n.t("money.receipt.expense_line", id=e["id"], date=e["date"], category=e["category"], amount=e["amount"]))
+    return "\n".join(lines)
+
+
+def cmd_receipt_reread(conn: sqlite3.Connection, home, args) -> object:
+    from . import receipts  # noqa: PLC0415
+
+    if receipts.get_row(conn, int(args.id)) is None:
+        raise ManorError(f"レシートが見つかりません: {args.id}", code=2, key="error.money.receipt_not_found", params={"id": args.id})
+    d = receipts.process(conn, Path(home), int(args.id))
+    if getattr(args, "json", False):
+        return d
+    return _receipt_line(_summary_of(d))
+
+
+def cmd_receipt_discard(conn: sqlite3.Connection, home, args) -> object:
+    from . import receipts  # noqa: PLC0415
+
+    if not receipts.discard(conn, int(args.id)):
+        raise ManorError(f"レシートが見つかりません: {args.id}", code=2, key="error.money.receipt_not_found", params={"id": args.id})
+    return i18n.t("money.receipt.discarded", id=args.id)
+
+
+def cmd_receipt_status(conn: sqlite3.Connection, home, args) -> object:
+    from . import receipt_image, receipt_ocr, receipt_reader, receipts  # noqa: PLC0415
+
+    st = receipt_ocr.status()
+    info = {
+        "ocr": st,
+        "opencv": receipt_image.available(),
+        "claude": receipt_reader.claude_available(),
+        "settings": receipts.settings(Path(home)),
+        "today": receipts.today_count(conn),
+    }
+    if getattr(args, "json", False):
+        return info
+    return i18n.t(
+        "money.receipt.status",
+        ocr=i18n.t("common.yes") if st["available"] else i18n.t("common.no"), device=st.get("device") or "-",
+        model=st.get("model") or "-", claude=i18n.t("common.yes") if info["claude"] else i18n.t("common.no"),
+        today=info["today"], limit=info["settings"]["daily_limit"],
+    )
+
+
 def register(subparsers) -> None:
     money_p = subparsers.add_parser("money", help=i18n.t("cli.money.help"))
     money_sub = money_p.add_subparsers(dest="verb")
@@ -445,3 +578,45 @@ def register(subparsers) -> None:
     p.add_argument("--json", action="store_true")
     p.add_argument("--no-render", action="store_true")
     p.set_defaults(func=cmd_budget_set, is_write=True)
+
+    # --- receipt（ADR-020） ---
+    receipt_p = money_sub.add_parser("receipt", help=i18n.t("cli.money.receipt.help"))
+    receipt_sub = receipt_p.add_subparsers(dest="subverb")
+
+    p = receipt_sub.add_parser("read", help=i18n.t("cli.money.receipt.read.help"))
+    p.add_argument("images", nargs="+")
+    p.add_argument("--json", action="store_true")
+    p.add_argument("--no-render", action="store_true")
+    p.set_defaults(func=cmd_receipt_read, is_write=True)
+
+    p = receipt_sub.add_parser("quick", help=i18n.t("cli.money.receipt.quick.help"))
+    p.add_argument("image")
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=cmd_receipt_quick, is_write=False)
+
+    p = receipt_sub.add_parser("list")
+    p.add_argument("--status")
+    p.add_argument("--limit", type=int, default=50)
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=cmd_receipt_list, is_write=False)
+
+    p = receipt_sub.add_parser("show")
+    p.add_argument("id")
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=cmd_receipt_show, is_write=False)
+
+    p = receipt_sub.add_parser("reread")
+    p.add_argument("id")
+    p.add_argument("--json", action="store_true")
+    p.add_argument("--no-render", action="store_true")
+    p.set_defaults(func=cmd_receipt_reread, is_write=True)
+
+    p = receipt_sub.add_parser("discard")
+    p.add_argument("id")
+    p.add_argument("--json", action="store_true")
+    p.add_argument("--no-render", action="store_true")
+    p.set_defaults(func=cmd_receipt_discard, is_write=True)
+
+    p = receipt_sub.add_parser("status", help=i18n.t("cli.money.receipt.status.help"))
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=cmd_receipt_status, is_write=False)

@@ -257,6 +257,7 @@ def create_app(
     from .api_v1 import face_window as api_face_window
     from .api_v1 import house, ideas as api_ideas, imports as api_imports, kitchen, meta, money
     from .api_v1 import night as api_night
+    from .api_v1 import receipts as api_receipts
     from .api_v1 import rules, runs as api_runs, secretary
     from .api_v1 import settings as api_settings
     from .api_v1 import setup as api_setup
@@ -273,6 +274,7 @@ def create_app(
     kitchen.register(app, ctx)
     house.register(app, ctx)
     money.register(app, ctx)
+    api_receipts.register(app, ctx)  # ADR-020 D9（レシートの読み取り。背景の作業列）
     secretary.register(app, ctx)
     rules.register(app, ctx)
     api_task_kinds.register(app, ctx)  # ADR-010 D2（タスクの種類）

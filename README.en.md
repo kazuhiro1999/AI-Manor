@@ -76,7 +76,7 @@ Pantry by expiry, shopping list by aisle, meals kept as a log. More screens in
 | Butler | Tasks & projects, ruling on pending approvals, delegating to staff, consistency checks, assembling context | `manor task` `project` `decision` `handoff` `check` `ctx` |
 | Chef | Pantry, meal suggestions & logging, shopping lists, tastes and allergies | `manor chef` |
 | Housekeeper | Chore rotation, supply levels, maintenance cycles, bin day | `manor house` |
-| Steward | Spending & income, recurring due dates, budget variance, monthly trends | `manor money` |
+| Steward | Spending & income, recurring due dates, budget variance, monthly trends, **receipt scanning** (shoot → auto-register → fix later) | `manor money` |
 | Secretary | Calendar, daily agenda, inbox triage, resolving relative dates | `manor sec` |
 | QA | Reviews what gets built. Doesn't fix it | `manor talk qa` |
 | Auditor | Reviews the butler's own rules from the outside, once a month | `manor talk auditor` |

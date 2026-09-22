@@ -16,6 +16,22 @@
 
 ---
 
+## 2026-09-22（レシートを撮ると家計簿に自動登録される）
+
+### 追加: 家計簿のレシート読み取り（ADR-020）——ローカル OCR＋規則＋検算が基本、Claude は後ろ盾
+
+主人（2026-09-22）「マネーフォワードの OCR のように、スマホで撮ったレシートを家計簿に。claude 依存を
+極力なくしてツール化する。待たせず自動登録して、あとで画像と並べて直せるように」。調査
+（`docs/reports/2026-09-22_receipt-scan-research.md`）で PaddleOCR のモデルが ONNX Runtime で動くと分かり、
+**ローカル OCR（RapidOCR・PP-OCRv6 small）→ 前処理（紙の検出・傾き補正・台形補正）→ 規則で構造化 →
+検算 6 本 → 落ちたら Claude（画像を同梱・道具ゼロ）→ 分類（辞書 → 語彙 → Claude）→ 自動登録**の順に組んだ。
+`steward_receipt`／`steward_receipt_item`／`steward_item_alias` を新設し、`steward_expense.receipt_id` で束ねる
+（1 レシート＝大項目ごとに分割した支出）。分類はマネーフォワード ME の大項目・中項目＋独自の品目の 3 階層。
+同じレシートは指紋（登録番号｜日時｜合計）で「登録済み」に。CLI `manor money receipt read|quick|list|show|reread|discard|status`、
+API `/api/v1/money/receipts*`（受付は即 id、読み取りは背景の作業列）、Web の家計に「レシート」ページ（撮る・履歴・詳細で修正）。
+OCR は `pyproject` の既定 group `ocr`（`uv sync` で入る。GPU は `uv pip install onnxruntime-directml`）。拡張機能の一覧に
+「レシート OCR（ローカル）」。**Claude への送信は主人の常時許可**（`home/ENV.md`）。
+
 ## 2026-09-20（完了したプロジェクトを俯瞰で目立たせない）
 
 ### 変更: プロジェクト俯瞰で、畳んだ（done）プロジェクトは残日数を出さず、既定で折りたたむ

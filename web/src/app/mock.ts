@@ -34,6 +34,7 @@ import type {
   MenuReason,
   MenuRecommendation,
   Meta,
+  MoneyCategory,
   MoneyData,
   MoneyExpense,
   NightReport,
@@ -48,6 +49,8 @@ import type {
   RecipeListItem,
   RecipeNutrition,
   RecipeNutritionUnresolved,
+  ReceiptItem,
+  ReceiptItemUpdate,
   RunRow,
   RunsData,
   RunStatsData,
@@ -446,6 +449,231 @@ const budgets: Record<string, number> = { 食費: 40000, 光熱費: 15000 };
 const recurring: { id: number; name: string; next_due: string; overdue_days: number; amount: number }[] = [
   { id: 1, name: "家賃", next_due: daysFromToday(5), overdue_days: -5, amount: 80000 },
 ];
+
+/* ---------- money: レシートの読み取り（ADR-020）。実写真の解析はできないので、
+ * ファイル名の符牒（"reject"/"dup" を含む）で状態を切り替えられる小さな仕掛けにした
+ * ——`?mock=1` で手を動かして確かめるためのもので、本物の OCR・検算そのものは真似ていない。
+ * ---------- */
+const RECEIPT_DAILY_LIMIT = 30;
+let receiptsToday = 1; // 見本1件目を「今日ぶん」に数える
+let receiptSeq = 1;
+let receiptItemSeq = 100;
+
+const MONEY_CATEGORIES: MoneyCategory[] = [
+  { name: "食費", subcategories: ["食料品", "外食", "飲料"] },
+  { name: "日用品", subcategories: ["消耗品", "衛生用品"] },
+  { name: "雑費", subcategories: ["その他"] },
+];
+const MONEY_ITEM_KINDS = [
+  "肉類", "魚介", "野菜", "果物", "乳製品", "卵", "パン", "米穀", "惣菜", "冷凍", "菓子", "飲料", "酒類", "調味料", "日用雑貨", "衛生",
+];
+
+interface MockReceipt {
+  id: number;
+  status: "reading" | "draft" | "committed" | "failed" | "discarded";
+  review: "ok" | "needs_review" | "fixed";
+  method: string;
+  reads: number;
+  reason: string;
+  created_at: string;
+  committed_at: string | null;
+  created_by: string;
+  store: { name: string; branch: string | null; tel: string | null; registration_number: string | null };
+  purchased_at: string | null;
+  receipt_no: string | null;
+  tax_mode: "exclusive" | "inclusive" | "unknown";
+  payment_method: "cash" | "credit" | "qr" | "ic" | "unknown";
+  subtotal: number | null;
+  taxes: { rate: 8 | 10; amount: number }[];
+  total: number | null;
+  item_count_declared: number | null;
+  tendered: number | null;
+  change: number | null;
+  items: ReceiptItem[];
+  notes: string[];
+  fingerprint: string;
+  expenseIds: number[]; // `expenses`（money の配列）への参照——D8「1レシート＝1支出＋明細」
+}
+
+function makeReceiptCheck(ok: boolean | null, expected: number | null, actual: number | null) {
+  return { ok, expected, actual };
+}
+
+/** 検算6本（ADR-020 D5）の合成版。①⑤⑥は実際に突き合わせる。②はitem_count_declaredが
+ * あるときだけ。③④（税率別）は mock の範囲では判定しない（判定不能のまま返す——
+ * 手で作った数値をさらに二重に検算するとかえって食い違いやすいための簡略化）。 */
+function computeReceiptChecks(r: MockReceipt) {
+  const itemsSum = r.items.reduce((s, it) => s + it.amount, 0);
+  const tax8 = r.taxes.find((tx) => tx.rate === 8)?.amount ?? 0;
+  const tax10 = r.taxes.find((tx) => tx.rate === 10)?.amount ?? 0;
+  const totalFromParts = (r.subtotal ?? itemsSum) + tax8 + tax10;
+  return {
+    items_sum: r.subtotal == null ? makeReceiptCheck(null, null, null) : makeReceiptCheck(itemsSum === r.subtotal, r.subtotal, itemsSum),
+    item_count:
+      r.item_count_declared == null
+        ? makeReceiptCheck(null, null, null)
+        : makeReceiptCheck(r.item_count_declared === r.items.length, r.item_count_declared, r.items.length),
+    tax_8: makeReceiptCheck(null, null, null),
+    tax_10: makeReceiptCheck(null, null, null),
+    total: r.total == null ? makeReceiptCheck(null, null, null) : makeReceiptCheck(totalFromParts === r.total, totalFromParts, r.total),
+    change:
+      r.tendered == null || r.total == null
+        ? makeReceiptCheck(null, null, null)
+        : makeReceiptCheck(r.tendered - r.total === r.change, r.tendered - r.total, r.change),
+  };
+}
+
+function receiptToSummary(r: MockReceipt) {
+  return {
+    id: r.id,
+    status: r.status,
+    review: r.review,
+    store_name: r.store.name,
+    purchased_at: r.purchased_at,
+    total: r.total,
+    item_count: r.items.length,
+    method: r.method,
+    reason: r.reason,
+    created_at: r.created_at,
+    committed_at: r.committed_at,
+  };
+}
+
+function receiptToDetail(r: MockReceipt) {
+  return {
+    id: r.id,
+    status: r.status,
+    review: r.review,
+    method: r.method,
+    reads: r.reads,
+    reason: r.reason,
+    created_at: r.created_at,
+    committed_at: r.committed_at,
+    created_by: r.created_by,
+    store: r.store,
+    purchased_at: r.purchased_at,
+    receipt_no: r.receipt_no,
+    tax_mode: r.tax_mode,
+    payment_method: r.payment_method,
+    subtotal: r.subtotal,
+    taxes: r.taxes,
+    total: r.total,
+    item_count_declared: r.item_count_declared,
+    tendered: r.tendered,
+    change: r.change,
+    items: r.items,
+    checks: computeReceiptChecks(r),
+    notes: r.notes,
+    // 本物は `/api/v1/money/receipts/{id}/image` だが、mock は実写真を持たないので
+    // それらしい画像を直接指す（?mock=1 の手触り確認用。契約の経路自体は違う）。
+    image_url: `https://picsum.photos/seed/receipt-${r.id}/480/640`,
+    expenses: r.expenseIds
+      .map((eid) => expenses.find((e) => e.id === eid))
+      .filter((e): e is MoneyExpense => !!e)
+      .map((e) => ({ id: e.id, date: e.date, amount: e.amount, category: e.category, memo: e.memo })),
+  };
+}
+
+/** D8「明細の大項目が複数あれば大項目ごとに `steward_expense` を分けて書く」の合成版。
+ * 既存の紐づく支出を消し、明細を大項目ごとに束ねて書き直す。 */
+function relinkReceiptExpenses(r: MockReceipt): void {
+  for (const eid of r.expenseIds) {
+    const idx = expenses.findIndex((e) => e.id === eid);
+    if (idx >= 0) expenses.splice(idx, 1);
+  }
+  r.expenseIds = [];
+  if (r.status !== "committed") return;
+  const byCategory = new Map<string, number>();
+  for (const it of r.items) {
+    const cat = it.category || "雑費";
+    byCategory.set(cat, (byCategory.get(cat) || 0) + it.amount);
+  }
+  const date = (r.purchased_at || TODAY).slice(0, 10);
+  for (const [category, amount] of byCategory) {
+    expenseSeq += 1;
+    const e: MoneyExpense = { id: expenseSeq, date, category, memo: r.store.name, amount, kind: "expense" };
+    expenses.unshift(e);
+    r.expenseIds.push(e.id);
+  }
+}
+
+const receipts: MockReceipt[] = [];
+
+// 見本1件目: スーパーでの買い物（review=ok。検算が全部揃う数値で作ってある）。
+{
+  const seed: MockReceipt = {
+    id: receiptSeq,
+    status: "committed",
+    review: "ok",
+    method: "ocr",
+    reads: 1,
+    reason: "",
+    created_at: new Date(Date.now() - 3600000).toISOString(),
+    committed_at: new Date(Date.now() - 3600000).toISOString(),
+    created_by: "master",
+    store: { name: "スーパーやまだ", branch: "本店", tel: null, registration_number: "T1234567890123" },
+    purchased_at: TODAY,
+    receipt_no: "0001",
+    tax_mode: "exclusive",
+    payment_method: "cash",
+    subtotal: 648,
+    taxes: [
+      { rate: 8, amount: 28 },
+      { rate: 10, amount: 30 },
+    ],
+    total: 706,
+    item_count_declared: 3,
+    tendered: 1000,
+    change: 294,
+    items: [
+      { id: (receiptItemSeq += 1), line_no: 1, name: "牛乳", name_normalized: "牛乳", qty: "1", unit_price: 198, amount: 198, tax_rate: 8, is_discount: false, category: "食費", subcategory: "食料品", item_kind: "乳製品", source: "ocr" },
+      { id: (receiptItemSeq += 1), line_no: 2, name: "食パン", name_normalized: "食パン", qty: "1", unit_price: 150, amount: 150, tax_rate: 8, is_discount: false, category: "食費", subcategory: "食料品", item_kind: "パン", source: "ocr" },
+      { id: (receiptItemSeq += 1), line_no: 3, name: "ラップ", name_normalized: "ラップ", qty: "1", unit_price: 300, amount: 300, tax_rate: 10, is_discount: false, category: "日用品", subcategory: "消耗品", item_kind: "日用雑貨", source: "ocr" },
+    ],
+    notes: [],
+    fingerprint: "seed-1",
+    expenseIds: [],
+  };
+  receipts.push(seed);
+  relinkReceiptExpenses(seed);
+}
+
+function findReceipt(id: number): MockReceipt {
+  const r = receipts.find((x) => x.id === id);
+  if (!r) notFound(`レシートが見つかりません: ${id}`);
+  return r;
+}
+
+/** 背景ジョブの合成版（ADR-020 D1「背景ジョブ: 前処理 → OCR → 規則 → 検算 → 分類 → 自動登録」）。
+ * 実際の画像解析はできないので、いつも同じ小さなレシート（コンビニでの買い物2点）を
+ * 「読み取れた」ことにして数秒後に commit する——一覧のポーリングで `reading` が
+ * `committed` に変わる様子を確かめられるようにするためのもの。 */
+function scheduleReceiptProcessing(id: number): void {
+  setTimeout(() => {
+    const r = receipts.find((x) => x.id === id);
+    if (!r || r.status === "discarded") return;
+    r.status = "committed";
+    r.review = "ok";
+    r.method = "ocr";
+    r.store = { name: "コンビニ みなみ店", branch: null, tel: null, registration_number: "T9876543210987" };
+    r.purchased_at = new Date().toISOString().slice(0, 16);
+    r.receipt_no = String(1000 + r.id);
+    r.tax_mode = "exclusive";
+    r.payment_method = "cash";
+    r.subtotal = 350;
+    r.taxes = [{ rate: 8, amount: 28 }];
+    r.total = 378;
+    r.item_count_declared = 2;
+    r.tendered = 500;
+    r.change = 122;
+    r.items = [
+      { id: (receiptItemSeq += 1), line_no: 1, name: "おにぎり", name_normalized: "おにぎり", qty: "1", unit_price: 150, amount: 150, tax_rate: 8, is_discount: false, category: "食費", subcategory: "食料品", item_kind: "惣菜", source: "ocr" },
+      { id: (receiptItemSeq += 1), line_no: 2, name: "お茶", name_normalized: "お茶", qty: "1", unit_price: 200, amount: 200, tax_rate: 8, is_discount: false, category: "食費", subcategory: "飲料", item_kind: "飲料", source: "ocr" },
+    ];
+    r.committed_at = new Date().toISOString();
+    relinkReceiptExpenses(r);
+  }, 2500);
+}
 
 /* ---------- secretary ---------- */
 let reminderSeq = 2;
@@ -2028,6 +2256,82 @@ export async function mockApi<T>(path: string, options: ApiOptions = {}): Promis
     return { category, limit: budgets[category] } as unknown as T;
   }
 
+  // ---------- money: レシート（ADR-020） ----------
+  if (path === "/money/categories" && method === "GET") {
+    return { categories: MONEY_CATEGORIES, item_kinds: MONEY_ITEM_KINDS } as unknown as T;
+  }
+  if (path.startsWith("/money/receipts") && !path.match(/^\/money\/receipts\/\d+/) && method === "GET") {
+    const qs = path.split("?")[1] || "";
+    const params = new URLSearchParams(qs);
+    const status = params.get("status");
+    const limit = Number(params.get("limit") || 50);
+    const items = receipts
+      .filter((r) => !status || r.status === status)
+      .slice()
+      .sort((a, b) => b.created_at.localeCompare(a.created_at))
+      .slice(0, limit)
+      .map(receiptToSummary);
+    return {
+      items,
+      ocr: { available: true, device: "cpu", model: "PP-OCRv6-small" },
+      today: { count: receiptsToday, limit: RECEIPT_DAILY_LIMIT },
+    } as unknown as T;
+  }
+  if (path.match(/^\/money\/receipts\/\d+$/) && method === "GET") {
+    const id = Number(path.split("/")[3]);
+    return receiptToDetail(findReceipt(id)) as unknown as T;
+  }
+  if (path.match(/^\/money\/receipts\/\d+$/) && method === "PUT") {
+    const id = Number(path.split("/")[3]);
+    const r = findReceipt(id);
+    if ("store_name" in body) r.store = { ...r.store, name: String(body.store_name ?? "") };
+    if ("purchased_at" in body) r.purchased_at = (body.purchased_at as string | null) ?? null;
+    if ("total" in body) r.total = (body.total as number | null) ?? null;
+    if ("subtotal" in body) r.subtotal = (body.subtotal as number | null) ?? null;
+    if ("tax_mode" in body) r.tax_mode = body.tax_mode as MockReceipt["tax_mode"];
+    if ("payment_method" in body) r.payment_method = body.payment_method as MockReceipt["payment_method"];
+    if (Array.isArray(body.taxes)) r.taxes = body.taxes as MockReceipt["taxes"];
+    if (Array.isArray(body.items)) {
+      const incoming = body.items as ReceiptItemUpdate[];
+      r.items = incoming.map((it) => ({
+        id: (receiptItemSeq += 1),
+        line_no: it.line_no,
+        name: it.name,
+        name_normalized: it.name,
+        qty: it.qty,
+        unit_price: it.unit_price ?? null,
+        amount: it.amount,
+        tax_rate: it.tax_rate ?? null,
+        is_discount: it.is_discount,
+        category: it.category,
+        subcategory: it.subcategory,
+        item_kind: it.item_kind,
+        source: "manual",
+      }));
+    }
+    // ADR-020 D9「検算が全部一致なら fixed、そうでなくても主人が保存したので fixed」
+    // ——PUT を受けたら常に fixed（手で直した印）。
+    r.review = "fixed";
+    relinkReceiptExpenses(r);
+    return receiptToDetail(r) as unknown as T;
+  }
+  if (path.match(/^\/money\/receipts\/\d+\/reread$/) && method === "POST") {
+    const id = Number(path.split("/")[3]);
+    const r = findReceipt(id);
+    if (r.status === "discarded") badRequest("取り消し済みのレシートは読み直せません");
+    r.status = "reading";
+    r.reads += 1;
+    scheduleReceiptProcessing(id);
+    return { id, status: "reading" } as unknown as T;
+  }
+  if (path.match(/^\/money\/receipts\/\d+$/) && method === "DELETE") {
+    const id = Number(path.split("/")[3]);
+    const r = findReceipt(id);
+    r.status = "discarded";
+    relinkReceiptExpenses(r);
+    return { ok: true } as unknown as T;
+  }
+
   // ---------- secretary ----------
   if (path === "/secretary" && method === "GET") {
     const data: SecretaryData = {
@@ -2626,6 +2930,75 @@ export async function mockApiUpload<T>(path: string, _form: FormData): Promise<T
   }
   if (path === "/imports/money/commit") {
     return (await mockApi<T>(path, { method: "POST" })) as T;
+  }
+  if (path === "/money/receipts") {
+    const file = _form.get("file");
+    if (!(file instanceof Blob)) badRequest("file が必要です");
+    const force = _form.get("force") === "1";
+    // 実写真の解析はできないので、ファイル名の符牒で応答を切り替える
+    // （"reject" を含む名前 → 簡易チェック不合格、"dup" を含む名前 → 重複）。
+    const filename = file instanceof File ? file.name : "";
+    if (/reject/i.test(filename) && !force) {
+      return {
+        id: null,
+        status: "rejected",
+        quick: {
+          ok: false,
+          issues: ["blurry", "no_total"],
+          paper: true,
+          corners_inside: true,
+          sharpness: 12,
+          found: { total: false, date: true },
+        },
+      } as unknown as T;
+    }
+    if (/dup/i.test(filename)) {
+      const existing = receipts.find((r) => r.status === "committed") ?? receipts[0];
+      return {
+        id: null,
+        status: "duplicate",
+        duplicate_of: existing ? existing.id : 1,
+        quick: { ok: true, issues: [], paper: true, corners_inside: true, sharpness: 80, found: { total: true, date: true } },
+      } as unknown as T;
+    }
+    if (receiptsToday >= RECEIPT_DAILY_LIMIT) {
+      throw new ApiError("本日の上限に達しました", 429);
+    }
+    receiptSeq += 1;
+    receiptsToday += 1;
+    const r: MockReceipt = {
+      id: receiptSeq,
+      status: "reading",
+      review: "needs_review",
+      method: "",
+      reads: 1,
+      reason: "",
+      created_at: new Date().toISOString(),
+      committed_at: null,
+      created_by: "master",
+      store: { name: "", branch: null, tel: null, registration_number: null },
+      purchased_at: null,
+      receipt_no: null,
+      tax_mode: "unknown",
+      payment_method: "unknown",
+      subtotal: null,
+      taxes: [],
+      total: null,
+      item_count_declared: null,
+      tendered: null,
+      change: null,
+      items: [],
+      notes: [],
+      fingerprint: `up-${receiptSeq}`,
+      expenseIds: [],
+    };
+    receipts.unshift(r);
+    scheduleReceiptProcessing(r.id);
+    return {
+      id: r.id,
+      status: "reading",
+      quick: { ok: true, issues: [], paper: true, corners_inside: true, sharpness: 90, found: { total: true, date: true } },
+    } as unknown as T;
   }
   if (path === "/face/model") {
     const agent = String(_form.get("agent") || "");

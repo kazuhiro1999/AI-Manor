@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Link } from "react-router-dom";
 import type { ModuleDefinition } from "../../app/module";
 import { usePolling } from "../../app/polling";
 import { api, ApiError } from "../../app/api";
@@ -6,6 +7,8 @@ import type { MoneyData } from "../../app/types";
 import { useToast } from "../../components/Toast";
 import { ScreenHeader } from "../../components/ScreenHeader";
 import { formatDay, useT } from "../../app/i18n";
+import { ReceiptsPage } from "./receipts/ReceiptsPage";
+import { ReceiptDetailPage } from "./receipts/ReceiptDetailPage";
 
 function MoneyScreen() {
   const t = useT();
@@ -89,6 +92,9 @@ function MoneyScreen() {
   return (
     <div className="view" id="view-money">
       <ScreenHeader title={title} description={description} />
+      <p className="panel-note">
+        <Link to="/money/receipts">{t("money.receipts.entryLink")}</Link>
+      </p>
       <section className="panel panel-primary">
         <div className="panel-head">
           <h2>{t("money.summary.heading")}</h2>
@@ -225,5 +231,11 @@ export const moneyModule: ModuleDefinition = {
   description: "money.description",
   icon: "¥",
   order: 7,
-  routes: [{ index: true, element: <MoneyScreen /> }],
+  routes: [
+    { index: true, element: <MoneyScreen /> },
+    // ADR-020 D9: レシートは別ページ（家計簿のトップに詰め込まない。kitchen の
+    // recipes/* と同じ立て付け）。行き来は MoneyScreen 上部の1本のリンクから。
+    { path: "receipts", element: <ReceiptsPage /> },
+    { path: "receipts/:id", element: <ReceiptDetailPage /> },
+  ],
 };

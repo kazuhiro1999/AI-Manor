@@ -95,6 +95,17 @@ ALLOWLIST: set[str] = {
     # このマニフェスト定義自体は今回の範囲外とする(枠組み側の `extensions/__init__.py`
     # は CLI コマンドとして別に訳した)。
     "extensions/calendar.py",
+    "extensions/receipt_ocr.py",
+    # [データ]+[エージェント向け] レシートの読み取り（ADR-020・2026-09-22）: `receipt_parse.py` は
+    # レシートの合計欄の語（小計・合計・お預り…）と誤読の型、`receipt_reader.py` は `claude -p` へ渡す
+    # 読み取り・分類の指示文（recipe_import の STRUCTURE_PROMPT_TEMPLATE と同じ扱い）、
+    # `receipt_classify.py`／`receipts.py` は語彙の既定（「未分類」「値引き」「レシート」）で、
+    # 明細や支出の memo として DB に永続する実データ。画面の文言は Web が `money.receipts.*` で訳す。
+    "staff/steward/receipt_checks.py",  # 品名の名寄せで剥がす記号の表（データ）
+    "staff/steward/receipt_parse.py",
+    "staff/steward/receipt_reader.py",
+    "staff/steward/receipt_classify.py",
+    "staff/steward/receipts.py",
     "extensions/notion.py",
     "extensions/slack.py",
     "extensions/tailscale.py",
@@ -134,6 +145,7 @@ ALLOWLIST: set[str] = {
     "web/api_v1/imports.py",
     "web/api_v1/kitchen.py",
     "web/api_v1/money.py",
+    "web/api_v1/receipts.py",  # ADR-020（同じ枠。detail は画面が受け取る API の応答）
     "web/api_v1/night.py",
     "web/api_v1/secretary.py",
     "web/api_v1/setup.py",

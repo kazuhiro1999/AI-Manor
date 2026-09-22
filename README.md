@@ -73,7 +73,7 @@ git config core.hooksPath .githooks   # git 管理下に置くなら（漏れを
 | 執事 butler | タスク・プロジェクトの管理、判断待ちの裁定、部下への委譲、整合検査、文脈の組み立て | `manor task` `project` `decision` `handoff` `check` `ctx` |
 | 料理長 chef | 在庫、献立の提案・記録、買い物リスト、好み・アレルギー | `manor chef` |
 | 家政婦 housekeeper | 家事当番、消耗品の残量、設備の手入れ周期、ゴミの日 | `manor house` |
-| 家令 steward | 支出・収入、定期支払いの期日、予算との差、月別の傾向 | `manor money` |
+| 家令 steward | 支出・収入、定期支払いの期日、予算との差、月別の傾向、**レシートの読み取り**（撮る→自動登録→あとで直す） | `manor money` |
 | 秘書 secretary | 予定・控え、日次一覧、inbox の仕分け、相対日付の解決 | `manor sec` |
 | 検分 qa | 作ったものを検める。直さない | `manor talk qa` |
 | 監査 auditor | 執事自身の規則を月1で外から検める | `manor talk auditor` |
