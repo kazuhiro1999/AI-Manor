@@ -678,3 +678,30 @@ table.grid td.col-wide, table.grid th.col-wide { min-width: 220px; }
   .menu-cand { flex-wrap: wrap; }
   .menu-cand-thumb { flex-basis: 72px; }
 }
+
+/* ---------- money: 内訳（ADR-020 追補 `GET /money/breakdown`）----------
+ * 横棒は単一色（系列は1つ。大項目の識別は文字で——主人「マネーフォワードみたいに」に
+ * 対して、色分けはしない方針にした）。幅は常にトラックの100%を基準にした割合で描くので
+ * スマホ幅でも崩れない。`.row-item`（main.css 既存）を縦積みにする形で乗せる。 */
+.breakdown-row { flex-direction: column; align-items: stretch; gap: 5px; }
+.breakdown-row-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.breakdown-bar-track { display: block; width: 100%; height: 9px; border-radius: 4px; background: var(--bg-panel-2); overflow: hidden; }
+.breakdown-bar-fill { display: block; height: 100%; background: var(--accent); border-radius: inherit; }
+.breakdown-row-sub { font-size: 10.5px; color: var(--text-faint); }
+
+/* 月の切り替え（◀ 前月 / 2026年9月 / 翌月 ▶）。 */
+.breakdown-month-nav { font-weight: 700; font-size: 13.5px; min-width: 110px; text-align: center; }
+
+/* 日別・月の推移: 細い縦棒（単一色）。`.breakdown-daily` は日数ぶん横に並ぶので、
+ * 狭い画面では折り返さず横スクロールにする（数値を潰さない——ADR-010 のスマホ配慮と同じ考え）。 */
+.breakdown-vbars { display: flex; align-items: flex-end; gap: 3px; height: 84px; overflow-x: auto; padding-top: 4px; }
+.breakdown-vbars.breakdown-months { height: 100px; gap: 10px; overflow-x: visible; }
+.breakdown-vcol { flex: 1 1 0; min-width: 5px; display: flex; flex-direction: column; align-items: stretch; justify-content: flex-end; height: 100%; }
+.breakdown-months .breakdown-vcol { min-width: 34px; max-width: 96px; }
+.breakdown-vbars.breakdown-months { justify-content: flex-start; }
+.breakdown-vbar { width: 100%; background: var(--accent); border-radius: 2px 2px 0 0; min-height: 1px; }
+.breakdown-months .breakdown-vbar.is-current { opacity: 1; }
+.breakdown-months .breakdown-vbar { opacity: 0.55; }
+.breakdown-vlabel { font-size: 9px; color: var(--text-faint); text-align: center; margin-top: 3px; white-space: nowrap; }
+.breakdown-vlabel.is-weekend { opacity: 0.5; }
+.breakdown-vamount { font-size: 10px; color: var(--text-dim); text-align: center; margin-top: 1px; white-space: nowrap; }

@@ -887,6 +887,92 @@ export interface MoneyCategoriesResponse {
   item_kinds: string[];
 }
 
+/* ---------- money: 内訳（ADR-020 追補。`GET /money/breakdown?ym=YYYY-MM`） ---------- */
+
+export interface MoneyBreakdownMonthPoint {
+  ym: string;
+  expense: number;
+  income: number;
+}
+
+export interface MoneyBreakdownSummary {
+  expense: number;
+  income: number;
+  prev_expense: number | null;
+  diff: number | null;
+  receipts: number;
+  days_with_spending: number;
+}
+
+// 大項目（マネーフォワード ME の大分類）。budget/prev_amount は無ければ null。
+export interface MoneyBreakdownCategory {
+  name: string;
+  amount: number;
+  share: number;
+  prev_amount: number | null;
+  budget: number | null;
+}
+
+// 中項目。登録済みレシートの明細から（`category` は大項目名を添える）。
+export interface MoneyBreakdownSubcategory {
+  category: string;
+  name: string;
+  amount: number;
+  share: number;
+}
+
+// 品目。登録済みレシートの明細から。
+export interface MoneyBreakdownItemKind {
+  name: string;
+  amount: number;
+  share: number;
+  items: number;
+}
+
+// 店。登録済みレシートから。
+export interface MoneyBreakdownStore {
+  name: string;
+  amount: number;
+  share: number;
+  receipts: number;
+}
+
+// よく買ったもの（同じ品名を足した上位10）。
+export interface MoneyBreakdownTopItem {
+  name: string;
+  amount: number;
+  qty: number;
+  store: string;
+  item_kind: string;
+  count: number;
+}
+
+export interface MoneyBreakdownDailyPoint {
+  date: string;
+  amount: number;
+}
+
+export interface MoneyBreakdownTopStat {
+  name: string;
+  amount: number;
+  share: number;
+}
+
+export interface MoneyBreakdownResponse {
+  ym: string;
+  prev_ym: string;
+  months: MoneyBreakdownMonthPoint[]; // データのある月だけ、古い→新しい、直近6か月
+  summary: MoneyBreakdownSummary;
+  by_category: MoneyBreakdownCategory[]; // 金額の降順
+  by_subcategory: MoneyBreakdownSubcategory[]; // 金額の降順
+  by_item_kind: MoneyBreakdownItemKind[]; // 金額の降順
+  by_store: MoneyBreakdownStore[]; // 金額の降順
+  top_items: MoneyBreakdownTopItem[];
+  daily: MoneyBreakdownDailyPoint[]; // 月の全日
+  top_category: MoneyBreakdownTopStat | null;
+  top_item_kind: MoneyBreakdownTopStat | null;
+}
+
 /* ---------- secretary ---------- */
 
 export interface AgendaItem {

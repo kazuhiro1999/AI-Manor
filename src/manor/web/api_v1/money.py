@@ -55,6 +55,21 @@ def register(app: FastAPI, ctx: WebContext) -> None:
             ]
             return {"month": month, "due": due, "recent_expenses": recent}
 
+    @app.get("/api/v1/money/breakdown")
+    def breakdown(ym: str | None = None) -> dict[str, object]:
+        """月の内訳（2026-09-22。契約は docs/design/ADR-020_api_contract.md 末尾）。数えるだけ。"""
+        from ...staff.steward import breakdown as breakdown_mod
+        from ...staff.steward import ops as steward_ops
+        from ... import util
+
+        with open_conn(ctx) as conn:
+            _require_steward(conn)
+            target = ym or util.now()[:7]
+            try:
+                return breakdown_mod.month_breakdown(conn, steward_ops.parse_ym(target))
+            except ManorError as exc:
+                raise manor_error_to_http(exc)
+
     @app.post("/api/v1/money/expense")
     def expense_add(body: ExpenseRequest) -> dict[str, object]:
         require_writable(ctx)

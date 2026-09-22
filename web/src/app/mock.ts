@@ -34,6 +34,7 @@ import type {
   MenuReason,
   MenuRecommendation,
   Meta,
+  MoneyBreakdownResponse,
   MoneyCategory,
   MoneyData,
   MoneyExpense,
@@ -673,6 +674,208 @@ function scheduleReceiptProcessing(id: number): void {
     r.committed_at = new Date().toISOString();
     relinkReceiptExpenses(r);
   }, 2500);
+}
+
+/* ---------- money: 内訳（ADR-020 追補 `GET /money/breakdown`）。他の endpoint と同じ流儀
+ * ——架空のデータを2か月ぶん（今月・先月）だけ用意する。それ以外の ym は「記録なし」の形
+ * （空の内訳・全日0円）で返す。`receipts`/`expenses` から実計算はしない
+ * （課題の指示どおり、契約の形そのままの読み物用フィクスチャ）。 ---------- */
+function breakdownYmNow(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+}
+function breakdownShiftYm(ym: string, delta: number): string {
+  const [y, m] = ym.split("-").map(Number);
+  const d = new Date(y, m - 1 + delta, 1);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+}
+function breakdownDaysInYm(ym: string): number {
+  const [y, m] = ym.split("-").map(Number);
+  return new Date(y, m, 0).getDate();
+}
+function withShare<T extends { amount: number }>(rows: T[], total: number): (T & { share: number })[] {
+  return rows.map((r) => ({ ...r, share: total > 0 ? r.amount / total : 0 }));
+}
+// 日別の山谷（週替わりの買い物・0円の日が混ざる見本）。合計は月の支出とおおよそ整合する
+// 程度で良い（フィクスチャなので厳密な検算はしない——本物の計算は steward 側の仕事）。
+const BREAKDOWN_DAILY_PATTERN = [
+  0, 1200, 0, 3400, 800, 6200, 0, 0, 1500, 4800, 0, 2200, 900, 7600, 0, 1100, 0, 3300, 5400, 0, 800, 0, 2600, 9800, 0, 1400, 0, 4100, 600, 0, 0,
+];
+function breakdownDaily(ym: string): { date: string; amount: number }[] {
+  const days = breakdownDaysInYm(ym);
+  return Array.from({ length: days }, (_, i) => ({
+    date: `${ym}-${String(i + 1).padStart(2, "0")}`,
+    amount: BREAKDOWN_DAILY_PATTERN[i % BREAKDOWN_DAILY_PATTERN.length],
+  }));
+}
+
+const BREAKDOWN_CUR_YM = breakdownYmNow();
+const BREAKDOWN_PREV_YM = breakdownShiftYm(BREAKDOWN_CUR_YM, -1);
+
+function breakdownEmpty(ym: string): MoneyBreakdownResponse {
+  return {
+    ym,
+    prev_ym: breakdownShiftYm(ym, -1),
+    months: breakdownMonths(),
+    summary: { expense: 0, income: 0, prev_expense: null, diff: null, receipts: 0, days_with_spending: 0 },
+    by_category: [],
+    by_subcategory: [],
+    by_item_kind: [],
+    by_store: [],
+    top_items: [],
+    daily: breakdownDaily(ym),
+    top_category: null,
+    top_item_kind: null,
+  };
+}
+
+function breakdownMonths(): MoneyBreakdownResponse["months"] {
+  return [
+    { ym: BREAKDOWN_PREV_YM, expense: 98000, income: 0 },
+    { ym: BREAKDOWN_CUR_YM, expense: 112400, income: 0 },
+  ];
+}
+
+function breakdownCurrent(): MoneyBreakdownResponse {
+  const total = 112400;
+  const byCategory = withShare(
+    [
+      { name: "食費", amount: 65000, prev_amount: 60000 as number | null, budget: 70000 as number | null },
+      { name: "日用品", amount: 18000, prev_amount: 12000 as number | null, budget: 15000 as number | null }, // 予算超過の見本
+      { name: "交通費", amount: 12000, prev_amount: 9000 as number | null, budget: null as number | null },
+      { name: "交際費", amount: 9400, prev_amount: null as number | null, budget: null as number | null }, // 先月は無かった大項目
+      { name: "雑費", amount: 8000, prev_amount: 8000 as number | null, budget: 10000 as number | null },
+    ],
+    total
+  );
+  const bySubcategory = withShare(
+    [
+      { category: "食費", name: "食料品", amount: 38000 },
+      { category: "食費", name: "外食", amount: 15000 },
+      { category: "日用品", name: "消耗品", amount: 9000 },
+      { category: "食費", name: "飲料", amount: 6000 },
+      { category: "日用品", name: "衛生用品", amount: 4000 },
+      { category: "雑費", name: "文具", amount: 3000 },
+      { category: "食費", name: "菓子", amount: 2500 },
+      { category: "日用品", name: "洗剤", amount: 1800 },
+      { category: "食費", name: "調味料", amount: 1200 }, // 9件目——画面の「その他」集約を確かめる見本
+    ],
+    total
+  );
+  const byItemKind = withShare(
+    [
+      { name: "肉類", amount: 14000, items: 6 },
+      { name: "野菜", amount: 9500, items: 10 },
+      { name: "惣菜", amount: 8000, items: 5 },
+      { name: "飲料", amount: 6000, items: 8 },
+      { name: "乳製品", amount: 5200, items: 4 },
+      { name: "衛生", amount: 4000, items: 2 },
+      { name: "パン", amount: 3400, items: 3 },
+      { name: "日用雑貨", amount: 3200, items: 3 },
+      { name: "菓子", amount: 2500, items: 4 },
+      { name: "調味料", amount: 1200, items: 2 }, // 10件目——同じく「その他」集約の見本
+    ],
+    total
+  );
+  const byStore = withShare(
+    [
+      { name: "ロピア", amount: 45000, receipts: 4 },
+      { name: "コンビニ みなみ店", amount: 12000, receipts: 6 },
+      { name: "ドラッグストア さくら", amount: 9800, receipts: 3 },
+      { name: "ホームセンター DIY", amount: 6200, receipts: 1 },
+    ],
+    total
+  );
+  const topItems = [
+    { name: "コクサンブタロース", amount: 2296, qty: 4, store: "ロピア", item_kind: "肉類", count: 2 },
+    { name: "卵パック", amount: 1980, qty: 3, store: "ロピア", item_kind: "卵", count: 3 },
+    { name: "食パン", amount: 1350, qty: 3, store: "コンビニ みなみ店", item_kind: "パン", count: 3 },
+    { name: "牛乳", amount: 1188, qty: 6, store: "ロピア", item_kind: "乳製品", count: 6 },
+    { name: "トイレットペーパー", amount: 1580, qty: 2, store: "ドラッグストア さくら", item_kind: "日用雑貨", count: 2 },
+    { name: "ヨーグルト", amount: 980, qty: 4, store: "ロピア", item_kind: "乳製品", count: 4 },
+    { name: "お茶", amount: 900, qty: 4, store: "コンビニ みなみ店", item_kind: "飲料", count: 4 },
+    { name: "冷凍餃子", amount: 860, qty: 2, store: "ロピア", item_kind: "惣菜", count: 2 },
+    { name: "歯ブラシ", amount: 660, qty: 2, store: "ドラッグストア さくら", item_kind: "衛生", count: 2 },
+    { name: "バナナ", amount: 598, qty: 2, store: "ロピア", item_kind: "果物", count: 2 },
+  ];
+  return {
+    ym: BREAKDOWN_CUR_YM,
+    prev_ym: BREAKDOWN_PREV_YM,
+    months: breakdownMonths(),
+    summary: { expense: total, income: 0, prev_expense: 98000, diff: total - 98000, receipts: 9, days_with_spending: 14 },
+    by_category: byCategory,
+    by_subcategory: bySubcategory,
+    by_item_kind: byItemKind,
+    by_store: byStore,
+    top_items: topItems,
+    daily: breakdownDaily(BREAKDOWN_CUR_YM),
+    top_category: { name: byCategory[0].name, amount: byCategory[0].amount, share: byCategory[0].share },
+    top_item_kind: { name: byItemKind[0].name, amount: byItemKind[0].amount, share: byItemKind[0].share },
+  };
+}
+
+function breakdownPrev(): MoneyBreakdownResponse {
+  const total = 98000;
+  const byCategory = withShare(
+    [
+      { name: "食費", amount: 60000, prev_amount: null as number | null, budget: 70000 as number | null },
+      { name: "日用品", amount: 12000, prev_amount: null as number | null, budget: 15000 as number | null },
+      { name: "交通費", amount: 9000, prev_amount: null as number | null, budget: null as number | null },
+      { name: "雑費", amount: 8000, prev_amount: null as number | null, budget: 10000 as number | null },
+      { name: "医療費", amount: 9000, prev_amount: null as number | null, budget: null as number | null },
+    ],
+    total
+  );
+  const bySubcategory = withShare(
+    [
+      { category: "食費", name: "食料品", amount: 34000 },
+      { category: "食費", name: "外食", amount: 14000 },
+      { category: "日用品", name: "消耗品", amount: 7000 },
+      { category: "食費", name: "飲料", amount: 5000 },
+      { category: "日用品", name: "衛生用品", amount: 3000 },
+    ],
+    total
+  );
+  const byItemKind = withShare(
+    [
+      { name: "肉類", amount: 12000, items: 5 },
+      { name: "野菜", amount: 8000, items: 8 },
+      { name: "惣菜", amount: 6500, items: 4 },
+      { name: "飲料", amount: 5000, items: 6 },
+      { name: "乳製品", amount: 4200, items: 3 },
+    ],
+    total
+  );
+  const byStore = withShare(
+    [
+      { name: "ロピア", amount: 38000, receipts: 3 },
+      { name: "コンビニ みなみ店", amount: 9000, receipts: 4 },
+      { name: "ドラッグストア さくら", amount: 6000, receipts: 2 },
+    ],
+    total
+  );
+  const topItems = [
+    { name: "豚バラ肉", amount: 1980, qty: 3, store: "ロピア", item_kind: "肉類", count: 2 },
+    { name: "卵パック", amount: 980, qty: 2, store: "ロピア", item_kind: "卵", count: 2 },
+    { name: "食パン", amount: 900, qty: 2, store: "コンビニ みなみ店", item_kind: "パン", count: 2 },
+    { name: "牛乳", amount: 792, qty: 4, store: "ロピア", item_kind: "乳製品", count: 4 },
+    { name: "お茶", amount: 675, qty: 3, store: "コンビニ みなみ店", item_kind: "飲料", count: 3 },
+    { name: "ティッシュ", amount: 580, qty: 2, store: "ドラッグストア さくら", item_kind: "日用雑貨", count: 2 },
+  ];
+  return {
+    ym: BREAKDOWN_PREV_YM,
+    prev_ym: breakdownShiftYm(BREAKDOWN_PREV_YM, -1),
+    months: breakdownMonths(),
+    summary: { expense: total, income: 0, prev_expense: null, diff: null, receipts: 7, days_with_spending: 11 },
+    by_category: byCategory,
+    by_subcategory: bySubcategory,
+    by_item_kind: byItemKind,
+    by_store: byStore,
+    top_items: topItems,
+    daily: breakdownDaily(BREAKDOWN_PREV_YM),
+    top_category: { name: byCategory[0].name, amount: byCategory[0].amount, share: byCategory[0].share },
+    top_item_kind: { name: byItemKind[0].name, amount: byItemKind[0].amount, share: byItemKind[0].share },
+  };
 }
 
 /* ---------- secretary ---------- */
@@ -2330,6 +2533,16 @@ export async function mockApi<T>(path: string, options: ApiOptions = {}): Promis
     r.status = "discarded";
     relinkReceiptExpenses(r);
     return { ok: true } as unknown as T;
+  }
+
+  // ---------- money: 内訳（ADR-020 追補） ----------
+  if (path.startsWith("/money/breakdown") && method === "GET") {
+    const qs = path.split("?")[1] || "";
+    const params = new URLSearchParams(qs);
+    const ym = params.get("ym") || BREAKDOWN_CUR_YM;
+    if (ym === BREAKDOWN_CUR_YM) return breakdownCurrent() as unknown as T;
+    if (ym === BREAKDOWN_PREV_YM) return breakdownPrev() as unknown as T;
+    return breakdownEmpty(ym) as unknown as T;
   }
 
   // ---------- secretary ----------

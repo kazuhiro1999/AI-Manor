@@ -359,6 +359,38 @@ def cmd_budget_set(conn: sqlite3.Connection, home, args) -> object:
 # --- パーサ組み立て --------------------------------------------------------------------
 
 
+# --- money breakdown（2026-09-22 主人「何に一番使ったか」） -----------------------------------
+
+
+def cmd_breakdown(conn: sqlite3.Connection, home, args) -> object:
+    from . import breakdown as breakdown_mod  # noqa: PLC0415
+
+    ym = ops.parse_ym(args.ym) if args.ym else util.now()[:7]
+    data = breakdown_mod.month_breakdown(conn, ym)
+    if getattr(args, "json", False):
+        return data
+    s = data["summary"]
+    lines = [i18n.t("money.breakdown.header", ym=data["ym"], expense=s["expense"], receipts=s["receipts"])]
+    if s["prev_expense"] is not None:
+        lines.append(i18n.t("money.breakdown.prev", prev=s["prev_expense"], diff=f"{s['diff']:+d}"))
+    if not data["by_category"]:
+        lines.append(i18n.t("money.breakdown.empty"))
+        return "\n".join(lines)
+    lines.append(i18n.t("money.breakdown.section_category"))
+    for r in data["by_category"]:
+        lines.append(i18n.t("money.breakdown.line", name=r["name"], amount=r["amount"], share=int(round(r["share"] * 100))))
+    for key, section in (("by_item_kind", "money.breakdown.section_kind"), ("by_store", "money.breakdown.section_store")):
+        if data[key]:
+            lines.append(i18n.t(section))
+            for r in data[key][:8]:
+                lines.append(i18n.t("money.breakdown.line", name=r["name"], amount=r["amount"], share=int(round(r["share"] * 100))))
+    if data["top_items"]:
+        lines.append(i18n.t("money.breakdown.section_items"))
+        for r in data["top_items"]:
+            lines.append(i18n.t("money.breakdown.item_line", name=r["name"], amount=r["amount"], qty=r["qty"], store=r["store"]))
+    return "\n".join(lines)
+
+
 # --- money receipt（ADR-020） ------------------------------------------------------------
 
 
@@ -520,6 +552,11 @@ def register(subparsers) -> None:
     p.add_argument("--months", type=int, default=6)
     p.add_argument("--json", action="store_true")
     p.set_defaults(func=cmd_trend, is_write=False)
+
+    p = money_sub.add_parser("breakdown", help=i18n.t("cli.money.breakdown.help"))
+    p.add_argument("--ym")
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=cmd_breakdown, is_write=False)
 
     p = money_sub.add_parser("import", help=i18n.t("cli.money.import.help"))
     p.add_argument("csv", help=i18n.t("cli.money.import.csv.help"))

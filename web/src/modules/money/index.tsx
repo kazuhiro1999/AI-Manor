@@ -9,6 +9,7 @@ import { ScreenHeader } from "../../components/ScreenHeader";
 import { formatDay, useT } from "../../app/i18n";
 import { ReceiptsPage } from "./receipts/ReceiptsPage";
 import { ReceiptDetailPage } from "./receipts/ReceiptDetailPage";
+import { BreakdownPage } from "./breakdown/BreakdownPage";
 
 function MoneyScreen() {
   const t = useT();
@@ -93,7 +94,8 @@ function MoneyScreen() {
     <div className="view" id="view-money">
       <ScreenHeader title={title} description={description} />
       <p className="panel-note">
-        <Link to="/money/receipts">{t("money.receipts.entryLink")}</Link>
+        <Link to="/money/receipts">{t("money.receipts.entryLink")}</Link> {t("common.listSeparator")}{" "}
+        <Link to="/money/breakdown">{t("money.breakdown.entryLink")}</Link>
       </p>
       <section className="panel panel-primary">
         <div className="panel-head">
@@ -237,5 +239,7 @@ export const moneyModule: ModuleDefinition = {
     // recipes/* と同じ立て付け）。行き来は MoneyScreen 上部の1本のリンクから。
     { path: "receipts", element: <ReceiptsPage /> },
     { path: "receipts/:id", element: <ReceiptDetailPage /> },
+    // 内訳（ADR-020 追補）も receipts と同じ立て付けで別ページに（行き来は上部の1本のリンクから）。
+    { path: "breakdown", element: <BreakdownPage /> },
   ],
 };

@@ -106,6 +106,7 @@ ALLOWLIST: set[str] = {
     "staff/steward/receipt_reader.py",
     "staff/steward/receipt_classify.py",
     "staff/steward/receipts.py",
+    "staff/steward/breakdown.py",  # 語彙の既定（「未分類」「その他」「（店名なし）」）を集計の鍵に使う
     "extensions/notion.py",
     "extensions/slack.py",
     "extensions/tailscale.py",

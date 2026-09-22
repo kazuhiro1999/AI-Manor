@@ -25,8 +25,10 @@ Claude を呼ぶのは「検算に落ちたとき」と「初めて見る品名�
 （`review='needs_review'` で残る）。
 
 ### D2 OCR は PaddleOCR のモデルを RapidOCR（ONNX Runtime）で動かす。**任意の追加パッケージ**
-- `pyproject` の dependency group **`ocr`**（`rapidocr`＋`onnxruntime`。約 250 MB。`uv sync --group ocr`）。
-  GPU は **`ocr-dml`**（`onnxruntime-directml`。Windows）。core の依存は増やさない（純 Python のまま）。
+- `pyproject` の dependency group **`ocr`**（`rapidocr`＋`onnxruntime`。約 250 MB）。**既定の group にした**（`uv sync` で入る。
+  外すなら `--no-group ocr`）——主人「入れる前提で」。GPU（Windows）は `uv pip install onnxruntime-directml` で CPU 版と
+  入れ替える（`uv run` は余分な包を消さないので残る。`uv sync` を明示的に打つと CPU 版に戻るので、そのときは入れ直す）。
+  core の依存（`[project.dependencies]`）は増やさない。
 - 既定モデル **PP-OCRv6 small**（GPU 1〜4 秒・CPU 13〜31 秒）。簡易チェックは **PP-OCRv5 mobile・1600 px**（CPU 2〜4 秒）。
 - ONNX の `intra_op_num_threads` は **8 に固定**（既定 -1 は P/E 混在 CPU で 7 倍遅い）。長辺 **3200 px** 上限（GPU 4 GB で検出が空になる）。
 - 入っていない環境では D2〜D4 を飛ばし D6（Claude）だけで読む。同じスキーマ・同じ検算・同じ画面。
@@ -100,4 +102,6 @@ steward_expense.receipt_id  -- ALTER で足す（import_hash と同じ冪等の�
 | R1 | 表・`lexicon.toml`・前処理・OCR・規則・検算・Claude 後ろ盾・分類・登録・CLI `manor money receipt` | pytest 緑。見本 3 枚を CLI で読み、検算が通り、同じレシート 2 枚目は「登録済み」 |
 | R2 | API・背景ジョブ・拡張機能の状態・`config.toml` | curl で 撮る→polling→履歴→修正 が通る |
 | R3 | Web `/money/receipts` | 主人のスマホで撮って登録できる |
-| 後 | Windows OCR との相互検証・バーコード（ブラウザ側）・料理長への在庫候補・家計分析（店別・品目別） | — |
+| R4 | 内訳ページ（`/money/breakdown`。大項目・中項目・品目・店・よく買ったもの・日別・月の推移。明細の金額は税込に按分） | ✅ 2026-09-22 |
+| R5 | レシートの無い決済の取り込み（カード CSV の preset・購入通知メールの拡張）。同じ検算・同じ指紋で `steward_expense` へ | 未着手 |
+| 後 | Windows OCR との相互検証・バーコード（ブラウザ側）・料理長への在庫候補 | — |

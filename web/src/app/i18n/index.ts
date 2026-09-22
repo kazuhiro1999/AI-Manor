@@ -12,4 +12,4 @@ export {
   useLanguageSetting,
   useT,
 } from "./store";
-export { formatDate, formatDateTime, formatDay, weekdayOf } from "./format";
+export { formatDate, formatDateTime, formatDay, formatYm, formatYmShort, weekdayOf } from "./format";
