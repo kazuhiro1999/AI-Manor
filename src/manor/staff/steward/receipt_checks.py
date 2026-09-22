@@ -89,6 +89,8 @@ def normalize_item(raw: object, line_no: int) -> dict[str, object] | None:
     if qty is None or qty <= 0:
         qty = 1
     unit_price = _to_int(raw.get("unit_price"))
+    if unit_price is None and qty == 1 and amount is not None and amount > 0:
+        unit_price = amount  # 1 個なら単価＝金額（数量行が無い行。表示と集計を揃える）
     tax_rate = _to_int(raw.get("tax_rate"))
     if tax_rate not in (8, 10):
         tax_rate = None
@@ -187,7 +189,15 @@ def derive_missing(d: dict[str, object]) -> dict[str, object]:
     items: list[dict[str, object]] = list(d.get("items") or [])  # type: ignore[arg-type]
     has8 = any(i.get("tax_rate") == 8 for i in items)
     has10 = any(i.get("tax_rate") == 10 for i in items)
-    if isinstance(subtotal, int) and isinstance(total, int) and total >= subtotal:
+    # 内税で税率が 1 つだけ宣言され、明細に税率が無いレシート（飲食店など）は、その税率を明細に当てる
+    # ——こうすると「対象額 × 率/(100+率) ≒ 税額」の検算が働く（外れたら needs_review で主人に回る）。
+    taxes_declared = [t for t in taxes if isinstance(t.get("amount"), int)]
+    if d.get("tax_mode") == "inclusive" and len(taxes_declared) == 1 and not has8 and not has10 and items:
+        rate = int(taxes_declared[0]["rate"])
+        for item in items:
+            item["tax_rate"] = rate
+        has8, has10 = rate == 8, rate == 10
+    if isinstance(subtotal, int) and isinstance(total, int) and total >= subtotal and d.get("tax_mode") != "inclusive":
         # 読めた税額が 小計＋税＝合計 と食い違うとき、片方だけ直せば合うならその値に置き換える
         # （合計欄の内訳行の数字を拾った誤読。合計・小計・もう片方の税額のほうが信頼できる）。
         if t8 is not None and t10 is not None and subtotal + t8 + t10 != total:
@@ -247,9 +257,15 @@ def run_checks(d: dict[str, object]) -> dict[str, dict[str, object]]:
     has8 = any(i.get("tax_rate") == 8 for i in items)
     has10 = any(i.get("tax_rate") == 10 for i in items)
 
+    # 内税（税込の明細）では 税額 = 対象額 × 率/(100+率)。外税では 対象額 × 率/100。
+    inclusive = d.get("tax_mode") == "inclusive"
+
+    def _expected_tax(base: int, rate: int) -> int:
+        return int(base * rate / (100 + rate)) if inclusive else int(base * rate / 100)
+
     def _tax_ok(b8: int, b10: int) -> tuple[bool | None, bool | None]:
-        ok8 = None if t8 is None or not has8 else abs(int(b8 * 0.08) - t8) <= TAX_TOLERANCE
-        ok10 = None if t10 is None or not has10 else abs(int(b10 * 0.10) - t10) <= TAX_TOLERANCE
+        ok8 = None if t8 is None or not has8 else abs(_expected_tax(b8, 8) - t8) <= TAX_TOLERANCE
+        ok10 = None if t10 is None or not has10 else abs(_expected_tax(b10, 10) - t10) <= TAX_TOLERANCE
         return ok8, ok10
 
     best = (base8 + untagged, base10)
@@ -275,8 +291,8 @@ def run_checks(d: dict[str, object]) -> dict[str, dict[str, object]]:
     checks: dict[str, dict[str, object]] = {
         "items_sum": _check(subtotal, items_sum),
         "item_count": _check(d.get("item_count") if isinstance(d.get("item_count"), int) else None, qty_sum),
-        "tax_8": {"ok": ok8, "expected": t8, "actual": int(best[0] * 0.08) if has8 else None},
-        "tax_10": {"ok": ok10, "expected": t10, "actual": int(best[1] * 0.10) if has10 else None},
+        "tax_8": {"ok": ok8, "expected": t8, "actual": _expected_tax(best[0], 8) if has8 else None},
+        "tax_10": {"ok": ok10, "expected": t10, "actual": _expected_tax(best[1], 10) if has10 else None},
         "total": _check(total, total_expected),
         "change": _check(
             d.get("change") if isinstance(d.get("change"), int) else None,

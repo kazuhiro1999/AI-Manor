@@ -223,3 +223,113 @@ def test_lexicon_vocabulary_is_consistent() -> None:
         assert sub in cats[cat], kind
     for kind in (rp.lexicon().get("item_kind_keywords") or {}):
         assert kind in kinds, kind
+
+
+# --- 別の型のレシート（回転寿司。2026-09-22 主人の2枚目の実物から） ----------------------------
+#
+# 取りこぼしていた点: ①数量行が `(@132 × 2個)`（単価が先。`@`→`0`・`個`→`个` の誤読つき）
+# ②登録番号が `T8-0600-0100-1562`（区切りつき） ③買上点数が「小計 27点 ¥4,620」の行の中
+# ④内税で `(内税額 ¥420)` に税率が書かれていない ⑤店名が「一番大きい字」 ⑥`クレジット` の誤読
+
+
+def synthetic_sushi_receipt() -> list[dict]:
+    """内税・単価が先の数量行・合計欄に点数、の型。明細 5 行 = 1,639 円（内税額 149）。
+    小計＝合計（内税）。点数は 2+2+1+3+2 = 10。"""
+    rows: list[dict] = []
+    y = 100.0
+
+    def line(cells: list[tuple[float, float, str]], h: float = 30.0) -> None:
+        nonlocal y
+        for x, w, text in cells:
+            rows.append(_box(x, y, w, h, text))
+        y += h + 14
+
+    line([(300, 280, "さかな亭")], h=90)          # 一番大きい字＝店名
+    line([(300, 140, "各務原店")])
+    line([(300, 200, "058-260-3211")])
+    line([(300, 360, "岐阜県各務原市那加緑町1丁目22-1")])   # 店名より長いが小さい字
+    line([(300, 320, "登録番号:T8-0600-0100-1562")])
+    line([(300, 420, "2026年09月22日(火) 20:42 No.3869")])
+    line([(300, 130, "担当:32"), (700, 180, "[0389-0002]")])
+    line([(300, 150, "伝票:3128"), (520, 180, "テーブル:24-1"), (800, 70, "2名")])
+    price_x = 760
+    line([(300, 130, "金目鯛"), (price_x, 110, "¥264内")])
+    line([(360, 200, "(@132×2个)")])              # `個`→`个`
+    line([(300, 130, "えび"), (price_x, 110, "¥220内")])
+    line([(360, 200, "(0110× 2个)")])             # `@`→`0`
+    line([(300, 190, "あぶらかれい"), (price_x, 110, "¥110内")])
+    line([(300, 190, "大切りまぐろ"), (price_x, 110, "¥495内")])
+    line([(360, 200, "(@165×3個)")])
+    line([(300, 190, "大粒いくら海苔包み"), (price_x, 110, "¥550内")])
+    line([(360, 200, "(0275×2個)")])
+    line([(300, 100, "小計"), (560, 110, "10点"), (price_x, 130, "¥1,639")])
+    line([(300, 330, "(10%内税対象額"), (price_x, 130, "¥1,639)")])
+    line([(430, 150, "内税額"), (price_x, 110, "¥149)")])
+    line([(300, 140, "合計"), (price_x - 60, 190, "¥1,639")], h=40)
+    line([(300, 250, "クルシット"), (price_x - 60, 190, "¥1,639")], h=40)   # クレジットの誤読
+    line([(300, 150, "お釣り"), (price_x, 80, "¥0")], h=40)
+    line([(300, 460, "◇は軽減税率対象商品です。")])
+    return rows
+
+
+def test_sushi_receipt_parses_fully() -> None:
+    raw = rp.parse_boxes(synthetic_sushi_receipt())
+    d, checks, review = _finish(raw)
+    assert d["store"]["name"] == "さかな亭"          # ⑤一番大きい字
+    assert d["store"]["branch"] == "各務原店"
+    assert d["store"]["registration_number"] == "T8060001001562"   # ②区切りつき
+    assert d["purchased_at"] == "2026-09-22T20:42"
+    assert d["tax_mode"] == "inclusive"
+    assert d["subtotal"] == 1639 and d["total"] == 1639
+    assert d["item_count"] == 10                      # ③合計欄の行の中の「10点」
+    assert d["taxes"] == [{"rate": 10, "amount": 149}]  # ④税率の指定が無い「内税額」
+    assert d["payment_method"] == "credit"            # ⑥クルシット → クレジット
+    names = [i["name"] for i in d["items"]]
+    assert names == ["金目鯛", "えび", "あぶらかれい", "大切りまぐろ", "大粒いくら海苔包み"]
+    assert [(i["qty"], i["unit_price"], i["amount"]) for i in d["items"]] == [
+        (2, 132, 264), (2, 110, 220), (1, 110, 110), (3, 165, 495), (2, 275, 550),
+    ]  # ①単価が先の数量行
+    assert not raw["parse"]["notes"]                  # ⑦伝票・テーブル・2名が明細に混ざらない
+    assert checks["items_sum"]["ok"] is True and checks["item_count"]["ok"] is True
+    assert checks["tax_10"]["ok"] is True             # 内税: 1639 × 10/110 = 149
+    assert review == "ok"
+
+
+@pytest.mark.parametrize(
+    "text,expected",
+    [
+        ("(@132×2個)", (2, 132)),      # 単価が先
+        ("(@132×2个)", (2, 132)),      # 「個」の誤読
+        ("(0110× 2个)", (2, 110)),     # 「@」が「0」に
+        ("(@165×3個)", (3, 165)),
+        ("( 2個 × @219 )", (2, 219)),  # 数量が先（ロピアの型）
+        ("(2個×@1,090)", (2, 1090)),   # 桁区切り
+        ("(3点 1回", None),            # 値引きの内訳行
+        ("ギュウニュウ", None),
+        ("¥264内", None),
+    ],
+)
+def test_parse_qty_row_table(text: str, expected: tuple[int, int] | None) -> None:
+    assert rp.parse_qty_row(text) == expected
+
+
+def test_inclusive_tax_check_uses_tax_included_formula() -> None:
+    """内税では 税額 = 対象額 × 率/(100+率)。外税の式（×率/100）で落とさない。"""
+    d = rc.normalize_draft({
+        "store": {"name": "内税の店"}, "purchased_at": "2026-09-20", "tax_mode": "inclusive",
+        "items": [{"name": "A", "amount": 1100, "tax_rate": 10}],
+        "subtotal": 1100, "total": 1100, "taxes": [{"rate": 10, "amount": 100}],
+    })
+    checks = rc.run_checks(rc.derive_missing(d))
+    assert checks["tax_10"] == {"ok": True, "expected": 100, "actual": 100}
+
+
+def test_inclusive_single_rate_is_applied_to_items() -> None:
+    """税率が 1 つだけ宣言され、明細に税率が無いとき（飲食店）は、その税率を明細に当てる。"""
+    d = rc.derive_missing(rc.normalize_draft({
+        "store": {"name": "内税の店"}, "purchased_at": "2026-09-20", "tax_mode": "inclusive",
+        "items": [{"name": "A", "amount": 2200}, {"name": "B", "amount": 2420}],
+        "subtotal": 4620, "total": 4620, "taxes": [{"rate": 10, "amount": 420}],
+    }))
+    assert [i["tax_rate"] for i in d["items"]] == [10, 10]
+    assert rc.run_checks(d)["tax_10"]["ok"] is True

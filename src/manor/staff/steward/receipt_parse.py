@@ -45,7 +45,48 @@ _PRICE_LEAD_RE = re.compile(r"^[¥￥半早平4ギやY\\]\s*")
 _PRICE_CORE_RE = re.compile(r"^(-?\d{1,3}(?:[,.]\d{3})+|-?\d{1,6})$")
 #: 品名の箱の末尾に価格が混ざった形（`カゴメ…100 マンゴーサ ¥217外`）。
 _INLINE_PRICE_RE = re.compile(r"[¥￥]\s*(-?\d{1,3}(?:[,.]\d{3})+|-?\d{1,6})\s*[外内夕タト卜ﾀﾄ\+!1)）ł十†lt\]]*$")
-_QTY_RE = re.compile(r"[（(]?\s*(\d+)\s*[個固点]\s*[×xX*]\s*[@0回＠]?\s*(\d{1,3}(?:[,.]\d{3})+|\d{1,6})")
+#: 数量行。店によって「2個 × @219」（数量が先）と「(@132 × 2個)」（単価が先）の両方がある。
+#: `@` は `0` に、`個` は `个` に誤読されやすいので、どちらの並びでも拾えるようにする。
+_QTY_ROW_RE = re.compile(
+    r"^[（(]?\s*(?P<n1>[@＠0]?\s*\d{1,3}(?:[,.]\d{3})+|[@＠0]?\s*\d{1,6})\s*(?P<u1>[個个箇点])?"
+    r"\s*[×xX*✕]\s*(?P<n2>[@＠0]?\s*\d{1,3}(?:[,.]\d{3})+|[@＠0]?\s*\d{1,6})\s*(?P<u2>[個个箇点])?\s*[）)]?$"
+)
+
+
+def parse_qty_row(text: str) -> tuple[int, int] | None:
+    """「数量 × 単価」の行なら `(数量, 単価)`。そうでなければ None。
+
+    どちらの数が数量かは、①`個`（`个`）が付いているほう ②`@`（`0` の誤読を含む）が付いていないほう
+    ③小さいほう、の順で決める。`@` の誤読で単価に付く先頭の `0` は落とす（`0110` → `110`）。
+    """
+    m = _QTY_ROW_RE.match(text.replace(" ", ""))
+    if not m:
+        return None
+
+    def _num(s: str) -> tuple[int, bool]:
+        """(値, @ が付いていたか)。"""
+        raw = s.replace(",", "").replace(".", "")
+        marked = bool(re.match(r"^[@＠]", raw))
+        raw = re.sub(r"^[@＠]", "", raw)
+        if len(raw) > 1 and raw.startswith("0"):  # `@` が `0` に読まれた
+            raw = raw.lstrip("0") or "0"
+            marked = True
+        return (int(raw or 0), marked)
+
+    (v1, at1), (v2, at2) = _num(m.group("n1")), _num(m.group("n2"))
+    if not v1 or not v2:
+        return None
+    if m.group("u1") and not m.group("u2"):
+        qty, unit = v1, v2
+    elif m.group("u2") and not m.group("u1"):
+        qty, unit = v2, v1
+    elif at1 != at2:
+        qty, unit = (v2, v1) if at1 else (v1, v2)
+    else:
+        qty, unit = (v1, v2) if v1 <= v2 else (v2, v1)
+    if qty <= 0 or qty > 999 or unit <= 0:
+        return None
+    return qty, unit
 _TAXMARK_RE = re.compile(r"^[外内夕タ卜ト※軽*＊]+\s*(8|10|18)\b")
 #: 税印だけの箱（`外8` `外10` と、その誤読 `548` `58` `5外48` `外18`）。
 _TAXMARK_ONLY_RE = re.compile(r"^[外内夕タ卜ト※軽*＊5\d]{1,5}$")
@@ -66,7 +107,8 @@ def _taxmark_rate(text: str) -> int | None:
 _DATE_RE = re.compile(r"(20\d{2})\s*[年/\-.]\s*(\d{1,2})\s*[月/\-.]\s*(\d{1,2})\s*日?")
 _TIME_RE = re.compile(r"(\d{1,2})\s*[:：]\s*(\d{2})")
 _TEL_RE = re.compile(r"(0\d{1,4}[-‐−]\d{1,4}[-‐−]\d{3,4})")
-_REG_RE = re.compile(r"[T1lI]\s?(\d{13})")
+#: 登録番号。`T1234567890123` と `T8-0600-0100-1562` の両方。区切りは後で落とす。
+_REG_RE = re.compile(r"[T1lI7](\s?[\d\-‐−–—\s]{13,22})")
 _RECEIPT_NO_RE = re.compile(r"[#＃]\s?(\d{4,8})")
 
 #: 合計欄の鍵（正規化後の文字に当てる正規表現。上から順）。「税額」の誤読（税客・税額頁）も吸う。
@@ -74,6 +116,7 @@ _TOTAL_KEYS: tuple[tuple[str, "re.Pattern[str]"], ...] = (
     ("tax8", re.compile(r"(?:外|内)?(?:消費)?税[額客頁等]*\s*8(?!\d)")),
     ("tax10", re.compile(r"(?:外|内)?(?:消費)?税[額客頁等]*\s*10(?!\d)")),
     ("item_count", re.compile(r"点数|買上点|買上")),
+    ("tax_included", re.compile(r"^[（(]?\s*内税[額客頁]|^[（(]?\s*消費税[額客頁]$|^[（(]?\s*税[額客頁]$")),
     ("subtotal", re.compile(r"小計|小駄|小言十|小計十")),
     ("tendered", re.compile(r"お預|預り|預かり|おり$|お豹|予貢り|予買り|お預り金")),
     ("change", re.compile(r"お釣|釣り|おつり|釣")),
@@ -107,6 +150,35 @@ def _compose_kana(t: str) -> str:
             continue
         out.append(ch)
     return "".join(out)
+
+
+def _kana_skeleton(s: str) -> str:
+    """濁点・半濁点を落としたカタカナの骨格（`クレジット` → `クレシツト`。小書きも大書きに）。"""
+    out = []
+    for ch in unicodedata.normalize("NFD", s):
+        if ch in ("\u3099", "\u309a"):
+            continue
+        out.append(ch)
+    text = unicodedata.normalize("NFC", "".join(out))
+    return text.translate(str.maketrans("ァィゥェォッャュョヮ", "アイウエオツヤユヨワ"))
+
+
+def _contains_fuzzy(text: str, word: str) -> bool:
+    """`word` が `text` に（カタカナなら濁点と 1 文字の誤読を許して）含まれるか。
+    `クレジット` を `クルシット` と読んでも当たるようにする（OCR の実測）。"""
+    if word in text:
+        return True
+    if len(word) < 4 or not all("ア" <= ch <= "ヶ" or ch == "ー" for ch in word):
+        return False
+    w = _kana_skeleton(word)
+    t = _kana_skeleton(text)
+    if w in t:
+        return True
+    for i in range(len(t) - len(w) + 1):
+        window = t[i : i + len(w)]
+        if sum(1 for a, b in zip(w, window) if a != b) <= 1:
+            return True
+    return False
 
 
 def normalize_text(text: str) -> str:
@@ -265,9 +337,11 @@ def parse_boxes(boxes: list[dict[str, Any]]) -> dict[str, Any]:
                     draft["purchased_at"] += f"T{int(tm.group(1)):02d}:{tm.group(2)}"
                 draft["_date_y"] = b["cy"]
         if "登録番号" in t or "登绿番号" in t or re.search(r"[T1]\d{13}", t):
-            mr = _REG_RE.search(t)
-            if mr and draft["store"]["registration_number"] is None:
-                draft["store"]["registration_number"] = "T" + mr.group(1)
+            for mr in _REG_RE.finditer(t):
+                digits = re.sub(r"\D", "", mr.group(1))
+                if len(digits) == 13 and draft["store"]["registration_number"] is None:
+                    draft["store"]["registration_number"] = "T" + digits
+                    break
         mt = _TEL_RE.search(t)
         if mt and draft["store"]["tel"] is None:
             draft["store"]["tel"] = mt.group(1).replace("‐", "-").replace("−", "-")
@@ -284,7 +358,9 @@ def parse_boxes(boxes: list[dict[str, Any]]) -> dict[str, Any]:
         if (
             _DATE_RE.search(t) or _REG_RE.search(t) or _RECEIPT_NO_RE.search(t) or _TEL_RE.search(t)
             or re.fullmatch(r"\d{1,2}:\d{2}", t) or re.fullmatch(r"[R#]?\d{4,8}", t)
-            or any(w in t for w in ("精算機", "レジ", "責任者", "担当", "お会計券", "会計券", "登録番号", "No."))
+            or any(w in t for w in ("精算機", "レジ", "責任者", "担当", "お会計券", "会計券", "登録番号", "No.",
+                                    "伝票", "テーブル", "卓", "人数", "領収", "領収証", "領収書"))
+            or re.fullmatch(r"\d{1,2}[名様人]", t) or re.fullmatch(r"[^\d:：]{1,5}[:：]\S{1,12}", t)
         ):
             header_end = max(header_end, b["cy"])
     # 店名: 日付・登録番号より上の、数字でない行から。語彙の店名に当たればそれ。
@@ -307,8 +383,15 @@ def parse_boxes(boxes: list[dict[str, Any]]) -> dict[str, Any]:
         if draft["store"]["name"]:
             break
     if not draft["store"]["name"] and header_lines:
-        # 最も文字らしい（記号の少ない）行を店名に
-        cand = max(header_lines, key=lambda b: len(re.sub(r"[^\w]", "", b["text"])) * b["score"])
+        # 店名はたいてい**一番大きい字**（ロゴの下の店名）。目立つ行が無ければ、最も文字らしい行。
+        named = [b for b in header_lines if len(re.sub(r"[^\w]", "", b["text"])) >= 2]
+        big = [b for b in named if b["h"] >= 1.4 * h_med]
+        if big:
+            cand = max(big, key=lambda b: (b["h"], b["score"]))
+        elif named:
+            cand = max(named, key=lambda b: len(re.sub(r"[^\w]", "", b["text"])) * b["score"])
+        else:
+            cand = header_lines[0]
         draft["store"]["name"] = cand["text"][:40]
     for b in header_lines:
         if "店" in b["text"] and b["text"] != draft["store"]["name"]:
@@ -367,9 +450,11 @@ def parse_boxes(boxes: list[dict[str, Any]]) -> dict[str, Any]:
         if key == "item_count" and value is None:
             mc = re.search(r"(\d{1,3})点(?![\s\d]*回)", all_text.replace(" ", "")[int(len(all_text) * 0.5):])
             value = int(mc.group(1)) if mc else None
-        total_rows[key] = {"box": b, "value": value}
-        if first_total_y is None or b["cy"] < first_total_y:
-            first_total_y = b["cy"]
+        value_box = mates[0][1] if mates else None
+        total_rows[key] = {"box": b, "value": value, "value_box": value_box}
+        for box in (b, value_box):
+            if box is not None and (first_total_y is None or box["cy"] < first_total_y):
+                first_total_y = box["cy"]
 
     draft["parse"]["totals"] = {k: [r["box"]["text"], r["value"]] for k, r in total_rows.items()}
     for key in ("subtotal", "total", "item_count", "tendered", "change"):
@@ -378,6 +463,27 @@ def parse_boxes(boxes: list[dict[str, Any]]) -> dict[str, Any]:
     for key, rate in (("tax8", 8), ("tax10", 10)):
         if key in total_rows and total_rows[key]["value"] is not None:
             draft["taxes"].append({"rate": rate, "amount": total_rows[key]["value"]})
+    # 税率の指定が無い「内税額 ¥420」: 合計欄に税率が 1 つだけ出ていれば、その税率の税額とする
+    if not draft["taxes"] and "tax_included" in total_rows and total_rows["tax_included"]["value"] is not None:
+        totals_text = "".join(b["text"] for b in items_boxes if first_total_y is not None and b["cy"] >= first_total_y - h_med)
+        rates = {int(r) for r in re.findall(r"(\d{1,2})\s*%", totals_text) if r in ("8", "10")}
+        if len(rates) == 1:
+            draft["taxes"].append({"rate": rates.pop(), "amount": total_rows["tax_included"]["value"]})
+    # 「小計 27点 ¥4,620」のように合計欄の行の中に買上点数があることがある
+    if draft["item_count"] is None:
+        for key in ("subtotal", "total"):
+            row = total_rows.get(key)
+            if not row:
+                continue
+            for p in items_boxes:
+                if p is row["box"] or _overlap(p, row["box"]) <= 0.3:
+                    continue
+                mc = re.fullmatch(r"(\d{1,3})点", p["text"].replace(" ", ""))
+                if mc:
+                    draft["item_count"] = int(mc.group(1))
+                    break
+            if draft["item_count"] is not None:
+                break
 
     # 位置で補う: 合計の行より下の価格で 合計以上 のものは お預り、お預り−合計 に等しいものは お釣り。
     # 合計が無ければ、小計の行より下の**大きい字**の価格（小計以上）を合計とみなす。
@@ -417,14 +523,18 @@ def parse_boxes(boxes: list[dict[str, Any]]) -> dict[str, Any]:
         draft["tax_mode"] = "exclusive"
 
     for method, words in _PAYMENT_WORDS:
-        if any(w in all_text for w in words):
+        if any(_contains_fuzzy(all_text, w) for w in words):
             draft["payment_method"] = method
             break
 
     # --- 明細（価格の錨） ----------------------------------------------------------
     items_top = header_end + 0.4 * h_med
     items_bottom = first_total_y if first_total_y is not None else items_boxes[-1]["cy"] + 1
-    region = [b for b in items_boxes if items_top < b["cy"] < items_bottom - 0.3 * h_med]
+    totals_box_ids = {id(x) for r in total_rows.values() for x in (r["box"], r.get("value_box")) if x is not None}
+    region = [
+        b for b in items_boxes
+        if items_top < b["cy"] < items_bottom - 0.3 * h_med and id(b) not in totals_box_ids
+    ]
     used: set[int] = set()
     items: list[dict[str, Any]] = []
     notes: list[str] = []
@@ -447,7 +557,7 @@ def parse_boxes(boxes: list[dict[str, Any]]) -> dict[str, Any]:
     name_boxes = [
         b for b in region
         if b["price"] is None and b.get("inline_price") is None and not b["is_taxmark"]
-        and not _QTY_RE.search(b["text"].replace(" ", ""))
+        and parse_qty_row(b["text"]) is None
     ]
     name_boxes.sort(key=lambda b: b["cy"])
     # 系統的なずれ: 錨ごとに最も近い品名の箱との cy の差の中央値（残った傾きのぶん）
@@ -522,6 +632,13 @@ def parse_boxes(boxes: list[dict[str, Any]]) -> dict[str, Any]:
         if tax is None:
             tax = pending_tax
         pending_tax = None
+        # 価格の付いた数量行（`(@132×2個) ¥264` のように 1 行に収まっている店）は直前の明細へ
+        qty_row = parse_qty_row(name)
+        if qty_row and items:
+            items[-1]["qty"], items[-1]["unit_price"] = qty_row
+            if amount is not None and items[-1].get("amount") is None:
+                items[-1]["amount"] = amount
+            continue
         if amount is not None and amount < 0:
             compact = name.replace(" ", "")
             if re.match(r"^[（(]?\d+点", compact):
@@ -541,13 +658,12 @@ def parse_boxes(boxes: list[dict[str, Any]]) -> dict[str, Any]:
             if nxt is not None:
                 nxt["tax_rate"] = b["taxmark"]
             continue
-        mq = _QTY_RE.search(t)
-        if mq:
+        qty_row = parse_qty_row(t)
+        if qty_row:
             above = [i for i in items if i["_cy"] < b["cy"] + 0.3 * pitch and not i.get("is_discount")]
             if above:
                 prev = max(above, key=lambda i: i["_cy"])
-                prev["qty"] = int(mq.group(1))
-                prev["unit_price"] = _int(mq.group(2))
+                prev["qty"], prev["unit_price"] = qty_row
             continue
         if len(re.sub(r"[^\w]", "", t)) < 2 or _price_from(b["text"]) is not None:
             continue
