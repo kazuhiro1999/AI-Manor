@@ -2216,8 +2216,6 @@ def main(argv: list[str] | None = None) -> int:
         return exc.code
 
 
-if __name__ == "__main__":  # pragma: no cover
-    raise SystemExit(main())
 
 
 #: 執事が Slack 経由で作った予定の印（`secretary_event.source`）。
@@ -2468,3 +2466,12 @@ def _project_label(conn: sqlite3.Connection, code: str) -> str:
         (code,),
     ).fetchone()
     return f"{code.upper()} {row['title']}" if row else code.upper()
+
+
+#: ⚠ このガードは**ファイルの末尾に置く**。`python -m manor.slack`（定例の便が使う形）は
+#: このモジュールを `__main__` として実行するので、ガードより後ろに書いた def は
+#: **評価されないまま** main() が走る。2026-09-06〜09-23、ガードの後ろに置かれた
+#: `_find_existing_event` / `extract_task` などが NameError になり、#task に日時が
+#: 入った便が毎回落ちていた（主人 2026-09-23 のご指摘で発覚）。
+if __name__ == "__main__":  # pragma: no cover
+    raise SystemExit(main())
