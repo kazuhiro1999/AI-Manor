@@ -297,16 +297,56 @@ def test_voice_helpers_live_outside_any_function() -> None:
         assert f"\n  {decl}" in src, f"{decl} が IIFE 直下にありません（関数の中に入っていませんか）"
 
 
-def test_greeting_and_reply_both_carry_play_here() -> None:
-    """挨拶（`talk/open`）と返事（`talk`）の**両方**が `play_here` を送ること。
+#: 声を出さない talk 系の口（`play_here` も `audio_id` も要らない）。
+_SILENT_TALK_ENDPOINTS = ("/api/v1/face/talk/close",)
 
-    片方だけ通して「直った」と報告したことがある（2026-09-07）。経路は2つある。
+
+def _speaking_talk_calls() -> list[tuple[str, str]]:
+    """face.html の中の「声を出す talk 系の POST」を、呼び出しごとに切り出す。
+
+    ⚠ **数を固定しない**（2026-09-24）。以前は `count(...) == 2` で「経路は2つ」と
+    書いていたため、T57 で「少々お待ちください」（`talk/wait`）という3つ目の経路が
+    正しく足されたときに、**正しい変更のほうが赤くなった**。経路が増えても、増えた
+    経路がこの決まりを守っているかを見る形にする。
     """
     src = _face_html_source()
-    assert src.count("play_here: PLAY_HERE") == 2
+    calls: list[tuple[str, str]] = []
+    marker = "fetch('/api/v1/face/talk"
+    start = src.find(marker)
+    while start != -1:
+        # ⚠ 切れ目は**次の `fetch(`**（talk 以外も含む）。talk だけを目印にすると、
+        # 最後の talk の塊が末尾まで伸びて、関係のない通信（`/face/pin` の POST）を
+        # 飲み込む——2026-09-24 に実際に踏んだ。
+        end = src.find("fetch(", start + 1)
+        block = src[start : (end if end != -1 else len(src))]
+        endpoint = block[len("fetch('") : block.find("'", len("fetch('"))]
+        # GET（履歴の読み出し）は body を持たない——声の経路ではない
+        if "method: 'POST'" in block and "body:" in block and endpoint not in _SILENT_TALK_ENDPOINTS:
+            calls.append((endpoint, block))
+        start = src.find(marker, start + 1)
+    return calls
 
 
-def test_both_paths_play_the_returned_audio() -> None:
-    """挨拶と返事の両方が、返ってきた `audio_id` を鳴らすこと。"""
-    src = _face_html_source()
-    assert src.count("playVoice(d.audio_id)") == 2
+def test_face_html_has_speaking_talk_calls() -> None:
+    """切り出しの当てが外れていたら、下の2本が空振りで緑になる——先に数えておく。"""
+    endpoints = [e for e, _ in _speaking_talk_calls()]
+    assert "/api/v1/face/talk/open" in endpoints, f"挨拶の経路が見つかりません: {endpoints}"
+    assert "/api/v1/face/talk" in endpoints, f"返事の経路が見つかりません: {endpoints}"
+    # ⚠ ここに「あるはずの口」を足していかない。**増えた口も上の2本の決まりを守るか**を
+    # 見るのがこの組の役目で、口の顔ぶれを固定すると、正しく足した口で赤くなる
+    # （それが 2026-09-24 に起きたこと。T57 の `talk/wait` が3つ目だった）。
+
+
+def test_every_speaking_talk_call_carries_play_here() -> None:
+    """声を出す口は**すべて** `play_here` を送ること。
+
+    片方だけ通して「直った」と報告したことがある（2026-09-07）。
+    """
+    for endpoint, block in _speaking_talk_calls():
+        assert "play_here: PLAY_HERE" in block, f"{endpoint} が play_here を送っていません"
+
+
+def test_every_speaking_talk_call_plays_the_returned_audio() -> None:
+    """声を出す口は**すべて**、返ってきた `audio_id` を鳴らすこと。"""
+    for endpoint, block in _speaking_talk_calls():
+        assert "playVoice(d.audio_id)" in block, f"{endpoint} が audio_id を鳴らしていません"
