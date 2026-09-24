@@ -31,6 +31,10 @@ import { describe, expect, it } from "vitest";
  *     唯一の出どころの固定語彙——バックエンドへ送る値そのもの（`category=主菜` 等）で、
  *     house/tasks-Running と同じ「実データとの照合・語彙そのもの」の理由。ロケールを
  *     分けて訳すと API の値と食い違うため触らない。
+ *   - `faceStatic/talkPanelHarness.ts`（T93）: `face.html` の通話ブロックを jsdom で
+ *     動かす試験ハーネスが投げる `throw new Error(...)` は、face.html 側の構造が
+ *     変わって切り出しに失敗したときに開発者へ向けて出るものそのもの——主人が見る
+ *     画面文言ではない（下の LINE_ALLOWLIST の Provider/#root エラーと同じ理由）。
  *
  * 行単位の許可（LINE_ALLOWLIST）: Provider の外で hook を呼んだときの不変条件エラー
  * （`throw new Error(...)`）と、`#root` が無いという起動時の致命的エラー。どちらも
@@ -55,6 +59,7 @@ const ALLOWLIST = new Set<string>([
   "modules/tasks/Running.tsx",
   "modules/imports/index.tsx",
   "modules/kitchen/recipeShared.ts",
+  "faceStatic/talkPanelHarness.ts",
 ]);
 
 // 行単位の許可: Provider の外で hook を呼んだときの不変条件エラー（throw new Error(...)）と、
