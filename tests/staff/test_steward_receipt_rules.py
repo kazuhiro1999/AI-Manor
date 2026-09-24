@@ -428,3 +428,86 @@ def test_store_name_candidate_filters() -> None:
     assert not rp._store_name_candidate("1丁目21-1")
     assert not rp._store_name_candidate("ご利用明細")            # 見出し
     assert not rp._store_name_candidate("毎度ありがとうございます。")
+
+
+# --- コンビニ（軽減税率の印・合計の字が落ちる・下にカード控え） ----------------------------
+# 2026-09-24 のファミマで踏んだ形を合成で再現する。踏んだ穴は4つ:
+# ①`¥198軽` が価格として読めない ②`軽` を 8% と見ない ③`クレジット支払` の誤読が
+# ヘッダの「レジ」に当たって明細が範囲の外へ ④カード控えの日付・金額が本体に混ざる。
+# ⑤ついでに見つけた桁落ち（`¥171` → 17）もここで見張る。
+
+
+def synthetic_convenience_receipt() -> list[dict]:
+    """軽減税率 8% の 2 品（198＋171＝369）。**合計の字は読めなかった**ことにして
+    金額の行だけ置き、下にカード控えを付ける。"""
+    rows: list[dict] = []
+    y = 100.0
+
+    def line(cells: list[tuple[float, float, str]], h: float = 30.0) -> None:
+        nonlocal y
+        for x, w, text in cells:
+            rows.append(_box(x, y, w, h, text))
+        y += h + 14
+
+    price_x = 700
+    line([(300, 240, "ファミリーマート")])
+    line([(300, 220, "○○大学前店")])
+    line([(300, 200, "電話:052-788-7067")])
+    line([(300, 300, "登録番号:T2180001041412")])
+    line([(300, 260, "2026年9月24日(木)15:57")])
+    line([(300, 150, "レジ4-6200"), (620, 140, "責No.999")])
+    line([(300, 160, "領収証")])
+    line([(300, 200, "三三三三二三三二")])                       # `==========` の誤読
+    line([(300, 260, "手巻シーチキンマヨネ"), (price_x, 120, "¥198軽")])
+    line([(300, 240, "ジャスミン茶950"), (price_x, 120, "¥171軽")])
+    line([(price_x, 120, "¥369")])                              # 「合　計」の字が落ちた行
+    line([(300, 120, "对集"), (price_x, 120, "¥369")])           # 「8%対象」の誤読
+    line([(300, 200, "(内消費税等"), (price_x, 100, "¥27")])
+    line([(300, 180, "ルレジッ支払"), (price_x, 120, "¥369")])   # 「クレジット支払」の誤読
+    line([(300, 420, "「軽」は軽減税率対象商品です。")])
+    # ここから下はカード控え（買った物ではない）
+    line([(300, 150, "取引日"), (620, 220, "2026年9月24日")])
+    line([(300, 100, "CL"), (620, 140, "46930")])
+    line([(620, 140, "VISA")])          # 控えを切り離しても支払方法は拾えること
+    line([(300, 180, "承認番号"), (620, 160, "778243")])
+    line([(300, 180, "支払区分"), (620, 100, "一括")])
+    line([(300, 180, "支払金額"), (620, 120, "¥369")])
+    line([(300, 100, "AID"), (620, 260, "A0000000031010")])
+    line([(300, 200, "お客様控え")])
+    return rows
+
+
+def test_convenience_receipt_reads_items_and_total() -> None:
+    """軽減税率の印つきの明細が取れ、合計の字が無くても明細の和から合計が立つこと。"""
+    d, checks, review = _finish(rp.parse_boxes(synthetic_convenience_receipt()))
+
+    assert [i["name"] for i in d["items"]] == ["手巻シーチキンマヨネ", "ジャスミン茶950"]
+    assert [i["amount"] for i in d["items"]] == [198, 171]     # ⑤ 171 が 17 にならない
+    assert [i["tax_rate"] for i in d["items"]] == [8, 8]       # ② `軽` は 8%
+    assert d["total"] == 369                                   # 合計の字が無くても和から立つ
+    assert d["purchased_at"] == "2026-09-24T15:57"             # ④ 控えの日付を買った日にしない
+    assert d["payment_method"] == "credit"
+    assert checks["items_sum"]["ok"] is True
+    assert review == "ok"
+
+
+def test_convenience_receipt_drops_the_card_slip() -> None:
+    """カード控え（取引日・承認番号・支払区分・AID）は明細にも合計にも混ざらないこと。"""
+    d, _checks, _review = _finish(rp.parse_boxes(synthetic_convenience_receipt()))
+    names = " ".join(i["name"] for i in d["items"])
+    for w in ("支払区分", "承認番号", "AID", "取引日", "お客様控"):
+        assert w not in names, f"控えの「{w}」が明細に混ざっています"
+    assert all(i["amount"] in (198, 171) for i in d["items"])
+
+
+def test_price_keeps_its_last_digit() -> None:
+    """⑤ 末尾が 1 の金額が 1 桁落ちない（`¥171` → 17 になっていた。2026-09-24）。"""
+    for text, want in (("¥171", 171), ("¥211", 211), ("¥1,091", 1091), ("¥171軽", 171), ("¥300外", 300)):
+        assert rp._price_from(rp.normalize_text(text)) == want, text
+
+
+def test_register_keyword_does_not_match_credit_payment() -> None:
+    """③「クレジット支払」の誤読がヘッダの「レジ」に当たらないこと。"""
+    assert rp._REGISTER_RE.search("レジ4-6200")
+    assert not rp._REGISTER_RE.search("ルレジッ支払")
+    assert not rp._REGISTER_RE.search("クレジット支払")

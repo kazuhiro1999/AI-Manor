@@ -39,12 +39,17 @@ def lexicon() -> dict[str, Any]:
 # --- 文字の正規化 --------------------------------------------------------------------
 
 #: 価格の後ろに付く「外」「内」の誤読と、閉じ括弧など。
-_PRICE_TRAIL_RE = re.compile(r"[外内夕タト卜ﾀﾄ\+!1)）」ł十†lt\]]+$")
+#: 価格の末尾に付く税印。⚠ `軽`（軽減税率）を入れ忘れていたため、コンビニの
+#: `¥198軽` が「価格ではない」と判定され、明細が1つも取れなかった（2026-09-24・ファミマ）。
+#: ⚠ **数字を入れてはいけない。** 以前この集合に `1` が入っており、`¥171` が 17、
+#: `¥211` が 2 になっていた（末尾の桁を税印と間違えて捨てていた。2026-09-24 実測）。
+#: 検算に引っかからない額へ静かに化けるので、`1` を拾えない害より桁が落ちる害のほうが重い。
+_PRICE_TRAIL_RE = re.compile(r"[外内夕タト卜ﾀﾄ軽輕経\+!)）」ł十†lt\]]+$")
 #: 価格の前に付く「¥」の誤読。
 _PRICE_LEAD_RE = re.compile(r"^[¥￥半早平4ギやY\\]\s*")
 _PRICE_CORE_RE = re.compile(r"^(-?\d{1,3}(?:[,.]\d{3})+|-?\d{1,6})$")
 #: 品名の箱の末尾に価格が混ざった形（`カゴメ…100 マンゴーサ ¥217外`）。
-_INLINE_PRICE_RE = re.compile(r"[¥￥]\s*(-?\d{1,3}(?:[,.]\d{3})+|-?\d{1,6})\s*[外内夕タト卜ﾀﾄ\+!1)）ł十†lt\]]*$")
+_INLINE_PRICE_RE = re.compile(r"[¥￥]\s*(-?\d{1,3}(?:[,.]\d{3})+|-?\d{1,6})\s*[外内夕タト卜ﾀﾄ軽輕経\+!)）ł十†lt\]]*$")
 #: 数量行。店によって「2個 × @219」（数量が先）と「(@132 × 2個)」（単価が先）の両方がある。
 #: `@` は `0` に、`個` は `个` に誤読されやすいので、どちらの並びでも拾えるようにする。
 _QTY_ROW_RE = re.compile(
@@ -103,7 +108,29 @@ def _taxmark_rate(text: str) -> int | None:
         return 10
     if "8" in t:
         return 8
+    # 数字を伴わない「軽」は軽減税率（＝8%）の印。コンビニはこの形（2026-09-24）。
+    if any(ch in t for ch in "軽輕"):
+        return 8
     return None
+
+
+def _trailing_taxmark(text: str) -> int | None:
+    """`¥198軽` のように**価格の箱の末尾**に付いた税印の税率。無ければ None。
+
+    税印だけの箱（`_taxmark_rate`）とは別の経路——コンビニは金額と同じ箱に刷る。
+    """
+    t = text.replace(" ", "")
+    if not t:
+        return None
+    if any(ch in t for ch in "軽輕"):
+        return 8
+    return None
+#: ヘッダの「レジ番号」。⚠ **ただの「レジ」で当ててはいけない**——`クレジット支払` の
+#: 誤読（`ルレジッ支払`）が当たり、ヘッダの終わりが明細より下まで下がって、明細が丸ごと
+#: 範囲の外に出た（2026-09-24 のファミマ）。番号が続くときだけレジ番号とみなす。
+_REGISTER_RE = re.compile(r"レジ[\s#No.:：\-]*\d")
+#: レシートの区切り線（`==========` `----------`）。OCR は `三三三二三` のように読む。
+_SEPARATOR_RE = re.compile(r"[=＝\-ー−―一二三十干]{3,}")
 _DATE_RE = re.compile(r"(20\d{2})\s*[年/\-.]\s*(\d{1,2})\s*[月/\-.]\s*(\d{1,2})\s*日?")
 _TIME_RE = re.compile(r"(\d{1,2})\s*[:：]\s*(\d{2})")
 _TEL_RE = re.compile(r"(0\d{1,4}[-‐−]\d{1,4}[-‐−]\d{3,4})")
@@ -124,6 +151,23 @@ _TOTAL_KEYS: tuple[tuple[str, "re.Pattern[str]"], ...] = (
 )
 #: 合計欄の内訳行（税率ごとの対象額など）。合計として拾わない。
 _SKIP_WORDS: tuple[str, ...] = ("対象", "対額", "消費税等", "内消", "税率", "うち", "内訳", "税抜", "税込額")
+#: **レシート本体の下に続く、カード・電子マネーの控え**の語。ここから下は買った物ではない
+#: （取引日・伝票番号・承認番号・支払区分…）。切らずに読むと、控えの数字が明細や合計に
+#: 混ざる——2026-09-24 のファミマで「支払区分」「AID」が品名として並び、伝票番号 46930 が
+#: 価格として拾われた。
+_SLIP_WORDS: tuple[str, ...] = (
+    "取引日", "伝票番号", "伝票No", "承認番号", "支払区分", "会員番号", "カード会社",
+    "加盟店", "お客様控", "お客控", "AID", "端末番号",
+    # ⚠ 「利用明細」は入れない——喫茶店の**見出し**（「ご利用明細」）に当たって、
+    # レシート全体を控えとして切り落とした（2026-09-24 の試験で検出）。
+)
+
+
+def _is_slip_box(text: str) -> bool:
+    t = text.replace(" ", "")
+    return any(w in t for w in _SLIP_WORDS)
+
+
 _PAYMENT_WORDS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("credit", ("クレジット", "カード", "VISA", "MASTER", "JCB", "AMEX")),
     ("qr", ("PAYPAY", "PayPay", "ペイペイ", "楽天ペイ", "d払い", "AUPAY", "auPAY", "LINEPAY", "メルペイ", "QR")),
@@ -302,6 +346,21 @@ def parse_boxes(boxes: list[dict[str, Any]]) -> dict[str, Any]:
     """OCR の箱 → 下書き（`receipt_checks.normalize_draft` に渡す前の生の辞書）。
     `_parse` の値に `parse_notes`（規則が迷った箇所の符号）を付けて返す。"""
     items_boxes, angle = _prepare(boxes)
+    # **カード・電子マネーの控えは、読む前に切り離す。** レシート本体の下に続く控えには
+    # 日付・金額・番号が揃っているので、残したまま読むと「いちばん下の日付」を買った日と
+    # 取り違え、ヘッダの終わりが控えまで下がって**明細が丸ごと範囲の外**に出る
+    # （2026-09-24 のファミマ。品名は「支払区分」「AID」だけになり、合計も取れなかった）。
+    slip_y = min((b["cy"] for b in items_boxes if _is_slip_box(b["text"])), default=None)
+    slip_boxes: list[dict[str, Any]] = []
+    if slip_y is not None and items_boxes:
+        # 安全弁: 控えはレシートの**下半分**に続くもの。上のほうで当たったら語のほうが
+        # 悪い（見出しの誤爆）とみなして切らない——切りすぎると明細が丸ごと消える。
+        top, bottom = items_boxes[0]["cy"], items_boxes[-1]["cy"]
+        if slip_y < top + 0.5 * (bottom - top):
+            slip_y = None
+    if slip_y is not None:
+        slip_boxes = [b for b in items_boxes if b["cy"] >= slip_y]
+        items_boxes = [b for b in items_boxes if b["cy"] < slip_y]
     draft: dict[str, Any] = {
         "store": {"name": "", "branch": None, "tel": None, "registration_number": None},
         "purchased_at": None,
@@ -319,6 +378,8 @@ def parse_boxes(boxes: list[dict[str, Any]]) -> dict[str, Any]:
         "parse": {"angle": round(angle, 2), "boxes": len(items_boxes), "notes": []},
     }
     if not items_boxes:
+        if slip_boxes:
+            draft["parse"]["notes"].append("slip_only")
         return draft
     h_med = statistics.median(b["h"] for b in items_boxes)
 
@@ -327,8 +388,12 @@ def parse_boxes(boxes: list[dict[str, Any]]) -> dict[str, Any]:
         b["price"] = _price_from(b["text"])
         b["taxmark"] = _taxmark_rate(b["text"])
         b["is_taxmark"] = b["taxmark"] is not None
+        # 価格と同じ箱に刷られた税印（`¥198軽`）。価格として読めた箱だけが対象
+        # ——税印だけの箱は上の `taxmark` が持つ。
+        b["price_tax"] = _trailing_taxmark(b["text"]) if b["price"] is not None else None
         if b["is_taxmark"]:
             b["price"] = None
+            b["price_tax"] = None
     price_boxes = [b for b in items_boxes if b["price"] is not None]
     if price_boxes:
         x_right = statistics.median(b["x1"] for b in price_boxes)
@@ -342,7 +407,8 @@ def parse_boxes(boxes: list[dict[str, Any]]) -> dict[str, Any]:
     total_rows: dict[str, dict[str, Any]] = {}
     first_total_y: float | None = None
     header_lines: list[dict[str, Any]] = []
-    all_text = " ".join(b["text"] for b in items_boxes)
+    # 支払方法は控えの字（VISA・iD など）も手がかりになるので、切り離した分も混ぜる
+    all_text = " ".join(b["text"] for b in [*items_boxes, *slip_boxes])
 
     for b in items_boxes:
         t = b["text"].replace(" ", "")
@@ -377,7 +443,8 @@ def parse_boxes(boxes: list[dict[str, Any]]) -> dict[str, Any]:
         if (
             _DATE_RE.search(t) or _REG_RE.search(t) or _RECEIPT_NO_RE.search(t) or _TEL_RE.search(t)
             or re.fullmatch(r"\d{1,2}:\d{2}", t) or re.fullmatch(r"[R#]?\d{4,8}", t)
-            or any(w in t for w in ("精算機", "レジ", "責任者", "担当", "お会計券", "会計券", "登録番号", "No.",
+            or _REGISTER_RE.search(t)
+            or any(w in t for w in ("精算機", "責任者", "担当", "お会計券", "会計券", "登録番号", "No.",
                                     "伝票", "テーブル", "卓", "人数", "領収", "領収証", "領収書"))
             or re.fullmatch(r"\d{1,2}[名様人]", t) or re.fullmatch(r"[^\d:：]{1,5}[:：]\S{1,12}", t)
         ):
@@ -682,6 +749,8 @@ def parse_boxes(boxes: list[dict[str, Any]]) -> dict[str, Any]:
                     used.add(id(b))
                     break
         if tax is None:
+            tax = a.get("price_tax")  # `¥198軽` のように価格と同じ箱に刷られた印
+        if tax is None:
             tax = pending_tax
         pending_tax = None
         # 「数量」の列に数字があれば数量（単価は金額から割る）
@@ -730,11 +799,37 @@ def parse_boxes(boxes: list[dict[str, Any]]) -> dict[str, Any]:
             continue
         if len(re.sub(r"[^\w]", "", t)) < 2 or _price_from(b["text"]) is not None:
             continue
+        if _SEPARATOR_RE.fullmatch(t):
+            continue  # `==========` の誤読（`三三三二三…`）。品名ではない
         mt = _TAXMARK_RE.match(t)
         tax = (int(mt.group(1)) if mt.group(1) != "18" else 8) if mt else None
         name = b["text"].replace(" ", "")[mt.end():] if mt else b["text"]
         items.append({"name": name, "qty": 1, "unit_price": None, "amount": None, "tax_rate": tax, "is_discount": False, "source": "ocr", "_cy": b["cy"]})
         notes.append("name_without_price")
+
+    # 合計の字が読めなかったとき（コンビニの「合　計」は字が大きく間が空いていて落ちやすい）。
+    # **品名の無い金額**が出てきたら、そこから下は合計欄とみなして明細から外し、その額が
+    # 品名つきの明細の合計とぴったり合ったときだけ合計として採る。合わなければ採らない
+    # ——黙ってそれらしい数字を置くより、読めなかったと申し上げるほうがよい（2026-09-24）。
+    if draft["total"] is None and not total_rows:
+        items.sort(key=lambda i: i["_cy"])
+        # 区切りの候補は「税印を持たない金額の行」だけ——合計欄の金額に `軽`・`外8` は付かない。
+        # これを外すと、品物の金額が偶然いくつかの品の和に等しいときに明細を切ってしまう。
+        best: int | None = None
+        for cut in range(1, len(items)):
+            head, tail = items[:cut], items[cut:]
+            s_head = sum(int(i["amount"]) for i in head if i.get("amount") is not None)
+            if s_head <= 0:
+                continue
+            if any(
+                i.get("amount") is not None and int(i["amount"]) == s_head and i.get("tax_rate") is None
+                for i in tail
+            ):
+                best = cut  # いちばん長く合うところを採る（短い偶然の一致に負けない）
+        if best is not None:
+            draft["total"] = sum(int(i["amount"]) for i in items[:best] if i.get("amount") is not None)
+            notes.append("total_from_items_sum")
+            items = items[:best]
 
     items.sort(key=lambda i: i["_cy"])
     for it in items:

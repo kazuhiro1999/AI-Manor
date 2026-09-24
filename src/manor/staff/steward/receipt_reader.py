@@ -147,7 +147,12 @@ def call_claude(
     cost = float(result.get("total_cost_usd") or 0.0)
     elapsed = int(result.get("duration_ms") or 0)
     if result.get("is_error"):
-        return {"ok": False, "data": None, "reason": "claude_is_error", "cost": cost, "elapsed_ms": elapsed}
+        # ⚠ **理由を捨てない。** `claude_is_error` とだけ残していたため、2026-09-24 に
+        # 「読めなかった」原因（`Failed to authenticate: OAuth session expired`）が
+        # どこにも出ず、主人も執事も画像のせいだと思って探した。小窓で踏んだ穴（T56）と同じ型。
+        detail = " ".join(str(result.get("result") or "").split())[:200]
+        reason = f"claude_is_error: {detail}" if detail else "claude_is_error"
+        return {"ok": False, "data": None, "reason": reason, "cost": cost, "elapsed_ms": elapsed}
     data = _extract_json_object(str(result.get("result") or ""))
     if data is None:
         return {"ok": False, "data": None, "reason": "claude_not_json", "cost": cost, "elapsed_ms": elapsed}
