@@ -141,10 +141,17 @@ def detail(conn: sqlite3.Connection, receipt_id: int) -> dict[str, Any] | None:
         ).fetchall()
     ]
     store = draft.get("store") if isinstance(draft.get("store"), dict) else {}
+    draft_for_note = dict(draft)
+    draft_for_note["items"] = items
+    note = receipt_checks.review_note(
+        draft_for_note, checks, status=str(row["status"] or ""), reason=str(row["reason"] or "")
+    )
     return {
         "id": row["id"],
         "status": row["status"],
         "review": row["review"],
+        # 主人 2026-09-25: 「要確認」だけでは何をすればよいか分からない。1 行で理由と次の一手。
+        "note": note,
         "method": row["method"],
         "reads": row["reads"],
         "reason": row["reason"],

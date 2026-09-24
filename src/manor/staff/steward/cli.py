@@ -468,6 +468,8 @@ def cmd_receipt_show(conn: sqlite3.Connection, home, args) -> object:
     if getattr(args, "json", False):
         return d
     lines = [_receipt_line(_summary_of(d))]
+    if d.get("note"):
+        lines.append(i18n.t("money.receipt.note_line", note=d["note"]))
     for c_key, c in (d.get("checks") or {}).items():
         mark = "?" if c.get("ok") is None else ("OK" if c.get("ok") else "NG")
         lines.append(f"  [{mark}] {c_key}: {c.get('expected')} / {c.get('actual')}")

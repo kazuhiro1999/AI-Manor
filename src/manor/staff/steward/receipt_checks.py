@@ -332,6 +332,81 @@ def review_from_checks(d: dict[str, object], checks: dict[str, dict[str, object]
     return "ok"
 
 
+#: 検算の名前 → 主人へお見せする言い方。
+_CHECK_LABEL_KEY: dict[str, str] = {
+    "items_sum": "money.receipt.note.label.items_sum",
+    "item_count": "money.receipt.note.label.item_count",
+    "tax_8": "money.receipt.note.label.tax_8",
+    "tax_10": "money.receipt.note.label.tax_10",
+    "total": "money.receipt.note.label.total",
+    "change": "money.receipt.note.label.change",
+}
+
+
+def review_note(
+    d: dict[str, object], checks: dict[str, dict[str, object]], *, status: str = "", reason: str = ""
+) -> str:
+    """**なぜ要確認なのか・何を見ればよいか**を 1 行で返す（主人 2026-09-25）。
+
+    「要確認」としか出しておらず、読めなかったのか・確かめられなかったのか・分類が
+    決まらなかったのかが主人に分からなかった。順番は「直さないと家計が狂うもの」から。
+    問題が無ければ空文字。
+    """
+    from ... import i18n  # noqa: PLC0415
+
+    items: list[dict[str, object]] = list(d.get("items") or [])  # type: ignore[arg-type]
+
+    # ① そもそも読めなかった
+    if status == "failed" or d.get("total") is None:
+        if reason == "no_total":
+            return i18n.t("money.receipt.note.no_total")
+        return i18n.t("money.receipt.note.unreadable", reason=reason or "-")
+
+    # ② 金額の読めない明細がある
+    blank = [i for i in items if i.get("amount") is None]
+    if blank:
+        first = str(blank[0].get("name") or "-")
+        return i18n.t("money.receipt.note.item_without_amount", count=len(blank), name=first)
+
+    # ③ 検算が合わない（家計の額が狂う）
+    for key in ("items_sum", "total", "change"):
+        c = checks.get(key) or {}
+        if c.get("ok") is False:
+            exp, act = c.get("expected"), c.get("actual")
+            gap = abs(int(exp) - int(act)) if isinstance(exp, int) and isinstance(act, int) else None
+            return i18n.t(
+                "money.receipt.note.mismatch",
+                label=i18n.t(_CHECK_LABEL_KEY.get(key, key)),
+                expected=exp, actual=act, gap=gap if gap is not None else "-",
+            )
+    for key in ("tax_8", "tax_10"):
+        c = checks.get(key) or {}
+        if c.get("ok") is False:
+            return i18n.t(
+                "money.receipt.note.mismatch",
+                label=i18n.t(_CHECK_LABEL_KEY.get(key, key)),
+                expected=c.get("expected"), actual=c.get("actual"), gap="-",
+            )
+
+    # ④ 分類が決まらない品がある（家計の内訳が「未分類」に落ちる）
+    unknown = [i for i in items if not i.get("category") or i.get("category") == "未分類"]
+    if unknown:
+        return i18n.t(
+            "money.receipt.note.unclassified",
+            count=len(unknown), name=str(unknown[0].get("name") or "-"),
+        )
+
+    # ⑤ 照合できなかっただけ（値は読めている）
+    unverified = [k for k in ("change", "item_count", "tax_8", "tax_10") if (checks.get(k) or {}).get("ok") is None
+                  and (checks.get(k) or {}).get("expected") is not None]
+    if unverified:
+        return i18n.t(
+            "money.receipt.note.unverified",
+            label=i18n.t(_CHECK_LABEL_KEY.get(unverified[0], unverified[0])),
+        )
+    return ""
+
+
 def fingerprint(d: dict[str, object]) -> str | None:
     """同じレシートの指紋（ADR-020 D8）: 登録番号（無ければ店名）｜日時｜合計。合計か日時が無ければ None。"""
     total, purchased = d.get("total"), d.get("purchased_at")

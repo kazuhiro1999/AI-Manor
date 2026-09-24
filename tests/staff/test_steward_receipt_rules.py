@@ -561,3 +561,54 @@ def test_cash_receipt_still_prefers_the_deposit_line() -> None:
     d, _checks, _review = _finish(rp.parse_boxes(synthetic_receipt()))
     assert d["tendered"] == 2000
     assert d["change"] == 918
+
+
+# --- 「要確認」の一行（主人 2026-09-25: 失敗の理由と、何を見ればよいかを簡潔に） -----------
+
+
+def _note(draft: dict, checks: dict | None = None, **kw) -> str:
+    return rc.review_note(draft, checks or {}, **kw)
+
+
+def test_note_says_the_total_could_not_be_read() -> None:
+    n = _note({"total": None, "items": []}, status="failed", reason="no_total")
+    assert "合計" in n and ("撮り直" in n or "写っている" in n), n
+
+
+def test_note_points_at_the_line_without_an_amount() -> None:
+    n = _note({"total": 500, "items": [{"name": "ギュウニュウ", "amount": None}]})
+    assert "ギュウニュウ" in n and "金額" in n, n
+
+
+def test_note_shows_the_gap_when_the_sums_disagree() -> None:
+    n = _note(
+        {"total": 1733, "items": [{"name": "パン", "amount": 1204, "category": "食費"}]},
+        {"items_sum": {"ok": False, "expected": 1604, "actual": 1204}},
+    )
+    assert "1604" in n and "1204" in n and "400" in n, n  # 差まで出す（どこを見ればよいかの手掛かり）
+
+
+def test_note_asks_for_a_category_when_one_is_missing() -> None:
+    n = _note(
+        {"total": 98, "items": [{"name": "ホロットハクト", "amount": 98, "category": "未分類"}]},
+        {"items_sum": {"ok": True}},
+    )
+    assert "ホロットハクト" in n and "分類" in n, n
+
+
+def test_note_separates_could_not_check_from_could_not_read() -> None:
+    """**読めた**が**照合できなかった**ときは、そう言う（主人が「お釣りが読めていない」と
+    受け取ったのはこの区別が無かったため。2026-09-25）。"""
+    n = _note(
+        {"total": 1733, "items": [{"name": "パン", "amount": 1733, "category": "食費"}]},
+        {"items_sum": {"ok": True}, "change": {"ok": None, "expected": 0, "actual": None}},
+    )
+    assert "お釣り" in n and "読めて" in n, n
+
+
+def test_note_is_empty_when_everything_lines_up() -> None:
+    n = _note(
+        {"total": 100, "items": [{"name": "パン", "amount": 100, "category": "食費"}]},
+        {"items_sum": {"ok": True}, "total": {"ok": True}, "change": {"ok": True}},
+    )
+    assert n == "", n
