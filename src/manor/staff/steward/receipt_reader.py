@@ -42,7 +42,7 @@ READ_PROMPT = """{images_note}レシートの写真です。内容を次の JSON
  "taxes": [{{"rate": 8, "amount": 税額の整数}}, {{"rate": 10, "amount": 税額の整数}}],
  "total": 合計の整数,
  "item_count": 買上点数の整数またはnull,
- "tendered": お預りの整数またはnull,
+ "tendered": 渡した額の整数またはnull（現金なら「お預り」、カード・電子マネーなら「クレジット」「iD」等の支払い行の金額。合計と同額でもよい）,
  "change": お釣りの整数またはnull,
  "payment_method": "cash/credit/qr/ic/unknown",
  "notes": ["読み取りに自信のない箇所を1行ずつ"]}}

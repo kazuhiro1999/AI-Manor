@@ -487,6 +487,7 @@ def test_convenience_receipt_reads_items_and_total() -> None:
     assert d["total"] == 369                                   # 合計の字が無くても和から立つ
     assert d["purchased_at"] == "2026-09-24T15:57"             # ④ 控えの日付を買った日にしない
     assert d["payment_method"] == "credit"
+    assert d["tendered"] == 369          # 支払いの行（`ルレジッ支払 ¥369`）が渡した額
     assert checks["items_sum"]["ok"] is True
     assert review == "ok"
 
@@ -511,3 +512,52 @@ def test_register_keyword_does_not_match_credit_payment() -> None:
     assert rp._REGISTER_RE.search("レジ4-6200")
     assert not rp._REGISTER_RE.search("ルレジッ支払")
     assert not rp._REGISTER_RE.search("クレジット支払")
+
+# --- カード払い（お釣り 0 円）の合計欄 ----------------------------------------------------
+# 2026-09-24 のイオン。`合計 ¥1,733 / クレジット ¥1,733 / お釣り ¥0`。
+# 「お預り」が無いので渡した額が空のままになり、**お釣りの検算だけが回らず**、主人には
+# 「お釣りが読み取れていない」ように見えた（読めてはいた。確かめられていなかった）。
+
+
+def synthetic_card_receipt() -> list[dict]:
+    rows: list[dict] = []
+    y = 100.0
+
+    def line(cells: list[tuple[float, float, str]], h: float = 30.0) -> None:
+        nonlocal y
+        for x, w, text in cells:
+            rows.append(_box(x, y, w, h, text))
+        y += h + 14
+
+    price_x = 700
+    line([(300, 240, "イオン○○店")])
+    line([(300, 300, "登録番号:T2040001000456")])
+    line([(300, 260, "2026年9月24日(木)21:33")])
+    line([(300, 150, "レジ0132")])
+    line([(300, 260, "ソウコロコロリンゴ"), (price_x, 120, "138※")])
+    line([(300, 240, "チーズinかまぼこ"), (price_x, 120, "438※")])
+    line([(300, 120, "小計"), (price_x, 140, "¥576")])
+    line([(300, 200, "外税 8%"), (price_x, 100, "¥46")])
+    line([(300, 120, "合計"), (price_x, 140, "¥622")])
+    line([(300, 200, "クレジット"), (price_x, 140, "¥622")])
+    line([(300, 160, "お釣り"), (price_x, 100, "¥0")])
+    line([(300, 460, "※印は軽減税率8%対象商品")])     # 印の意味はこの凡例で決まる
+    return rows
+
+
+def test_card_payment_fills_tendered_so_change_can_be_checked() -> None:
+    """カード払いは「お預り」の代わりに支払いの行が渡した額。お釣り 0 の検算が回ること。"""
+    d, checks, review = _finish(rp.parse_boxes(synthetic_card_receipt()))
+
+    assert d["total"] == 622
+    assert d["tendered"] == 622            # `クレジット ¥622` を渡した額として読む
+    assert d["change"] == 0
+    assert checks["change"]["ok"] is True  # ここが None（確かめられない）のままだった
+    assert review == "ok"
+
+
+def test_cash_receipt_still_prefers_the_deposit_line() -> None:
+    """現金で「お預り」がある店は、今までどおりそちらが渡した額（支払いの行に負けない）。"""
+    d, _checks, _review = _finish(rp.parse_boxes(synthetic_receipt()))
+    assert d["tendered"] == 2000
+    assert d["change"] == 918

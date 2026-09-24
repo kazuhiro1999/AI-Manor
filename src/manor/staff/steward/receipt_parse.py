@@ -44,12 +44,12 @@ def lexicon() -> dict[str, Any]:
 #: ⚠ **数字を入れてはいけない。** 以前この集合に `1` が入っており、`¥171` が 17、
 #: `¥211` が 2 になっていた（末尾の桁を税印と間違えて捨てていた。2026-09-24 実測）。
 #: 検算に引っかからない額へ静かに化けるので、`1` を拾えない害より桁が落ちる害のほうが重い。
-_PRICE_TRAIL_RE = re.compile(r"[外内夕タト卜ﾀﾄ軽輕経\+!)）」ł十†lt\]]+$")
+_PRICE_TRAIL_RE = re.compile(r"[外内夕タト卜ﾀﾄ軽輕経※＊*\+!)）」ł十†lt\]]+$")
 #: 価格の前に付く「¥」の誤読。
 _PRICE_LEAD_RE = re.compile(r"^[¥￥半早平4ギやY\\]\s*")
 _PRICE_CORE_RE = re.compile(r"^(-?\d{1,3}(?:[,.]\d{3})+|-?\d{1,6})$")
 #: 品名の箱の末尾に価格が混ざった形（`カゴメ…100 マンゴーサ ¥217外`）。
-_INLINE_PRICE_RE = re.compile(r"[¥￥]\s*(-?\d{1,3}(?:[,.]\d{3})+|-?\d{1,6})\s*[外内夕タト卜ﾀﾄ軽輕経\+!)）ł十†lt\]]*$")
+_INLINE_PRICE_RE = re.compile(r"[¥￥]\s*(-?\d{1,3}(?:[,.]\d{3})+|-?\d{1,6})\s*[外内夕タト卜ﾀﾄ軽輕経※＊*\+!)）ł十†lt\]]*$")
 #: 数量行。店によって「2個 × @219」（数量が先）と「(@132 × 2個)」（単価が先）の両方がある。
 #: `@` は `0` に、`個` は `个` に誤読されやすいので、どちらの並びでも拾えるようにする。
 _QTY_ROW_RE = re.compile(
@@ -104,6 +104,11 @@ def _taxmark_rate(text: str) -> int | None:
         return None
     if not any(ch in t for ch in "外内夕タ卜ト※軽*＊") and not t.startswith("5"):
         return None  # ただの数字（価格やレジ番号）は税印ではない
+    digits = re.sub(r"\D", "", t)
+    if digits and digits not in ("8", "10", "18", "5"):
+        # 数字が税率に見えない＝これは価格の箱（`138※` を「8% の印」と読んでいた。
+        # 印が付いた安い品の金額が丸ごと消えていた。2026-09-24 のイオンで実測）
+        return None
     if "10" in t:
         return 10
     if "8" in t:
@@ -114,20 +119,31 @@ def _taxmark_rate(text: str) -> int | None:
     return None
 
 
-def _trailing_taxmark(text: str) -> int | None:
-    """`¥198軽` のように**価格の箱の末尾**に付いた税印の税率。無ければ None。
+#: 「※印は軽減税率８％対象商品です」の類の凡例。**印の意味は店が決める**ので、
+#: 凡例が刷ってあるときだけ `※`（`＊`）を 8% と読む（2026-09-24 のイオン）。
+#: 凡例が無いレシートで `※` を勝手に 8% と決めない——`軽` と違って印の意味が一定でない。
+_MARK_LEGEND_RE = re.compile(r"[※＊*][印は]{0,2}.{0,6}軽減税率")
 
-    税印だけの箱（`_taxmark_rate`）とは別の経路——コンビニは金額と同じ箱に刷る。
+
+def _trailing_taxmark(text: str, *, mark_is_reduced: bool = False) -> int | None:
+    """`¥198軽` `138※` のように**価格の箱の末尾**に付いた税印の税率。無ければ None。
+
+    税印だけの箱（`_taxmark_rate`）とは別の経路——コンビニ・スーパーは金額と同じ箱に刷る。
+    `mark_is_reduced` はレシートに `※` の凡例があったかどうか（`_MARK_LEGEND_RE`）。
     """
     t = text.replace(" ", "")
     if not t:
         return None
     if any(ch in t for ch in "軽輕"):
         return 8
+    if mark_is_reduced and any(ch in t for ch in "※＊*"):
+        return 8
     return None
 #: ヘッダの「レジ番号」。⚠ **ただの「レジ」で当ててはいけない**——`クレジット支払` の
 #: 誤読（`ルレジッ支払`）が当たり、ヘッダの終わりが明細より下まで下がって、明細が丸ごと
 #: 範囲の外に出た（2026-09-24 のファミマ）。番号が続くときだけレジ番号とみなす。
+#: ヘッダの取引番号・責任者（`取2906 責:13`。イオン）。`責` は `青` に誤読されやすい。
+_HEADER_NO_RE = re.compile(r"^取\s*\d{3,6}|[責青]\s*[:：]\s*\d")
 _REGISTER_RE = re.compile(r"レジ[\s#No.:：\-]*\d")
 #: レシートの区切り線（`==========` `----------`）。OCR は `三三三二三` のように読む。
 _SEPARATOR_RE = re.compile(r"[=＝\-ー−―一二三十干]{3,}")
@@ -147,6 +163,11 @@ _TOTAL_KEYS: tuple[tuple[str, "re.Pattern[str]"], ...] = (
     ("subtotal", re.compile(r"小計|小駄|小言十|小計十")),
     ("tendered", re.compile(r"お預|預り|預かり|おり$|お豹|予貢り|予買り|お預り金|お頭|お項")),
     ("change", re.compile(r"お釣|釣り|おつり|釣")),
+    # 支払いの行（`クレジット ¥1,733` `現金 ¥2,000` `iD ¥800`）。**渡した額**なので
+    # `tendered` に入れる。カード・電子マネーでは合計と同額で、お釣りは 0 になる。
+    # ⚠ これが無いと、カード払いのレシートは `tendered` が空のままお釣りの検算ができず、
+    # 「お釣りが読めていない」ように見える（主人 2026-09-24 のご指摘。イオン）。
+    ("payment", re.compile(r"クレジット|クレシ|クルシ|ルレジ|現金|カード払|デビット|電子マネー|ｉＤ|iD|QUICPay|PayPay|交通系|ワオン|WAON|ナナコ|nanaco")),
     ("total", re.compile(r"合計|合十|盒言十|急言十|合言十|総合計|十晨")),
 )
 #: 合計欄の内訳行（税率ごとの対象額など）。合計として拾わない。
@@ -255,7 +276,18 @@ def normalize_text(text: str) -> str:
 
 def _price_from(text: str) -> int | None:
     """箱の文字が「価格だけ」なら整数に。`¥1,090外` `半299タト` `-17)` など。"""
-    t = _PRICE_TRAIL_RE.sub("", _PRICE_LEAD_RE.sub("", text.replace(" ", "")))
+    t = text.replace(" ", "")
+    m_lead = _PRICE_LEAD_RE.match(t)
+    if m_lead:
+        head, rest = m_lead.group(0).strip(), t[m_lead.end():]
+        # ⚠ **先頭が数字のときは、桁数を見てから落とす。** `4` は `¥` の誤読として
+        # 落とす規則だが、`438※`（イオン）の `4` まで食べて 38 にしていた。
+        # 残りが 3 桁に満たないなら、それは価格の一部とみなす（`438` は 438 のまま）。
+        if head.isdigit() and len(re.sub(r"\D", "", rest)) < 3:
+            pass
+        else:
+            t = rest
+    t = _PRICE_TRAIL_RE.sub("", t)
     m = _PRICE_CORE_RE.match(t)
     if not m:
         return None
@@ -383,6 +415,11 @@ def parse_boxes(boxes: list[dict[str, Any]]) -> dict[str, Any]:
         return draft
     h_med = statistics.median(b["h"] for b in items_boxes)
 
+    # 印の凡例（「※印は軽減税率８％対象商品です」）を先に読む
+    mark_is_reduced = bool(_MARK_LEGEND_RE.search("".join(b["text"] for b in items_boxes)))
+    if mark_is_reduced:
+        draft["parse"]["notes"].append("mark_legend_8")
+
     # 価格の箱と、その列の右端
     for b in items_boxes:
         b["price"] = _price_from(b["text"])
@@ -390,7 +427,9 @@ def parse_boxes(boxes: list[dict[str, Any]]) -> dict[str, Any]:
         b["is_taxmark"] = b["taxmark"] is not None
         # 価格と同じ箱に刷られた税印（`¥198軽`）。価格として読めた箱だけが対象
         # ——税印だけの箱は上の `taxmark` が持つ。
-        b["price_tax"] = _trailing_taxmark(b["text"]) if b["price"] is not None else None
+        b["price_tax"] = (
+            _trailing_taxmark(b["text"], mark_is_reduced=mark_is_reduced) if b["price"] is not None else None
+        )
         if b["is_taxmark"]:
             b["price"] = None
             b["price_tax"] = None
@@ -443,7 +482,7 @@ def parse_boxes(boxes: list[dict[str, Any]]) -> dict[str, Any]:
         if (
             _DATE_RE.search(t) or _REG_RE.search(t) or _RECEIPT_NO_RE.search(t) or _TEL_RE.search(t)
             or re.fullmatch(r"\d{1,2}:\d{2}", t) or re.fullmatch(r"[R#]?\d{4,8}", t)
-            or _REGISTER_RE.search(t)
+            or _REGISTER_RE.search(t) or _HEADER_NO_RE.search(t)
             or any(w in t for w in ("精算機", "責任者", "担当", "お会計券", "会計券", "登録番号", "No.",
                                     "伝票", "テーブル", "卓", "人数", "領収", "領収証", "領収書"))
             or re.fullmatch(r"\d{1,2}[名様人]", t) or re.fullmatch(r"[^\d:：]{1,5}[:：]\S{1,12}", t)
@@ -526,7 +565,7 @@ def parse_boxes(boxes: list[dict[str, Any]]) -> dict[str, Any]:
             elif key == "item_count":
                 mc = re.search(r"(\d+)\s*点", t)
                 value = int(mc.group(1)) if mc else None
-        if value is None and key in ("total", "tendered", "change"):
+        if value is None and key in ("total", "tendered", "change", "payment"):
             below = [
                 p for p in price_boxes
                 if p["price"] is not None and 0 < p["cy"] - b["cy"] < 1.6 * max(b["h"], h_med) and p["x0"] > b["x1"] - h_med
@@ -550,6 +589,9 @@ def parse_boxes(boxes: list[dict[str, Any]]) -> dict[str, Any]:
     for key in ("subtotal", "total", "item_count", "tendered", "change"):
         if key in total_rows and total_rows[key]["value"] is not None:
             draft[key] = total_rows[key]["value"]
+    # 「お預り」が無くても、支払いの行があればそれが渡した額（カードは合計と同額）
+    if draft["tendered"] is None and total_rows.get("payment", {}).get("value") is not None:
+        draft["tendered"] = total_rows["payment"]["value"]
     for key, rate in (("tax8", 8), ("tax10", 10)):
         if key in total_rows and total_rows[key]["value"] is not None:
             draft["taxes"].append({"rate": rate, "amount": total_rows[key]["value"]})
@@ -811,7 +853,7 @@ def parse_boxes(boxes: list[dict[str, Any]]) -> dict[str, Any]:
     # **品名の無い金額**が出てきたら、そこから下は合計欄とみなして明細から外し、その額が
     # 品名つきの明細の合計とぴったり合ったときだけ合計として採る。合わなければ採らない
     # ——黙ってそれらしい数字を置くより、読めなかったと申し上げるほうがよい（2026-09-24）。
-    if draft["total"] is None and not total_rows:
+    if draft["total"] is None and "total" not in total_rows:
         items.sort(key=lambda i: i["_cy"])
         # 区切りの候補は「税印を持たない金額の行」だけ——合計欄の金額に `軽`・`外8` は付かない。
         # これを外すと、品物の金額が偶然いくつかの品の和に等しいときに明細を切ってしまう。
