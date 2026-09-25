@@ -15,10 +15,13 @@
 ## 候補の出どころ（ADR-021 D4）
 
 1. うちのレシピ帳の副菜・汁物（`[companion.rules].companion_categories`）
-2. **お供の定番**（`companions.toml`）——材料とグラムだけを持ち、栄養値は成分表から推定する
-   （ADR-019 の `estimate_nutrition`。数字の出どころを1つにする）
+2. **お供の定番**（`companions.toml`）——料理の「型」。材料とグラムは栄養の目安のためだけに持ち
+   （栄養値は成分表から推定。ADR-019）、**作り方は持たない**。作り方はレシピサイトの候補
+   （`companion_sources.toml`。URL・題名・画像の直リンクだけ）を並べ、主人が見て取り込むかを決める
+   （2026-09-25 主人「AI 生成ではなくレシピサイトのものを引用したい」）。
 
-同じ料理が両方にあればレシピ帳のほうを出す（題名の突き合わせは `menu._dish_matches`）。
+同じ料理が両方にあればレシピ帳のほうを出す——題名の突き合わせ（`menu._dish_matches`）に加え、
+**候補の URL を取り込んだレシピがあれば**その定番は出さない（取り込んだものが代わりに並ぶ）。
 
 ## 採点（ADR-021 D2・D3）
 
@@ -47,7 +50,7 @@ from typing import Any
 from manor import util
 from manor.errors import ManorError
 
-from . import menu, nutrition, ops, recipes
+from . import menu, nutrition, ops
 
 #: 下限で見る項目（`[menu.floor]` の鍵と同じ。`nutrition.MICRO_NUTRIENTS` ＋ 野菜の量）。
 FLOOR_KEYS: tuple[str, ...] = (*nutrition.MICRO_NUTRIENTS, nutrition.VEG_G)
@@ -61,6 +64,9 @@ HEATS: tuple[str, ...] = (HEAT_NONE, HEAT_RANGE, HEAT_STOVE)
 
 #: 定番の一覧（ADR-021 D4）。`lexicon.toml` と同じ「語彙はファイルに置く」流儀。
 CATALOG_PATH = Path(__file__).with_name("companions.toml")
+
+#: 定番ごとのレシピサイトの候補（ADR-021 §6）。作り方は引用元のサイトで見る。
+SOURCES_PATH = Path(__file__).with_name("companion_sources.toml")
 
 #: お供の型が推定できないとき、火を使わない副菜に当てる型（和え物・おひたし・浅漬けの類）。
 RAW_KIND = "生"
@@ -486,8 +492,16 @@ def candidate_from_recipe(row: Mapping[str, Any], rules: Rules) -> dict[str, Any
     }
 
 
-def candidate_from_catalog(dish: Mapping[str, Any], est: nutrition.Estimate, rules: Rules) -> dict[str, Any]:
-    """定番1品（`companions.toml` の `[[dish]]`）＋推定 → 候補の入力。"""
+def candidate_from_catalog(
+    dish: Mapping[str, Any],
+    est: nutrition.Estimate,
+    rules: Rules,
+    sources: Sequence[Mapping[str, Any]] = (),
+) -> dict[str, Any]:
+    """定番1品（`companions.toml` の `[[dish]]`）＋推定＋サイトの候補 → 候補の入力。
+
+    写真は候補の先頭の画像を借りる（直リンク。レシピ帳の `hero_image` と同じ扱い）。
+    """
     min_macro = rules.macro_coverage_min
     minimum = float(rules.rule("micro_coverage_min", 0.6))
     heat = str(dish.get("heat") or HEAT_NONE)
@@ -503,7 +517,8 @@ def candidate_from_catalog(dish: Mapping[str, Any], est: nutrition.Estimate, rul
         "heat": heat,
         "tags": derive_tags(ingredients, heat, rules, [str(t) for t in dish.get("tags") or []]),
         "minutes": dish.get("minutes"),
-        "hero_image": "",
+        "hero_image": next((str(src.get("image") or "") for src in sources if src.get("image")), ""),
+        "sources": [dict(src) for src in sources],
         "ingredients": ingredients,
         "nutrition": dict(est.nutrition) if est.ok and est.coverage >= min_macro else {},
         "micro": {k: float(est.micro.get(k) or 0.0) for k in FLOOR_KEYS},
@@ -536,27 +551,57 @@ def load_catalog(path: Path | None = None) -> list[dict[str, Any]]:
     return out
 
 
-def catalog_recipe(dish: Mapping[str, Any]) -> dict[str, Any]:
-    """定番1品 → レシピの契約（ADR-015 §3）の形。推定にもレシピ帳への昇格にも使う。
+#: 候補1件の鍵（`companion_sources.toml` の `[[source]]`。`dish` は定番の `key`）。
+SOURCE_FIELDS: tuple[str, ...] = ("url", "site", "title", "image", "minutes", "why")
 
-    工程の題（12 字まで）は本文の最初の句（「、」「。」まで）を切って作る。
+
+def load_sources(path: Path | None = None) -> dict[str, list[dict[str, Any]]]:
+    """`companion_sources.toml` → `{定番の key: [候補, …]}`（ファイルの並び順のまま）。
+
+    `url` が http(s) でない行・同じ定番の中の重複 URL は捨てる。ファイルが無ければ空。
     """
-    steps: list[dict[str, Any]] = []
-    for i, text in enumerate(dish.get("steps") or [], start=1):
-        body = str(text).strip()
-        head = body
-        for sep in ("、", "。"):
-            if sep in head:
-                head = head.split(sep, 1)[0]
-        steps.append(
-            {
-                "index": i,
-                "phase": "cook",
-                "title": head[:12] or f"手順{i}",
-                "instruction": body,
-                "completion": "manual",
-            }
-        )
+    p = Path(path) if path is not None else SOURCES_PATH
+    if not p.is_file():
+        return {}
+    with p.open("rb") as f:
+        data = tomllib.load(f)
+    out: dict[str, list[dict[str, Any]]] = {}
+    for raw in data.get("source") or []:
+        if not isinstance(raw, Mapping):
+            continue
+        dish = str(raw.get("dish") or "").strip()
+        url = str(raw.get("url") or "").strip()
+        if not dish or not url.startswith(("http://", "https://")):
+            continue
+        rows = out.setdefault(dish, [])
+        if any(normalize_url(r["url"]) == normalize_url(url) for r in rows):
+            continue
+        row = {key: raw.get(key) for key in SOURCE_FIELDS} | {"url": url}
+        for key in ("site", "title", "image", "why"):
+            row[key] = str(row.get(key) or "")
+        try:
+            minutes = int(row.get("minutes") or 0)
+        except (TypeError, ValueError):
+            minutes = 0
+        row["minutes"] = minutes if minutes > 0 else None  # 0 は「分からない」（TOML に null が無い）
+        rows.append(row)
+    return out
+
+
+def normalize_url(url: str) -> str:
+    """出典 URL の突き合わせ用（scheme・host の大小、末尾の `/`、クエリと `#` を無視する）。"""
+    text = str(url or "").strip()
+    for sep in ("#", "?"):
+        text = text.split(sep, 1)[0]
+    if "://" in text:
+        scheme, rest = text.split("://", 1)
+        host, _, path = rest.partition("/")
+        text = f"{scheme.lower()}://{host.lower()}/{path}"
+    return text.rstrip("/")
+
+
+def catalog_recipe(dish: Mapping[str, Any]) -> dict[str, Any]:
+    """定番1品 → 栄養の推定に渡す形（題名・人数・材料だけ。作り方は持たない）。"""
     return {
         "title": str(dish.get("title") or ""),
         "servings": dish.get("servings") or 2,
@@ -566,8 +611,6 @@ def catalog_recipe(dish: Mapping[str, Any]) -> dict[str, Any]:
             for i in dish.get("ingredients") or []
             if isinstance(i, Mapping)
         ],
-        "phases": [{"id": "cook", "title": "作る"}],
-        "steps": steps,
     }
 
 
@@ -575,7 +618,7 @@ def catalog_recipe(dish: Mapping[str, Any]) -> dict[str, Any]:
 
 
 _RECIPE_SELECT = (
-    "SELECT r.id, r.title, r.hero_image, r.servings, r.total_minutes, r.body,"
+    "SELECT r.id, r.title, r.hero_image, r.source_url, r.servings, r.total_minutes, r.body,"
     " m.kcal, m.protein_g, m.fat_g, m.carb_g, m.salt_g, m.nutrition_source, m.nutrition_coverage,"
     " m.rating, m.favorite, m.tags, m.category, m.main_ingredient, m.cuisine"
 )
@@ -668,6 +711,7 @@ def _summary(cand: Mapping[str, Any], scored: Scored) -> dict[str, object]:
         "tags": list(cand.get("tags") or []),
         "minutes": cand.get("minutes"),
         "hero_image": cand.get("hero_image") or "",
+        "sources": list(cand.get("sources") or []),
         "score": round(scored.score, 3),
         "reasons": scored.reasons,
         "nutrition": nutr,
@@ -681,6 +725,7 @@ def suggest(
     *,
     lexicon_path: Path | None = None,
     catalog_path: Path | None = None,
+    sources_path: Path | None = None,
 ) -> dict[str, object]:
     """`GET /api/v1/kitchen/recipes/{id}/companions` の応答（ADR-021 D5）。
 
@@ -714,12 +759,25 @@ def suggest(
         candidate_from_recipe(r, rules)
         for r in _recipe_rows(conn, f"m.category IN ({marks}) AND r.id <> ?", (*categories, int(recipe_id)))
     ]
+    sources = load_sources(sources_path)
     catalog = [
-        candidate_from_catalog(dish, est, rules)
+        candidate_from_catalog(dish, est, rules, sources.get(str(dish["key"]), []))
         for dish, est in estimate_catalog(conn, catalog_path)
     ]
-    # 同じ料理がレシピ帳にあれば、定番のほうは出さない（うちのものを優先）。
-    catalog = [c for c in catalog if not any(menu._dish_matches(c["title"], o["title"]) for o in own)]
+    # 同じ料理がレシピ帳にあれば、定番のほうは出さない（うちのものを優先）。題名が同じもの
+    # に加え、**候補の URL を取り込んだレシピ**があれば（分類が副菜でなくても）その定番は畳む。
+    imported = {
+        normalize_url(str(r["source_url"]))
+        for r in conn.execute(
+            "SELECT source_url FROM chef_recipe WHERE archived_at IS NULL AND source_url <> ''"
+        ).fetchall()
+    }
+    catalog = [
+        c
+        for c in catalog
+        if not any(menu._dish_matches(c["title"], o["title"]) for o in own)
+        and not any(normalize_url(str(src["url"])) in imported for src in c["sources"])
+    ]
     pool = own + catalog
     by_key = {c["key"]: c for c in pool}
 
@@ -741,42 +799,6 @@ def _catalog_dish(key: str, path: Path | None = None) -> dict[str, Any]:
         key=ERR_CATALOG_NOT_FOUND,
         params={"key": key},
     )
-
-
-def catalog_detail(key: str, *, catalog_path: Path | None = None) -> dict[str, object]:
-    """定番1品の作り方（カードを開いたときに見せる。材料と手順）。"""
-    dish = _catalog_dish(key, catalog_path)
-    return {
-        "key": key,
-        "title": str(dish.get("title") or ""),
-        "servings": dish.get("servings") or 2,
-        "minutes": dish.get("minutes"),
-        "heat": str(dish.get("heat") or HEAT_NONE),
-        "ingredients": catalog_recipe(dish)["ingredients"],
-        "steps": [str(s) for s in dish.get("steps") or []],
-    }
-
-
-def adopt(conn: sqlite3.Connection, key: str, *, catalog_path: Path | None = None) -> dict[str, object]:
-    """定番をレシピ帳に入れる（ADR-021 D4「昇格」）。同じ題名のレシピが既にあればそれを返す。"""
-    dish = _catalog_dish(key, catalog_path)
-    title = str(dish.get("title") or "")
-    existing = conn.execute(
-        "SELECT id FROM chef_recipe WHERE title = ? AND archived_at IS NULL", (title,)
-    ).fetchone()
-    if existing is not None:
-        return {"recipe_id": int(existing["id"]), "created": False}
-    recipe = catalog_recipe(dish)
-    category = str(dish.get("category") or "")
-    cuisine = str(dish.get("cuisine") or "")
-    recipe["meta"] = {
-        "category": category if category in ops.recipe_category_values() else "",
-        "cuisine": cuisine if cuisine in ops.recipe_cuisine_values() else "",
-        "tags": [str(t) for t in dish.get("tags") or []],
-    }
-    recipe_id = recipes.add(conn, recipe)
-    nutrition.refresh(conn, recipe_id)
-    return {"recipe_id": recipe_id, "created": True}
 
 
 def plan_together(

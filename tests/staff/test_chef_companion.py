@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import pytest
 
-from manor.staff.chef import companion, ops, recipes
+from manor.staff.chef import companion, ops
 
 
 @pytest.fixture(scope="module")
@@ -194,11 +194,59 @@ def test_bundled_catalog_is_well_formed() -> None:
         assert d["kind"] in kinds, d["key"]
         assert d["heat"] in companion.HEATS, d["key"]
         assert d["cuisine"] in ops.recipe_cuisine_values(), d["key"]
-        assert d["ingredients"] and d["steps"], d["key"]
-        # レシピ帳へ昇格できる形になる（ADR-015 §3 の検算を通る）
-        recipes.validate(companion.catalog_recipe(d))
+        assert d["ingredients"], d["key"]
+        # 作り方は持たない（AI の手順を出さない。2026-09-25 主人）——作り方はサイトの候補で見る
+        assert "steps" not in d, d["key"]
 
 
 def test_bundled_catalog_covers_the_owners_examples() -> None:
     titles = " ".join(d["title"] for d in companion.load_catalog())
     assert "わかめ" in titles and "キャベツ" in titles
+
+
+# --- レシピサイトの候補（companion_sources.toml） -----------------------------------------
+
+
+def test_normalize_url_ignores_case_slash_query_and_fragment() -> None:
+    a = companion.normalize_url("HTTPS://WWW.Kurashiru.com/recipes/abc/?utm=1#top")
+    assert a == companion.normalize_url("https://www.kurashiru.com/recipes/abc")
+    # パスの大小は区別する（サイトによって意味が違う）
+    assert companion.normalize_url("https://x.com/Recipe/A") != companion.normalize_url("https://x.com/recipe/a")
+
+
+def test_load_sources_groups_by_dish_and_drops_bad_or_duplicate_urls(tmp_path) -> None:
+    path = tmp_path / "s.toml"
+    path.write_bytes(
+        """
+[[source]]
+dish = "a"
+url = "https://x.com/r/1"
+title = "一"
+[[source]]
+dish = "a"
+url = "https://x.com/r/1/"
+title = "重複"
+[[source]]
+dish = "a"
+url = "javascript:alert(1)"
+title = "悪い"
+[[source]]
+dish = "b"
+url = "https://y.com/r/2"
+title = "二"
+""".encode("utf-8")
+    )
+    out = companion.load_sources(path)
+    assert [s["title"] for s in out["a"]] == ["一"]
+    assert [s["title"] for s in out["b"]] == ["二"]
+
+
+def test_bundled_sources_point_at_known_dishes() -> None:
+    """同梱の候補は、定番にある key だけを指し、個別のレシピページの URL である。"""
+    keys = {d["key"] for d in companion.load_catalog()}
+    sources = companion.load_sources()
+    assert set(sources) <= keys
+    for dish, rows in sources.items():
+        for row in rows:
+            assert row["url"].startswith("https://"), (dish, row["url"])
+            assert row["title"] and row["site"], (dish, row["url"])

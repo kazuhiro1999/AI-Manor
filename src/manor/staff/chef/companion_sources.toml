@@ -1,0 +1,901 @@
+# お供の定番のレシピサイトの候補（ADR-021 §6）。定番（companions.toml）ごとに、実在するレシピの
+# ページを 2〜3 件ずつ持つ。**作り方はここに書かない**——URL・題名・画像の直リンク・目安の時間だけ
+# （レシピ帳の hero_image と同じく画像は保存しない）。画面は候補を並べ、主人が「サイトで見る」か
+# 「レシピ帳に入れる」（取り込み画面で下書きを確かめてから登録）を選ぶ。取り込んだレシピは
+# 出典 URL で突き合わせ、その定番の代わりに「うちのレシピ」として並ぶ。
+#
+# 2026-09-25 に検索で集め、各 URL を manor の取り込み（自動抽出）に通して、材料と手順が
+# 読めることを確かめた（題名・画像・時間はそのときの抽出結果）。サイト側の改版で URL が
+# 切れることはある——見つけたら行を消すか差し替えてよい。
+#
+# 各行: dish（定番の key）・url・site・title・image・minutes（分。無ければ 0）・why（選んだ理由）
+
+# --- きゅうりとわかめの酢の物（sunomono_wakame_kyuri） ---
+[[source]]
+dish = "sunomono_wakame_kyuri"
+url = "https://www.kurashiru.com/recipes/1701b8a7-2c59-467e-affc-f82e24cbf43f"
+site = "クラシル"
+title = "定番 きゅうりとわかめの酢の物"
+image = "https://video.kurashiru.com/production/videos/1701b8a7-2c59-467e-affc-f82e24cbf43f/compressed_thumbnail_square_large.jpg?1788853276"
+minutes = 10
+why = "きゅうり・わかめ・酢・砂糖の基本形。10分の定番レシピ"
+
+[[source]]
+dish = "sunomono_wakame_kyuri"
+url = "https://www.sirogohan.com/recipe/sunomono/"
+site = "白ごはん.com"
+title = "いちばん簡単な酢の物のレシピ/作り方"
+image = "https://www.sirogohan.com/_files/recipe/images/kyuurisunomono/sunomono6491.JPG"
+minutes = 10
+why = "きゅうり・わかめ・砂糖・酢・醤油のシンプルな三杯酢風。じゃこは少量のアレンジ"
+
+
+# --- ひじきの煮物（hijiki_no_nimono） ---
+[[source]]
+dish = "hijiki_no_nimono"
+url = "https://www.kurashiru.com/recipes/1b579aa2-890d-43e3-bf4a-7175bda29d1b"
+site = "クラシル"
+title = "シンプルでおいしい！簡単ひじきの煮物"
+image = "https://video.kurashiru.com/production/videos/1b579aa2-890d-43e3-bf4a-7175bda29d1b/compressed_thumbnail_square_large.jpg?1789452733"
+minutes = 30
+why = "ひじき・にんじん・油揚げ・醤油の定番の組み合わせ"
+
+[[source]]
+dish = "hijiki_no_nimono"
+url = "https://www.sirogohan.com/recipe/hijiki/"
+site = "白ごはん.com"
+title = "ひじきの煮物のレシピ/作り方"
+image = "https://www.sirogohan.com/_files/recipe/images/hijiki/hijiki8455.JPG"
+minutes = 20
+why = "ひじき・にんじん・油揚げの基本の煮物。だし汁ベースの王道レシピ"
+
+
+# --- もずく酢（mozuku_su） ---
+[[source]]
+dish = "mozuku_su"
+url = "https://www.kurashiru.com/recipes/cb35858f-a5e2-485a-a075-548bb05f4bd3"
+site = "クラシル"
+title = "手作り もずく酢"
+image = "https://video.kurashiru.com/production/videos/cb35858f-a5e2-485a-a075-548bb05f4bd3/compressed_thumbnail_square_large.jpg?1789690076"
+minutes = 5
+why = "もずく・酢・しょうゆの基本形。甘味料は砂糖の代わりに低カロリー甘味料を使用（軽微な違い）"
+
+[[source]]
+dish = "mozuku_su"
+url = "https://delishkitchen.tv/recipes/156318379232199148"
+site = "DELISH KITCHEN"
+title = "みりんを使わない三杯酢！ もずく酢(もずくの三杯酢和え)"
+image = "https://image.delishkitchen.tv/recipe/156318379232199148/1.jpg?version=1702604042&w=920"
+minutes = 5
+why = "もずく・酢・しょうゆ・砂糖の三杯酢。きゅうりが加わった軽いアレンジ"
+
+
+# --- わかめとレタスの海藻サラダ（wakame_lettuce_salad） ---
+[[source]]
+dish = "wakame_lettuce_salad"
+url = "https://www.kurashiru.com/recipes/ee9ebc3e-6601-4a13-98a7-de3cc40a5b64"
+site = "クラシル"
+title = "レタスとわかめの中華サラダ"
+image = "https://video.kurashiru.com/production/videos/ee9ebc3e-6601-4a13-98a7-de3cc40a5b64/compressed_thumbnail_square_large.jpg?1779641241"
+minutes = 10
+why = "レタス・乾燥わかめ・ミニトマトに、酢・しょうゆ・砂糖・ごま油の和風寄りドレッシング"
+
+[[source]]
+dish = "wakame_lettuce_salad"
+url = "https://delishkitchen.tv/recipes/363298309361632319"
+site = "DELISH KITCHEN"
+title = "ごまが香る♪ 和風ドレッシングの海藻サラダ"
+image = "https://image.delishkitchen.tv/recipe/363298309361632319/1.jpg?version=1635481262&w=920"
+minutes = 10
+why = "レタス+和風ドレッシング(すりごま・砂糖・しょうゆ・酢)。わかめ単体でなく海藻ミックスを使用する点が異なる"
+
+
+# --- きゅうりの海苔和え（nori_kyuri_ae） ---
+[[source]]
+dish = "nori_kyuri_ae"
+url = "https://cookpad.com/jp/recipes/20261253"
+site = "Cookpad"
+title = "きゅうりと焼き海苔の韓国風おつまみ"
+image = "https://og-image.cookpad.com/global/jp/recipe/20261253?t=1690188470"
+minutes = 0
+why = "きゅうり・焼きのり・醤油・ごま油の基本形。にんにく少々が加わる軽いアレンジ"
+
+[[source]]
+dish = "nori_kyuri_ae"
+url = "https://oceans-nadia.com/user/45109/recipe/376791"
+site = "Nadia"
+title = "簡単箸休め！＊きゅうりと海苔の胡麻和え＊"
+image = "https://asset.oceans-nadia.com/upload/save_image/93/93dbfd0a669bfcb08e40d55498b60ef4.jpeg?impolicy=cropwm&w=1200&h=630"
+minutes = 5
+why = "きゅうり・焼き海苔・ごまにめんつゆ(醤油ベース)で和える5分レシピ"
+
+
+# --- コールスロー（coleslaw） ---
+[[source]]
+dish = "coleslaw"
+url = "https://delishkitchen.tv/recipes/371891136647659784"
+site = "DELISH KITCHEN"
+title = "さっぱり食べやすい！ 定番のコールスロー"
+image = "https://image.delishkitchen.tv/recipe/371891136647659784/1.jpg?version=1635385202&w=920"
+minutes = 10
+why = "キャベツ・にんじん・塩・マヨネーズの基本形。コーン・レモン汁・砂糖が加わる定番アレンジ"
+
+[[source]]
+dish = "coleslaw"
+url = "https://www.sirogohan.com/recipe/ko-rusuro/"
+site = "白ごはん.com"
+title = "キャベツのコールスロー/ごまをきかせたちょっと和風な仕上がり！"
+image = "https://www.sirogohan.com/_files/recipe/images/ko-rusuro/ko-rusuro44862.JPG"
+minutes = 30
+why = "キャベツ・塩・マヨネーズの王道コールスロー。にんじんは無しでごまが香る和風寄りの味付け"
+
+
+# --- キャベツの塩もみ（cabbage_shiomomi） ---
+[[source]]
+dish = "cabbage_shiomomi"
+url = "https://delishkitchen.tv/recipes/306443264007865490"
+site = "DELISH KITCHEN"
+title = "お手軽副菜♪ 塩もみキャベツのごまポン酢あえ"
+image = "https://image.delishkitchen.tv/recipe/306443264007865490/1.jpg?version=1599705422&w=920"
+minutes = 10
+why = "キャベツ・塩・ごま油・すりごまの基本形にポン酢を少量加えたシンプル副菜"
+
+[[source]]
+dish = "cabbage_shiomomi"
+url = "https://www.kurashiru.com/recipe_cards/6b87c8fb-4977-4195-8a66-f89bf8da0dbd"
+site = "クラシル"
+title = "ごま油の香るキャベツの旨塩ごま和え"
+image = "https://video.kurashiru.com/production/recipe_cards/cover_image/6b87c8fb-4977-4195-8a66-f89bf8da0dbd/large_image_original.jpg"
+minutes = 0
+why = "キャベツ・塩・ごま油・白ごまの塩もみ和え。焼き海苔と鶏がらスープの素が加わるアレンジ"
+
+
+# --- せん切りキャベツのごまドレッシング（cabbage_sengiri_goma_dressing） ---
+[[source]]
+dish = "cabbage_sengiri_goma_dressing"
+url = "https://www.kurashiru.com/recipes/287235e4-db7e-4e4c-b0a3-0008581de012"
+site = "クラシル"
+title = "無限に食べられる！？やみつき胡麻キャベツ"
+image = "https://video.kurashiru.com/production/videos/287235e4-db7e-4e4c-b0a3-0008581de012/compressed_thumbnail_square_large.jpg?1789577250"
+minutes = 30
+why = "せん切りキャベツに酢・醤油・砂糖・すりごま・マヨネーズの手作りごまドレッシング風味"
+
+[[source]]
+dish = "cabbage_sengiri_goma_dressing"
+url = "https://www.kurashiru.com/recipes/98332b51-b090-4d74-ab76-15449fa7fcdf"
+site = "クラシル"
+title = "ささっと簡単 ごま油香るマヨポンキャベツ"
+image = "https://video.kurashiru.com/production/videos/98332b51-b090-4d74-ab76-15449fa7fcdf/compressed_thumbnail_square_large.jpg?1761515333"
+minutes = 20
+why = "生キャベツにマヨネーズ・ポン酢・ごま油をかけるだけ。市販ごまドレッシングの代わりに手作りタレを使用"
+
+
+# --- キャベツの浅漬け（cabbage_asazuke） ---
+[[source]]
+dish = "cabbage_asazuke"
+url = "https://delishkitchen.tv/recipes/317890307247047097"
+site = "DELISH KITCHEN"
+title = "しょうがでさっぱり！ キャベツときゅうりの浅漬け"
+image = "https://image.delishkitchen.tv/recipe/317890307247047097/1.jpg?version=1700099461&w=920"
+minutes = 90
+why = "キャベツ・きゅうり・しょうが・塩の基本形にぴったり合致"
+
+[[source]]
+dish = "cabbage_asazuke"
+url = "https://www.sirogohan.com/recipe/tukemono-kyabetu/"
+site = "白ごはん.com"
+title = "キャベツの浅漬けのレシピ/作り方"
+image = "https://www.sirogohan.com/_files/recipe/images/tukemono-kyabetu/tukemono-kyabetuyoko.JPG"
+minutes = 10
+why = "キャベツと塩の基本の浅漬け。にんじん・昆布・ごまが加わり、きゅうり・しょうがは無し（やや異なる構成）"
+
+
+# --- キャベツとツナのサラダ（cabbage_tuna_salad） ---
+[[source]]
+dish = "cabbage_tuna_salad"
+url = "https://delishkitchen.tv/recipes/296286150778159610"
+site = "DELISH KITCHEN"
+title = "2ステップで作れる！ キャベツの和風ツナマヨサラダ"
+image = "https://image.delishkitchen.tv/recipe/296286150778159610/1.jpg?version=1641883983&w=920"
+minutes = 5
+why = "キャベツ・ツナ・マヨネーズ・塩の基本形。だしとすりごまが加わるだけのシンプル構成"
+
+[[source]]
+dish = "cabbage_tuna_salad"
+url = "https://www.kurashiru.com/recipes/f1344d57-d6e1-4b84-bdc8-cbeecaa92d12"
+site = "クラシル"
+title = "キャベツと大根のツナマヨサラダ"
+image = "https://video.kurashiru.com/production/videos/f1344d57-d6e1-4b84-bdc8-cbeecaa92d12/compressed_thumbnail_square_large.jpg?1789373149"
+minutes = 15
+why = "キャベツ・塩・ツナ・マヨネーズが基本形と一致。大根が加わるアレンジ"
+
+
+# --- キャベツとパクチーのエスニックサラダ（cabbage_pakuchi_ethnic_salad） ---
+[[source]]
+dish = "cabbage_pakuchi_ethnic_salad"
+url = "https://oceans-nadia.com/user/22084/recipe/336577"
+site = "Nadia"
+title = "キャベツとパクチーのさっぱりサラダ"
+image = "https://asset.oceans-nadia.com/upload/save_image/e9/e9dcad1d0c38.JPG?impolicy=cropwm&w=1200&h=630"
+minutes = 10
+why = "キャベツ・塩・パクチー・ナンプラーの基本形。レモン汁は無く、砂糖とピーナッツが加わる"
+
+
+# --- ほうれん草のおひたし（spinach_ohitashi） ---
+[[source]]
+dish = "spinach_ohitashi"
+url = "https://www.kurashiru.com/recipes/1ed38860-0785-40e3-9651-f2f3a172f4ad"
+site = "クラシル"
+title = "基本のほうれん草のおひたし"
+image = "https://video.kurashiru.com/production/videos/1ed38860-0785-40e3-9651-f2f3a172f4ad/compressed_thumbnail_square_large.jpg?1789023411"
+minutes = 10
+why = "ほうれん草・塩・醤油・かつお節の基本形にぴったり合致"
+
+[[source]]
+dish = "spinach_ohitashi"
+url = "https://www.sirogohan.com/recipe/ohitasi/"
+site = "白ごはん.com"
+title = "ほうれん草のおひたしのレシピ/作り方"
+image = "https://www.sirogohan.com/_files/recipe/images/ohitasi/ohitasi1410.JPG"
+minutes = 10
+why = "ほうれん草を下茹でし、だし・醤油・みりんの浸し地に漬ける定番のおひたし"
+
+
+# --- 小松菜のごま和え（komatsuna_goma_ae） ---
+[[source]]
+dish = "komatsuna_goma_ae"
+url = "https://delishkitchen.tv/recipes/197327495874216992"
+site = "DELISH KITCHEN"
+title = "ごまの風味が格別！ 基本の小松菜の胡麻和え"
+image = "https://image.delishkitchen.tv/recipe/197327495874216992/1.jpg?version=1706582941&w=920"
+minutes = 15
+why = "小松菜・ごま・醤油・砂糖のみのシンプルな基本形"
+
+[[source]]
+dish = "komatsuna_goma_ae"
+url = "https://www.kurashiru.com/recipes/7886362c-ad74-47eb-a742-5e438e09c5fe"
+site = "クラシル"
+title = "シンプルでおいしい 小松菜のごま和え"
+image = "https://video.kurashiru.com/production/videos/7886362c-ad74-47eb-a742-5e438e09c5fe/compressed_thumbnail_square_large.jpg?1789922852"
+minutes = 20
+why = "小松菜・すりごま・砂糖にめんつゆ(醤油ベース)で味付けするシンプルな和え物"
+
+
+# --- 白菜の浅漬け（hakusai_asazuke） ---
+[[source]]
+dish = "hakusai_asazuke"
+url = "https://www.kurashiru.com/recipes/d64a36e9-5638-4a61-b4dd-0cc7f1162549"
+site = "クラシル"
+title = "簡単 白菜の浅漬け"
+image = "https://video.kurashiru.com/production/videos/d64a36e9-5638-4a61-b4dd-0cc7f1162549/compressed_thumbnail_square_large.jpg?1789089878"
+minutes = 70
+why = "白菜・昆布・塩のみのシンプルな浅漬け。赤唐辛子は無し"
+
+[[source]]
+dish = "hakusai_asazuke"
+url = "https://www.sirogohan.com/recipe/tukemono-hakusai/"
+site = "白ごはん.com"
+title = "簡単！白菜の浅漬けのレシピ/作り方"
+image = "https://www.sirogohan.com/_files/recipe/images/tukemono-hakusai/tukemono-hakusaiyoko.JPG"
+minutes = 10
+why = "白菜・塩・昆布の基本形。赤唐辛子は無く、食べる際に醤油やごまを添える構成"
+
+
+# --- 水菜と大根のさっぱりサラダ（mizuna_daikon_salad） ---
+[[source]]
+dish = "mizuna_daikon_salad"
+url = "https://delishkitchen.tv/recipes/311644472171562221"
+site = "DELISH KITCHEN"
+title = "シャキシャキ食感♪ 大根と水菜のねぎポン酢サラダ"
+image = "https://image.delishkitchen.tv/recipe/311644472171562221/1.jpg?version=1603504813&w=920"
+minutes = 15
+why = "水菜・大根・ポン酢・ごま油の基本形にぴったり合致。長ねぎが加わる軽いアレンジ"
+
+[[source]]
+dish = "mizuna_daikon_salad"
+url = "https://www.kurashiru.com/recipes/349f26e0-6157-4f7c-8768-795acae90e36"
+site = "クラシル"
+title = "あっさりシンプル！水菜と大根のサラダ"
+image = "https://video.kurashiru.com/production/videos/349f26e0-6157-4f7c-8768-795acae90e36/compressed_thumbnail_square_large.jpg?1789450722"
+minutes = 15
+why = "水菜・大根・ごま油の基本形。ポン酢の代わりに酢・塩・かつお節で味付け"
+
+
+# --- トマトと玉ねぎのマリネ（tomato_onion_marine） ---
+[[source]]
+dish = "tomato_onion_marine"
+url = "https://www.kurashiru.com/recipes/c37eee3c-4b6d-44aa-85c6-53eebd10b3c9"
+site = "クラシル"
+title = "サッパリ！トマトマリネ"
+image = "https://video.kurashiru.com/production/videos/c37eee3c-4b6d-44aa-85c6-53eebd10b3c9/compressed_thumbnail_square_large.jpg?1788826333"
+minutes = 10
+why = "トマト・玉ねぎ・酢・オリーブオイルの基本形、10分で作れる定番マリネ"
+
+[[source]]
+dish = "tomato_onion_marine"
+url = "https://delishkitchen.tv/recipes/197021815837557140"
+site = "DELISH KITCHEN"
+title = "粒マスタードがアクセント！ 新玉とトマトの簡単マリネ"
+image = "https://image.delishkitchen.tv/recipe/197021815837557140/1.jpg?version=1706073422&w=920"
+minutes = 20
+why = "トマト・玉ねぎ・オリーブオイル・酢の基本形に粒マスタードを加えた副菜"
+
+
+# --- たたききゅうり（tataki_kyuri） ---
+[[source]]
+dish = "tataki_kyuri"
+url = "https://www.kurashiru.com/recipes/cd07c3b8-c038-4af9-9c27-a44a96af9ee3"
+site = "クラシル"
+title = "ポリポリっと！ごま油香るたたききゅうり"
+image = "https://video.kurashiru.com/production/videos/cd07c3b8-c038-4af9-9c27-a44a96af9ee3/compressed_thumbnail_square_large.jpg?1790095647"
+minutes = 10
+why = "きゅうり・ごま油・しょうゆ・にんにくの定番たたききゅうり"
+
+[[source]]
+dish = "tataki_kyuri"
+url = "https://www.sirogohan.com/recipe/tatakikyuuri/"
+site = "白ごはん.com"
+title = "たたききゅうりのレシピ/作り方"
+image = "https://www.sirogohan.com/_files/recipe/images/tatakikyuuri/tatakikyuuri1426.JPG"
+minutes = 5
+why = "きゅうり・ごま油・醤油の基本形（にんにくの代わりに生姜を使う定番版）"
+
+
+# --- きゅうりの韓国風ピリ辛漬け（kyuri_kankoku_zuke） ---
+[[source]]
+dish = "kyuri_kankoku_zuke"
+url = "https://www.kurashiru.com/recipes/b1b64817-29bd-4f45-935f-e65c28020581"
+site = "クラシル"
+title = "きゅうりのピリ辛漬け"
+image = "https://video.kurashiru.com/production/videos/b1b64817-29bd-4f45-935f-e65c28020581/compressed_thumbnail_square_large.jpg?1790227509"
+minutes = 30
+why = "きゅうり・豆板醤・ごま油を使う韓国風ピリ辛漬けの基本形"
+
+[[source]]
+dish = "kyuri_kankoku_zuke"
+url = "https://delishkitchen.tv/recipes/355081865159246994"
+site = "DELISH KITCHEN"
+title = "ピリッと旨辛♪ きゅうりの韓国風浅漬け"
+image = "https://image.delishkitchen.tv/recipe/355081865159246994/1.jpg?version=1701303301&w=920"
+minutes = 40
+why = "きゅうり・塩・ごま油の韓国風浅漬け（豆板醤の代わりにコチュジャンを使う近縁バリエーション）"
+
+
+# --- ブロッコリーのごまマヨ和え（broccoli_goma_mayo） ---
+[[source]]
+dish = "broccoli_goma_mayo"
+url = "https://www.kurashiru.com/recipe_cards/101f786e-a46a-4410-a158-0e001974c6c8"
+site = "クラシル"
+title = "【野菜ひとつ】ブロッコリーのごまマヨ和え"
+image = "https://video.kurashiru.com/production/recipe_cards/cover_image/101f786e-a46a-4410-a158-0e001974c6c8/large_image_original.jpg"
+minutes = 0
+why = "ブロッコリー・すりごま・マヨネーズ・しょうゆだけのシンプルな基本形"
+
+[[source]]
+dish = "broccoli_goma_mayo"
+url = "https://delishkitchen.tv/recipes/295776982606545998"
+site = "DELISH KITCHEN"
+title = "クリーミーな美味しさ！ ブロッコリーのごまマヨ和え"
+image = "https://image.delishkitchen.tv/recipe/295776982606545998/1.jpg?version=1598447642&w=920"
+minutes = 5
+why = "ブロッコリー・ごま・マヨネーズ・しょうゆの基本形、5分で完成"
+
+
+# --- もやしのナムル（moyashi_namuru） ---
+[[source]]
+dish = "moyashi_namuru"
+url = "https://www.kurashiru.com/recipes/231d10de-39fc-47f4-a9fb-0dc1a06da8d7"
+site = "クラシル"
+title = "超簡単！もやしナムル"
+image = "https://video.kurashiru.com/production/videos/231d10de-39fc-47f4-a9fb-0dc1a06da8d7/compressed_thumbnail_square_large.jpg?1789750043"
+minutes = 5
+why = "もやし・ごま油・鶏がらスープの素を使う定番ナムル、5分"
+
+[[source]]
+dish = "moyashi_namuru"
+url = "https://www.sirogohan.com/recipe/namuru5/"
+site = "白ごはん.com"
+title = "もやしのナムルのレシピ/作り方"
+image = "https://www.sirogohan.com/_files/recipe/images/namuru/moyanamu3900.JPG"
+minutes = 15
+why = "もやし・塩・ごま油の基本形ナムル"
+
+
+# --- 冷奴（hiyayakko） ---
+[[source]]
+dish = "hiyayakko"
+url = "https://www.kurashiru.com/recipe_cards/7ffc94ad-0775-47be-80f7-421d73ffa2df"
+site = "クラシル"
+title = "ささっと5分で一品追加！☆ごま油薫る水切り冷奴"
+image = "https://video.kurashiru.com/production/recipe_cards/cover_image/7ffc94ad-0775-47be-80f7-421d73ffa2df/large_image_original.jpg"
+minutes = 0
+why = "絹ごし豆腐・ねぎ・かつお節・醤油の基本形（おろし生姜・ごま油はトッピングの追加要素）"
+
+[[source]]
+dish = "hiyayakko"
+url = "https://delishkitchen.tv/recipes/418343666168365384"
+site = "DELISH KITCHEN"
+title = "シンプルが一番！ 基本の冷奴"
+image = "https://image.delishkitchen.tv/recipe/418343666168365384/1.jpg?version=1742883302&w=920"
+minutes = 5
+why = "絹豆腐・ねぎ・醤油のシンプル形（かつお節の代わりにおろし生姜を使う近縁バリエーション）"
+
+
+# --- 大根サラダ（daikon_salad） ---
+[[source]]
+dish = "daikon_salad"
+url = "https://www.kurashiru.com/recipes/64a16a00-4a56-4602-8309-efa92e7531ee"
+site = "クラシル"
+title = "大根のかつお節サラダ"
+image = "https://video.kurashiru.com/production/videos/64a16a00-4a56-4602-8309-efa92e7531ee/compressed_thumbnail_square_large.jpg?1790095647"
+minutes = 15
+why = "大根・かいわれ大根・かつお節・和風ドレッシングの基本形"
+
+[[source]]
+dish = "daikon_salad"
+url = "https://delishkitchen.tv/recipes/143412642541732303"
+site = "DELISH KITCHEN"
+title = "シャキシャキ食感！ かいわれと大根の和風サラダ"
+image = "https://image.delishkitchen.tv/recipe/143412642541732303/1.jpg?version=1788844478&w=920"
+minutes = 10
+why = "大根・かいわれ・かつお節・和風ドレッシングの基本形、10分"
+
+
+# --- キャロットラペ（carrot_rape） ---
+[[source]]
+dish = "carrot_rape"
+url = "https://delishkitchen.tv/recipes/477216884744258689"
+site = "DELISH KITCHEN"
+title = "初心者でも味付け失敗なし！10分で作れる絶品キャロットラペ"
+image = "https://image.delishkitchen.tv/recipe/477216884744258689/1.jpg?version=1785807988&w=920"
+minutes = 10
+why = "にんじん・砂糖・酢・オリーブオイルの基本形、10分（レーズン入り）"
+
+[[source]]
+dish = "carrot_rape"
+url = "https://www.sirogohan.com/recipe/ninjins/"
+site = "白ごはん.com"
+title = "にんじんサラダ（キャロットラペ）のレシピ"
+image = "https://www.sirogohan.com/_files/recipe/images/ninjins/ninjins9978.JPG"
+minutes = 20
+why = "にんじん・砂糖・酢・オイルの基本形キャロットラペ"
+
+
+# --- きのこのレンジ蒸しポン酢がけ（kinoko_range_ponzu） ---
+[[source]]
+dish = "kinoko_range_ponzu"
+url = "https://www.kurashiru.com/recipes/e6003b93-6e6e-46dc-abbf-960b7f391389"
+site = "クラシル"
+title = "電子レンジで きのこのポン酢マリネ"
+image = "https://video.kurashiru.com/production/videos/e6003b93-6e6e-46dc-abbf-960b7f391389/compressed_thumbnail_square_large.jpg?1788775705"
+minutes = 30
+why = "しめじ・ポン酢・ねぎをレンジ加熱する基本形（えのきの代わりにまいたけを使用）"
+
+[[source]]
+dish = "kinoko_range_ponzu"
+url = "https://delishkitchen.tv/recipes/312275585185349934"
+site = "DELISH KITCHEN"
+title = "ごま油香る♪ えのきのねぎポン酢あえ"
+image = "https://image.delishkitchen.tv/recipe/312275585185349934/1.jpg?version=1706072522&w=920"
+minutes = 10
+why = "えのき・ねぎ・ポン酢をレンジ加熱する基本形、10分（しめじは含まれず）"
+
+
+# --- きのこの洋風マリネ（kinoko_marine_youfu） ---
+[[source]]
+dish = "kinoko_marine_youfu"
+url = "https://www.kurashiru.com/recipes/1585ec78-a4a0-44d5-a480-8e8ab2d2777e"
+site = "クラシル"
+title = "三種のきのこマリネ"
+image = "https://video.kurashiru.com/production/videos/1585ec78-a4a0-44d5-a480-8e8ab2d2777e/compressed_thumbnail_square_large.jpg?1777826831"
+minutes = 20
+why = "エリンギ・オリーブオイル・酢の洋風マリネ基本形（しめじの代わりにまいたけ・しいたけを使用）"
+
+[[source]]
+dish = "kinoko_marine_youfu"
+url = "https://oceans-nadia.com/user/196104/recipe/378371"
+site = "Nadia"
+title = "きのこのガーリックマリネ"
+image = "https://asset.oceans-nadia.com/upload/save_image/90/906aecc33740e85f967d0f915ede259f.jpg?impolicy=cropwm&w=1200&h=630"
+minutes = 10
+why = "しめじ・オリーブオイル・酢の洋風マリネ、10分（エリンギは「お好みのきのこ」枠）"
+
+
+# --- 切り干し大根の煮物（kiriboshi_daikon_nimono） ---
+[[source]]
+dish = "kiriboshi_daikon_nimono"
+url = "https://www.kurashiru.com/recipes/cad2d252-bbcb-4346-b061-87feb239331b"
+site = "クラシル"
+title = "【基本】切り干し大根の煮物"
+image = "https://video.kurashiru.com/production/videos/cad2d252-bbcb-4346-b061-87feb239331b/compressed_thumbnail_square_large.jpg?1790182050"
+minutes = 25
+why = "切り干し大根・にんじん・油揚げ・醤油の王道の基本形"
+
+[[source]]
+dish = "kiriboshi_daikon_nimono"
+url = "https://www.sirogohan.com/recipe/kiribosi/"
+site = "白ごはん.com"
+title = "切り干し大根の煮物のレシピ/作り方"
+image = "https://www.sirogohan.com/_files/recipe/images/kiribosi/kiribosi4976.JPG"
+minutes = 20
+why = "切り干し大根・にんじん・油揚げ・醤油の丁寧な基本形"
+
+
+# --- きんぴらごぼう（kinpira_gobo） ---
+[[source]]
+dish = "kinpira_gobo"
+url = "https://www.kurashiru.com/recipes/5e82c8da-01e7-4ce5-a3cb-d18dc67219ab"
+site = "クラシル"
+title = "基本のきんぴらごぼう"
+image = "https://video.kurashiru.com/production/videos/5e82c8da-01e7-4ce5-a3cb-d18dc67219ab/compressed_thumbnail_square_large.jpg?1789663651"
+minutes = 20
+why = "ごぼう・にんじん・ごま油の王道きんぴらごぼう"
+
+[[source]]
+dish = "kinpira_gobo"
+url = "https://delishkitchen.tv/recipes/151683561894707619"
+site = "DELISH KITCHEN"
+title = "覚えておきたい！ きんぴらごぼう"
+image = "https://image.delishkitchen.tv/recipe/151683561894707619/1.jpg?version=1747016942&w=920"
+minutes = 15
+why = "ごぼう・にんじん・サラダ油の基本形、15分"
+
+
+# --- れんこんのきんぴら（renkon_kinpira） ---
+[[source]]
+dish = "renkon_kinpira"
+url = "https://www.kurashiru.com/recipes/6f333c02-b60a-4869-abeb-2c5844d07363"
+site = "クラシル"
+title = "簡単！れんこんのきんぴら"
+image = "https://video.kurashiru.com/production/videos/6f333c02-b60a-4869-abeb-2c5844d07363/compressed_thumbnail_square_large.jpg?1788540448"
+minutes = 20
+why = "れんこん・サラダ油・醤油の基本形きんぴら"
+
+[[source]]
+dish = "renkon_kinpira"
+url = "https://www.sirogohan.com/recipe/renkonkinpira/"
+site = "白ごはん.com"
+title = "れんこんのきんぴらのレシピ/作り方"
+image = "https://www.sirogohan.com/_files/recipe/images/renkonkinpira/renkonkinpira02682.JPG"
+minutes = 10
+why = "れんこん・サラダ油・醤油の基本形、10分で手早く作れる"
+
+
+# --- 焼きなす（yaki_nasu） ---
+[[source]]
+dish = "yaki_nasu"
+url = "https://www.sirogohan.com/recipe/yakinasu/"
+site = "白ごはん.com"
+title = "焼きなすのレシピ/作り方"
+image = "https://www.sirogohan.com/_files/recipe/images/yakinasu/yakinasu8590.JPG"
+minutes = 20
+why = "なす・醤油・おろし生姜・かつお節の王道の基本形"
+
+[[source]]
+dish = "yaki_nasu"
+url = "https://delishkitchen.tv/recipes/431735234812183018"
+site = "DELISH KITCHEN"
+title = "じゅわっと広がる♪ 焼きナスの生姜しょうゆがけ"
+image = "https://image.delishkitchen.tv/recipe/431735234812183018/1.jpg?version=1743510481&w=920"
+minutes = 15
+why = "なす・しょうゆ・おろし生姜の基本形（かつお節の代わりにごまを使用）"
+
+
+# --- オクラの梅おかか和え（okura_ume_ae） ---
+[[source]]
+dish = "okura_ume_ae"
+url = "https://delishkitchen.tv/recipes/311102980747166814"
+site = "DELISH KITCHEN"
+title = "簡単副菜！ オクラの梅おかかあえ"
+image = "https://image.delishkitchen.tv/recipe/311102980747166814/1.jpg?version=1755074581&w=920"
+minutes = 10
+why = "オクラ・梅干し・かつお節・醤油だけの王道の基本形、10分"
+
+[[source]]
+dish = "okura_ume_ae"
+url = "https://www.kurashiru.com/recipes/05cb0561-12c4-43c5-8fa3-00f770419608"
+site = "クラシル"
+title = "オクラのおかか和え"
+image = "https://video.kurashiru.com/production/videos/05cb0561-12c4-43c5-8fa3-00f770419608/compressed_thumbnail_square_large.jpg?1790182050"
+minutes = 10
+why = "オクラ・かつお節・醤油の基本形（梅干しは入らないおかか和えのみのバリエーション）"
+
+
+# --- かぼちゃの煮物（kabocha_no_nimono） ---
+[[source]]
+dish = "kabocha_no_nimono"
+url = "https://www.sirogohan.com/recipe/kabocha/"
+site = "白ごはん.com"
+title = "かぼちゃの煮物のレシピ/作り方"
+image = "https://www.sirogohan.com/_files/recipe/images/kabocha/kabochasai8940.JPG"
+minutes = 30
+why = "かぼちゃ・砂糖・醤油だけのだしいらずな基本形"
+
+[[source]]
+dish = "kabocha_no_nimono"
+url = "https://www.kurashiru.com/recipes/451b52cd-601b-47d4-ac8e-4c1f73188f61"
+site = "クラシル"
+title = "基本のかぼちゃの煮物"
+image = "https://video.kurashiru.com/production/videos/451b52cd-601b-47d4-ac8e-4c1f73188f61/compressed_thumbnail_square_large.jpg?1789922852"
+minutes = 20
+why = "醤油・みりん・砂糖の甘辛味、電子レンジ併用で時短の定番版"
+
+
+# --- ポテトサラダ（potato_salad） ---
+[[source]]
+dish = "potato_salad"
+url = "https://delishkitchen.tv/recipes/162510032456384915"
+site = "DELISH KITCHEN"
+title = "失敗しない定番の味！ポテトサラダの王道レシピ"
+image = "https://image.delishkitchen.tv/recipe/162510032456384915/1.jpg?version=1783073101&w=920"
+minutes = 30
+why = "じゃがいも・きゅうり・ハム・マヨネーズの王道の組み合わせ"
+
+[[source]]
+dish = "potato_salad"
+url = "https://www.kurashiru.com/recipe_cards/1241c6a3-4e9c-4f44-a50f-ae115d9cafbe"
+site = "クラシル"
+title = "ポテトサラダ"
+image = "https://video.kurashiru.com/production/recipe_cards/cover_image/1241c6a3-4e9c-4f44-a50f-ae115d9cafbe/large_image_original.jpg"
+minutes = 0
+why = "じゃがいも・きゅうり・ハム・マヨネーズにレモン汁少々の家庭的な一皿"
+
+
+# --- だし巻き卵（dashimaki_tamago） ---
+[[source]]
+dish = "dashimaki_tamago"
+url = "https://www.sirogohan.com/recipe/dasimaki/"
+site = "白ごはん.com"
+title = "だし巻き卵のレシピ/作り方"
+image = "https://www.sirogohan.com/_files/recipe/images/dasimaki/dasimakisai8071.JPG"
+minutes = 10
+why = "卵・だし汁・醤油・砂糖の基本のだし巻き卵、巻き方も丁寧に解説"
+
+[[source]]
+dish = "dashimaki_tamago"
+url = "https://www.kurashiru.com/recipes/ae4d9a8e-056a-4ef7-b837-0f84e13223e2"
+site = "クラシル"
+title = "シンプルな美味しさ だし巻き卵"
+image = "https://video.kurashiru.com/production/videos/ae4d9a8e-056a-4ef7-b837-0f84e13223e2/compressed_thumbnail_square_large.jpg?1789540086"
+minutes = 15
+why = "卵・和風だし・醤油・砂糖のシンプルな定番だし巻き卵"
+
+
+# --- パプリカのマリネ（paprika_marine） ---
+[[source]]
+dish = "paprika_marine"
+url = "https://delishkitchen.tv/recipes/351105464496292104"
+site = "DELISH KITCHEN"
+title = "彩り鮮やか！さっぱり美味しいパプリカマリネのレシピ"
+image = "https://image.delishkitchen.tv/recipe/351105464496292104/1.jpg?version=1784018701&w=920"
+minutes = 20
+why = "赤黄パプリカ・酢・砂糖・オリーブオイルだけのシンプルなマリネ"
+
+[[source]]
+dish = "paprika_marine"
+url = "https://www.kurashiru.com/recipes/0d17ae3b-5cea-4372-824d-bb51ef0e868d"
+site = "クラシル"
+title = "甘くて香ばしい！焼きパプリカのマリネ"
+image = "https://video.kurashiru.com/production/videos/0d17ae3b-5cea-4372-824d-bb51ef0e868d/compressed_thumbnail_square_large.jpg?1787935651"
+minutes = 40
+why = "赤黄パプリカを酢とオリーブオイルでマリネ（玉ねぎ追加・焼く工程あり）"
+
+
+# --- ツナとコーンのサラダ（tuna_corn_salad） ---
+[[source]]
+dish = "tuna_corn_salad"
+url = "https://www.kurashiru.com/recipe_cards/a997e904-68a2-4d1c-8d89-824329a9b30c"
+site = "クラシル"
+title = "子どもがモリモリ食べる♪きゅうりとコーンのツナサラダ"
+image = "https://video.kurashiru.com/production/recipe_cards/cover_image/a997e904-68a2-4d1c-8d89-824329a9b30c/large_image_original.jpg"
+minutes = 0
+why = "ツナ・コーン・マヨネーズが主体（レタスの代わりにきゅうり）"
+
+[[source]]
+dish = "tuna_corn_salad"
+url = "https://oceans-nadia.com/user/236306/recipe/392714"
+site = "Nadia"
+title = "やみつき♡子供も大人も喜ぶ『きゅうりのツナマヨコーンサラダ』"
+image = "https://asset.oceans-nadia.com/upload/save_image/2c/2c406dff1211eb509251ef8587fd0649.jpeg?impolicy=cropwm&w=1200&h=630"
+minutes = 3
+why = "ツナ・コーン・マヨネーズで和えるだけの時短サラダ（レタスの代わりにきゅうり）"
+
+
+# --- にんじんしりしり（ninjin_shirishiri） ---
+[[source]]
+dish = "ninjin_shirishiri"
+url = "https://www.kurashiru.com/recipes/bb9ff624-0651-43d7-81cd-c51a07c4f615"
+site = "クラシル"
+title = "簡単おいしいアレンジ にんじんシリシリ"
+image = "https://video.kurashiru.com/production/videos/bb9ff624-0651-43d7-81cd-c51a07c4f615/compressed_thumbnail_square_large.jpg?1788540448"
+minutes = 15
+why = "にんじん・ツナ・卵・サラダ油の沖縄家庭料理の基本形"
+
+[[source]]
+dish = "ninjin_shirishiri"
+url = "https://delishkitchen.tv/recipes/148476536289231322"
+site = "DELISH KITCHEN"
+title = "簡単おいしい！にんじんしりしりの作り方"
+image = "https://image.delishkitchen.tv/recipe/148476536289231322/1.jpg?version=1788145118&w=920"
+minutes = 10
+why = "にんじん・卵・ツナ缶のシンプルな定番しりしり"
+
+
+# --- 中華風わかめスープ（chuka_wakame_soup） ---
+[[source]]
+dish = "chuka_wakame_soup"
+url = "https://www.kurashiru.com/recipes/81dc7c82-b12d-4781-a6a8-f366013e2e97"
+site = "クラシル"
+title = "ごま油香る わかめとねぎのスープ"
+image = "https://video.kurashiru.com/production/videos/81dc7c82-b12d-4781-a6a8-f366013e2e97/compressed_thumbnail_square_large.jpg?1788328596"
+minutes = 10
+why = "乾燥わかめ・長ねぎ・鶏ガラスープの素・ごま油の中華風わかめスープそのもの"
+
+[[source]]
+dish = "chuka_wakame_soup"
+url = "https://delishkitchen.tv/recipes/217225169729488031"
+site = "DELISH KITCHEN"
+title = "煮るだけ簡単！ 玉ねぎとわかめの中華スープ"
+image = "https://image.delishkitchen.tv/recipe/217225169729488031/1.jpg?version=1754533142&w=920"
+minutes = 10
+why = "乾燥わかめ・鶏ガラスープの素・ごま油に細ねぎを使う中華風スープ（玉ねぎ追加）"
+
+
+# --- 豆腐とわかめの味噌汁（tofu_wakame_miso_shiru） ---
+[[source]]
+dish = "tofu_wakame_miso_shiru"
+url = "https://www.sirogohan.com/recipe/twmisosiru/"
+site = "白ごはん.com"
+title = "豆腐とわかめの味噌汁のレシピ/作り方"
+image = "https://www.sirogohan.com/_files/recipe/images/aaa_kaisetu_siru/twmisosiru2447.JPG"
+minutes = 10
+why = "豆腐・わかめ・だし汁・味噌のもっとも基本的な味噌汁"
+
+[[source]]
+dish = "tofu_wakame_miso_shiru"
+url = "https://www.kurashiru.com/recipes/929b9031-afd3-4e67-baab-197ce860b55c"
+site = "クラシル"
+title = "基本の和食 豆腐とわかめのみそ汁"
+image = "https://video.kurashiru.com/production/videos/929b9031-afd3-4e67-baab-197ce860b55c/compressed_thumbnail_square_large.jpg?1789750043"
+minutes = 15
+why = "絹豆腐・長ねぎ・わかめ・一番だし・みその定番構成"
+
+
+# --- 中華風卵スープ（chuka_tamago_soup） ---
+[[source]]
+dish = "chuka_tamago_soup"
+url = "https://www.kurashiru.com/recipes/f5c93391-591b-4ad7-8b4f-18ee9edf32d5"
+site = "クラシル"
+title = "長ねぎたっぷり中華風卵入りスープ"
+image = "https://video.kurashiru.com/production/videos/f5c93391-591b-4ad7-8b4f-18ee9edf32d5/compressed_thumbnail_square_large.jpg?1789436843"
+minutes = 15
+why = "卵・長ねぎ・鶏ガラスープの素の中華風卵スープ（生姜少々追加）"
+
+[[source]]
+dish = "chuka_tamago_soup"
+url = "https://delishkitchen.tv/recipes/366760583967540287"
+site = "DELISH KITCHEN"
+title = "パパッとできる♪ ねぎと玉ねぎの中華卵スープ"
+image = "https://image.delishkitchen.tv/recipe/366760583967540287/1.jpg?version=1780033957&w=920"
+minutes = 10
+why = "卵・長ねぎ・鶏ガラスープの素・片栗粉でとろみをつけた中華卵スープ"
+
+
+# --- きのこのスープ（kinoko_no_soup） ---
+[[source]]
+dish = "kinoko_no_soup"
+url = "https://www.kurashiru.com/recipes/242ca6fa-5044-4811-9de8-5ebee6242f87"
+site = "クラシル"
+title = "きのこだし香る♪ たっぷりキノコのスープ"
+image = "https://video.kurashiru.com/production/videos/242ca6fa-5044-4811-9de8-5ebee6242f87/compressed_thumbnail_square_large.jpg?1773749837"
+minutes = 25
+why = "しめじ・えのき・コンソメの基本形（エリンギ・ウインナー追加）"
+
+[[source]]
+dish = "kinoko_no_soup"
+url = "https://delishkitchen.tv/recipes/308791413460435357"
+site = "DELISH KITCHEN"
+title = "旨味たっぷり♪ きのことソーセージのコンソメスープ"
+image = "https://image.delishkitchen.tv/recipe/308791413460435357/1.jpg?version=1607824808&w=920"
+minutes = 15
+why = "しめじ・エリンギ等のきのこ＋コンソメの洋風きのこスープ（えのきの代わりにしいたけ）"
+
+
+# --- 野菜たっぷりコンソメスープ（consomme_yasai_soup） ---
+[[source]]
+dish = "consomme_yasai_soup"
+url = "https://www.kurashiru.com/recipes/775a36d0-1805-4e8e-9d72-05647591204d"
+site = "クラシル"
+title = "キャベツと玉ねぎのコンソメスープ"
+image = "https://video.kurashiru.com/production/videos/775a36d0-1805-4e8e-9d72-05647591204d/compressed_thumbnail_square_large.jpg?1788836379"
+minutes = 20
+why = "キャベツ・玉ねぎ・コンソメのシンプルな野菜スープ（にんじんは無し）"
+
+[[source]]
+dish = "consomme_yasai_soup"
+url = "https://delishkitchen.tv/recipes/368976071141359910"
+site = "DELISH KITCHEN"
+title = "旨味たっぷり♪ 野菜いろいろコンソメスープ"
+image = "https://image.delishkitchen.tv/recipe/368976071141359910/1.jpg?version=1633004762&w=920"
+minutes = 15
+why = "キャベツ・玉ねぎ・コンソメの具だくさんスープ（じゃがいも・ベーコン追加、にんじんは無し）"
+
+
+# --- あさりの味噌汁（asari_no_miso_shiru） ---
+[[source]]
+dish = "asari_no_miso_shiru"
+url = "https://www.sirogohan.com/recipe/misosiru-asari/"
+site = "白ごはん.com"
+title = "あさりの味噌汁のレシピ/作り方"
+image = "https://www.sirogohan.com/_files/recipe/images/misosiru-asari/asarimisosiru9846.JPG"
+minutes = 20
+why = "あさり・水・昆布・味噌のみの基本のあさりの味噌汁"
+
+[[source]]
+dish = "asari_no_miso_shiru"
+url = "https://www.kurashiru.com/recipes/3eb3714f-388b-45d8-8f83-a50773d2d95b"
+site = "クラシル"
+title = "あさりの味噌汁"
+image = "https://video.kurashiru.com/production/videos/3eb3714f-388b-45d8-8f83-a50773d2d95b/compressed_thumbnail_square_large.jpg?1790303620"
+minutes = 30
+why = "あさり・昆布だし・味噌に小ねぎを添えた定番のあさりの味噌汁"
+
+
+# --- ミネストローネ風スープ（minestrone_fu_soup） ---
+[[source]]
+dish = "minestrone_fu_soup"
+url = "https://www.kurashiru.com/recipes/57892274-a160-4b7d-965f-5a20cb4a62ab"
+site = "クラシル"
+title = "トマト缶で作るミネストローネ"
+image = "https://video.kurashiru.com/production/videos/57892274-a160-4b7d-965f-5a20cb4a62ab/compressed_thumbnail_square_large.jpg?1788827814"
+minutes = 20
+why = "玉ねぎ・にんじん・トマト缶・コンソメの基本のミネストローネ（大豆水煮の代わりにベーコン・じゃがいも・セロリ）"
+
+[[source]]
+dish = "minestrone_fu_soup"
+url = "https://delishkitchen.tv/recipes/377048994112602606"
+site = "DELISH KITCHEN"
+title = "ミネストローネの作り方が動画でわかる！野菜たっぷりの具沢山レシピ"
+image = "https://image.delishkitchen.tv/recipe/377048994112602606/1.jpg?version=1787278957&w=920"
+minutes = 30
+why = "玉ねぎ・にんじん・トマト缶・コンソメの具だくさんミネストローネ（大豆水煮の代わりにベーコン・じゃがいも・キャベツ）"
+
+
+# --- 豚汁（butajiru） ---
+[[source]]
+dish = "butajiru"
+url = "https://www.sirogohan.com/recipe/tonjiru/"
+site = "白ごはん.com"
+title = "基本の豚汁のレシピ/作り方"
+image = "https://www.sirogohan.com/_files/recipe/images/tonjiru/tonjirusai15602.JPG"
+minutes = 30
+why = "豚バラ・大根・にんじん・ごぼうなど具だくさんな基本の豚汁"
+
+[[source]]
+dish = "butajiru"
+url = "https://www.kurashiru.com/recipes/ae8663a3-9c90-4ec3-b74e-998d0e8de5a6"
+site = "クラシル"
+title = "具だくさん♪基本の豚汁"
+image = "https://video.kurashiru.com/production/videos/ae8663a3-9c90-4ec3-b74e-998d0e8de5a6/compressed_thumbnail_square_large.jpg?1789577250"
+minutes = 30
+why = "豚バラ・大根・にんじん・ごぼうの王道の豚汁"
+
+
+# --- 豆腐とキムチの韓国風スープ（kimchi_tofu_soup） ---
+[[source]]
+dish = "kimchi_tofu_soup"
+url = "https://www.kurashiru.com/recipes/ff983c8e-6c8d-4c6f-a80f-9601d8e77d0e"
+site = "クラシル"
+title = "ピリ辛キムチスープ"
+image = "https://video.kurashiru.com/production/videos/ff983c8e-6c8d-4c6f-a80f-9601d8e77d0e/compressed_thumbnail_square_large.jpg?1789709044"
+minutes = 10
+why = "絹ごし豆腐・キムチ・鶏ガラスープの素・小ねぎの韓国風スープ"
+
+[[source]]
+dish = "kimchi_tofu_soup"
+url = "https://delishkitchen.tv/recipes/511842536466153826"
+site = "DELISH KITCHEN"
+title = "簡単・節約！ 豆腐のキムチスープ"
+image = "https://image.delishkitchen.tv/recipe/511842536466153826/1.jpg?version=1722870002&w=920"
+minutes = 10
+why = "絹豆腐・キムチ・鶏ガラスープの素・細ねぎの韓国風スープ（卵追加）"

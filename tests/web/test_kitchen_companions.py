@@ -11,7 +11,7 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from manor.staff.chef import nutrition, recipes as chef_recipes
+from manor.staff.chef import companion, nutrition, recipes as chef_recipes
 from manor.web import app as web_app_mod
 
 
@@ -36,6 +36,46 @@ def _add(conn, title: str, *, category: str, ingredients, steps=("切る。",)) 
     )
     chef_recipes.set_meta(conn, recipe_id, category=category)
     return recipe_id
+
+
+#: 試験用のレシピサイトの候補（本物のファイルには依らない）。
+SOURCES_TOML = """
+[[source]]
+dish = "coleslaw"
+url = "https://www.example.com/recipes/coleslaw-1/"
+site = "例のサイト"
+title = "基本のコールスロー"
+image = "https://img.example.com/coleslaw-1.jpg"
+minutes = 10
+why = "キャベツとマヨネーズの基本形"
+
+[[source]]
+dish = "coleslaw"
+url = "https://www.example.com/recipes/coleslaw-2"
+site = "別のサイト"
+title = "さっぱりコールスロー"
+image = ""
+minutes = 15
+why = "酢を効かせた型"
+"""
+
+
+@pytest.fixture(autouse=True)
+def fake_sources(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    path = tmp_path / "companion_sources.toml"
+    path.write_bytes(SOURCES_TOML.encode("utf-8"))
+    monkeypatch.setattr(companion, "SOURCES_PATH", path)
+    return path
+
+
+def _all_catalog(conn, recipe_id: int) -> dict[str, dict]:
+    """上位3件に限らず、採点に乗った定番の全部（突き合わせの試験用）。"""
+    rules = companion.load_rules()
+    sources = companion.load_sources()
+    return {
+        str(dish["key"]): companion.candidate_from_catalog(dish, est, rules, sources.get(str(dish["key"]), []))
+        for dish, est in companion.estimate_catalog(conn)
+    }
 
 
 @pytest.fixture
@@ -87,18 +127,6 @@ def test_companions_unknown_recipe_is_404(home: Path, stocked: dict[str, int]) -
     assert make_client(home).get("/api/v1/kitchen/recipes/9999/companions").status_code == 404
 
 
-def test_catalog_detail_and_404(home: Path, stocked: dict[str, int]) -> None:
-    client = make_client(home)
-    items = client.get(f"/api/v1/kitchen/recipes/{stocked['main']}/companions").json()["items"]
-    catalog = [i for i in items if i["source"] == "catalog"]
-    assert catalog, "定番が1品も並ばない"
-    key = catalog[0]["catalog_key"]
-    detail = client.get(f"/api/v1/kitchen/companions/{key}").json()
-    assert detail["title"] == catalog[0]["title"]
-    assert detail["ingredients"] and detail["steps"]
-    assert client.get("/api/v1/kitchen/companions/no_such_dish").status_code == 404
-
-
 def test_plan_together_writes_both_to_meal_history(conn, home: Path, stocked: dict[str, int]) -> None:
     client = make_client(home)
     res = client.post(
@@ -130,19 +158,52 @@ def test_plan_together_needs_exactly_one_companion(home: Path, stocked: dict[str
     assert client.post(url, json={"date": "2026-09-25", "companion_recipe_id": stocked["side"], "catalog_key": "x"}).status_code == 400
 
 
-def test_adopt_promotes_a_catalog_dish_once(conn, home: Path, stocked: dict[str, int]) -> None:
+def test_catalog_items_carry_site_sources_and_no_ai_steps(conn, home: Path, stocked: dict[str, int]) -> None:
+    catalog = _all_catalog(conn, stocked["main"])
+    coleslaw = catalog["coleslaw"]
+    assert [s["title"] for s in coleslaw["sources"]] == ["基本のコールスロー", "さっぱりコールスロー"]
+    assert coleslaw["hero_image"] == "https://img.example.com/coleslaw-1.jpg"  # 候補の先頭の画像を借りる
+    body = make_client(home).get(f"/api/v1/kitchen/recipes/{stocked['main']}/companions").json()
+    for item in body["items"]:
+        assert "steps" not in item
+        assert isinstance(item["sources"], list)
+        if item["source"] == "recipe":
+            assert item["sources"] == []
+
+
+def test_importing_a_source_url_hides_that_standard_dish(conn, home: Path, stocked: dict[str, int]) -> None:
+    """候補の URL を取り込んだレシピがあれば、その定番は出さない（うちのレシピが代わりに並ぶ）。"""
     client = make_client(home)
-    key = next(i["catalog_key"] for i in client.get(f"/api/v1/kitchen/recipes/{stocked['main']}/companions").json()["items"] if i["source"] == "catalog")
-    first = client.post(f"/api/v1/kitchen/companions/{key}/adopt").json()
-    assert first["created"] is True
-    recipe = client.get(f"/api/v1/kitchen/recipes/{first['recipe_id']}").json()
-    assert recipe["meta"]["category"] in ("副菜", "汁物")
-    assert recipe["meta"]["nutrition_source"] == "estimated"
-    second = client.post(f"/api/v1/kitchen/companions/{key}/adopt").json()
-    assert second == {"recipe_id": first["recipe_id"], "created": False}
-    # 昇格した後は、定番ではなくうちのレシピとして並ぶ（同じ題名の定番は出さない）
-    items = client.get(f"/api/v1/kitchen/recipes/{stocked['main']}/companions").json()["items"]
-    assert not any(i["source"] == "catalog" and i["catalog_key"] == key for i in items)
+    assert "catalog:coleslaw" in {c["key"] for c in _catalog_pool(conn, stocked["main"])}
+    recipe_id = _add(
+        conn, "サイトのコールスロー（題名は違う）", category="副菜",
+        ingredients=[("キャベツ", "200", "g"), ("マヨネーズ", "2", "大さじ")],
+    )
+    # 取り込みの経路と同じく出典 URL を持たせる（末尾の / とクエリの違いは同じとみなす）
+    conn.execute(
+        "UPDATE chef_recipe SET source_url = ? WHERE id = ?",
+        ("https://www.example.com/recipes/coleslaw-2/?utm=x", recipe_id),
+    )
+    conn.commit()
+    assert "catalog:coleslaw" not in {c["key"] for c in _catalog_pool(conn, stocked["main"])}
+    assert client.get(f"/api/v1/kitchen/recipes/{stocked['main']}/companions").status_code == 200
+
+
+def _catalog_pool(conn, recipe_id: int) -> list[dict]:
+    """`suggest()` が採点に回す定番（上位3件に限らない）。"""
+    captured: list[dict] = []
+    original = companion.score
+
+    def spy(main, pool, rules, **kw):
+        captured.extend(c for c in pool if c["source"] == companion.SOURCE_CATALOG)
+        return original(main, pool, rules, **kw)
+
+    companion.score = spy  # type: ignore[assignment]
+    try:
+        companion.suggest(conn, recipe_id)
+    finally:
+        companion.score = original  # type: ignore[assignment]
+    return captured
 
 
 def test_writes_are_refused_when_read_only(home: Path, stocked: dict[str, int]) -> None:

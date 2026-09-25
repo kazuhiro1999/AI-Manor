@@ -636,6 +636,16 @@ export interface MenuRecommendation {
 export type CompanionNutrient = "fiber_g" | "potassium_mg" | "calcium_mg" | "iron_mg" | "vitamin_c_mg" | "veg_g";
 export type CompanionHeat = "none" | "range" | "stove";
 
+// 定番の作り方の候補（レシピサイトのページ。ADR-021 §6）。画像は直リンク。
+export interface CompanionSource {
+  url: string;
+  site: string;
+  title: string;
+  image: string;
+  minutes: number | null;
+  why: string;
+}
+
 export interface CompanionItem {
   key: string;
   source: "recipe" | "catalog";
@@ -648,6 +658,8 @@ export interface CompanionItem {
   tags: string[];
   minutes: number | null;
   hero_image: string;
+  // 定番のときだけ入る（うちのレシピは空）。
+  sources: CompanionSource[];
   score: number;
   reasons: MenuReason[];
   nutrition: MenuNutrition;
@@ -673,16 +685,6 @@ export interface CompanionSuggestion {
   catalog_size?: number;
 }
 
-// `GET /api/v1/kitchen/companions/{key}`（定番の作り方）。
-export interface CompanionDetail {
-  key: string;
-  title: string;
-  servings: number;
-  minutes: number | null;
-  heat: CompanionHeat;
-  ingredients: { name: string; qty: string; unit: string }[];
-  steps: string[];
-}
 
 /* ---------- kitchen: 動画リスト（ADR-016 D3） ---------- */
 

@@ -12,9 +12,12 @@
  * ②「Claude で最初から抽出」— 同じ URL を `mode: "claude"` で取り込み直す（従来の R2 の経路）
  * を選べる。`method === "generic"` かつ warnings が多いとき（薄い抽出の目安）は
  * 「Claude で整えることを勧めます」を添える（§6 D7「汎用も薄ければ Claude を勧める帯」）。
+ *
+ * `?url=` 付きで開くと、その URL を欄に入れて自動抽出まで進める（ADR-021 §6: お供の候補の
+ * 「レシピ帳に入れる」から来る）。**登録はしない**——下書きを見て決めるのは主人。
  */
-import { useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useEffect, useRef, useState } from "react";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { api, ApiError } from "../../app/api";
 import { useToast } from "../../components/Toast";
 import { ScreenHeader } from "../../components/ScreenHeader";
@@ -57,7 +60,9 @@ export function RecipeNewPage() {
   const navigate = useNavigate();
   const { show } = useToast();
 
-  const [importUrl, setImportUrl] = useState("");
+  const [searchParams] = useSearchParams();
+  const initialUrl = searchParams.get("url") || "";
+  const [importUrl, setImportUrl] = useState(initialUrl);
   const [importing, setImporting] = useState(false);
   const [refining, setRefining] = useState(false);
   const [warnings, setWarnings] = useState<string[]>([]);
@@ -83,15 +88,15 @@ export function RecipeNewPage() {
     });
   };
 
-  const runImport = async (mode: "auto" | "claude" = "auto") => {
+  const runImport = async (mode: "auto" | "claude" = "auto", url: string = importUrl) => {
     setError(null);
-    if (!importUrl.trim()) {
+    if (!url.trim()) {
       setError(t("kitchen.recipes.importUrlRequired"));
       return;
     }
     setImporting(true);
     try {
-      const res = await api<RecipeImportResult>("/kitchen/recipes/import", { method: "POST", body: { url: importUrl.trim(), mode } });
+      const res = await api<RecipeImportResult>("/kitchen/recipes/import", { method: "POST", body: { url: url.trim(), mode } });
       setForm(recipeBodyToFormValue(res.recipe));
       setWarnings(res.warnings || []);
       setMethod(res.method);
@@ -102,6 +107,15 @@ export function RecipeNewPage() {
       setImporting(false);
     }
   };
+
+  // `?url=` で来たら1回だけ自動抽出する（StrictMode の二重実行で2回取りに行かない）。
+  const autoImported = useRef(false);
+  useEffect(() => {
+    if (!initialUrl || autoImported.current) return;
+    autoImported.current = true;
+    void runImport("auto", initialUrl);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialUrl]);
 
   const refine = async () => {
     setError(null);

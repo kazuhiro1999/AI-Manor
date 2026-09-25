@@ -761,32 +761,6 @@ def register(app: FastAPI, ctx: WebContext) -> None:
             commit_and_render(conn, ctx)
             return result
 
-    @app.get("/api/v1/kitchen/companions/{key}")
-    def companion_detail(key: str) -> dict[str, object]:
-        """お供の定番1品の作り方（材料と手順。ADR-021 D4）。"""
-        from ...staff.chef import companion as chef_companion
-
-        try:
-            return chef_companion.catalog_detail(key)
-        except ManorError as exc:
-            raise _companion_error_to_http(exc)
-
-    @app.post("/api/v1/kitchen/companions/{key}/adopt")
-    def companion_adopt(key: str) -> dict[str, object]:
-        """定番をレシピ帳に入れる（ADR-021 D4「昇格」）。同じ題名があればそれを返す。"""
-        require_writable(ctx)
-        from ...staff.chef import companion as chef_companion
-
-        with open_conn(ctx) as conn:
-            _require_chef_recipes(conn)
-            try:
-                result = chef_companion.adopt(conn, key)
-            except ManorError as exc:
-                conn.rollback()
-                raise _companion_error_to_http(exc)
-            commit_and_render(conn, ctx)
-            return result
-
     # --- media（動画リスト。ADR-016 D3） ---
     #
     # すべて `viewing_user_id`（ADR-014 D3）で絞る——動画は利用者ごと（ADR-016 D1）。

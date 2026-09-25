@@ -3,19 +3,19 @@
  * 主菜を開いたときだけ、足りない栄養を補える副菜・汁物を 3 つ並べる。**必須ではない**
  * ——閉じられるし、閉じたことはこの端末に覚えておく（`localStorage`。読めなければ開いたまま）。
  *
- * 候補は「うちのレシピ」（押すとそのレシピへ）と「定番」（押すと作り方がその場で開く）。
+ * 候補は「うちのレシピ」（押すとそのレシピへ）と「定番」。定番は料理の型で、作り方は持たない
+ * ——**レシピサイトの候補**を開いて見せ、「サイトで見る」「レシピ帳に入れる」を選べる
+ * （ADR-021 §6。後者は取り込み画面へ URL を渡し、下書きを確かめてから登録する）。
  * 「今夜一緒に作る」は主菜とお供を `chef_meal` に `planned=1` で書く（献立の履歴に効く）。
- * 定番は「レシピ帳に入れる」で昇格できる（気に入ったら入れる、の順）。
  *
  * 理由はサーバから符牒（`{code, params}`）で来る（ADR-018 §4 と同じ）。文にするのはここ。
  */
 import { useEffect, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link } from "react-router-dom";
 import { api, ApiError } from "../../app/api";
 import { useToast } from "../../components/Toast";
 import { useT, type TranslationKey } from "../../app/i18n";
 import type {
-  CompanionDetail,
   CompanionHeat,
   CompanionItem,
   CompanionNutrient,
@@ -82,29 +82,47 @@ function reasonText(reason: MenuReason, t: ReturnType<typeof useT>): string | nu
   return text || null;
 }
 
-function CompanionCard({ item, mainId, onChanged }: { item: CompanionItem; mainId: number; onChanged: () => void }) {
+function SourceList({ item }: { item: CompanionItem }) {
   const t = useT();
-  const navigate = useNavigate();
+  if (!item.sources.length) {
+    return <span className="panel-note">{t("kitchen.companion.noSources")}</span>;
+  }
+  return (
+    <span className="companion-sources">
+      {item.sources.map((src) => (
+        <span className="menu-cand companion-source" key={src.url}>
+          <span className="menu-cand-thumb">
+            {src.image ? <img src={src.image} alt="" loading="lazy" /> : <span className="menu-cand-thumb-placeholder" />}
+          </span>
+          <span className="menu-cand-body">
+            <span className="menu-cand-title">{src.title}</span>
+            {/* 候補の枠は狭い（カードの中の入れ子）ので、札の行は折り返し、理由は別の行に置く。 */}
+            <span className="menu-cand-nums" style={{ flexWrap: "wrap" }}>
+              <span className="chip menu-cand-chip">{src.site}</span>
+              {src.minutes != null && <span className="chip menu-cand-chip">{t("format.minutes", { n: src.minutes })}</span>}
+            </span>
+            {src.why && <span className="menu-cand-nums">{src.why}</span>}
+            <span className="form-actions">
+              <a className="btn btn-small" href={src.url} target="_blank" rel="noreferrer">
+                {t("kitchen.companion.openSite")}
+              </a>
+              <Link className="btn btn-small" to={`/kitchen/recipes/new?url=${encodeURIComponent(src.url)}`}>
+                {t("kitchen.companion.importToBook")}
+              </Link>
+            </span>
+          </span>
+        </span>
+      ))}
+    </span>
+  );
+}
+
+function CompanionCard({ item, mainId }: { item: CompanionItem; mainId: number }) {
+  const t = useT();
   const { show } = useToast();
-  const [detail, setDetail] = useState<CompanionDetail | null>(null);
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const reasons = item.reasons.map((r) => reasonText(r, t)).filter((x): x is string => !!x);
-
-  const toggleDetail = async () => {
-    if (open) {
-      setOpen(false);
-      return;
-    }
-    setOpen(true);
-    if (!detail && item.catalog_key) {
-      try {
-        setDetail(await api<CompanionDetail>(`/kitchen/companions/${encodeURIComponent(item.catalog_key)}`));
-      } catch (err) {
-        show(err instanceof ApiError ? err.message : t("errors.genericLoadFailed"), "error");
-      }
-    }
-  };
 
   const planTogether = async () => {
     setBusy(true);
@@ -118,24 +136,6 @@ function CompanionCard({ item, mainId, onChanged }: { item: CompanionItem; mainI
         },
       });
       show(t("kitchen.companion.planned", { title: item.title }), "ok", 3000);
-    } catch (err) {
-      show(err instanceof ApiError ? err.message : t("errors.genericLoadFailed"), "error");
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const adopt = async () => {
-    if (!item.catalog_key) return;
-    setBusy(true);
-    try {
-      const res = await api<{ recipe_id: number; created: boolean }>(
-        `/kitchen/companions/${encodeURIComponent(item.catalog_key)}/adopt`,
-        { method: "POST" }
-      );
-      show(t(res.created ? "kitchen.companion.adopted" : "kitchen.companion.alreadyAdopted"), "ok", 3000);
-      onChanged();
-      if (res.created) navigate(`/kitchen/recipes/${res.recipe_id}`);
     } catch (err) {
       show(err instanceof ApiError ? err.message : t("errors.genericLoadFailed"), "error");
     } finally {
@@ -178,32 +178,15 @@ function CompanionCard({ item, mainId, onChanged }: { item: CompanionItem; mainI
             {t("kitchen.companion.planTogether")}
           </button>
           {item.source === "catalog" && (
-            <>
-              <button type="button" className="btn btn-small" onClick={toggleDetail} aria-expanded={open}>
-                {t("kitchen.companion.howTo")}
-              </button>
-              <button type="button" className="btn btn-small" onClick={adopt} disabled={busy}>
-                {t("kitchen.companion.adopt")}
-              </button>
-            </>
+            <button type="button" className="btn btn-small" onClick={() => setOpen((v) => !v)} aria-expanded={open}>
+              {t("kitchen.companion.showSources", { n: item.sources.length })}
+            </button>
           )}
         </span>
-        {open && detail && (
+        {item.source === "catalog" && open && (
           <span className="detail-box companion-detail">
-            <span className="panel-note">{t("kitchen.companion.detailServings", { n: detail.servings })}</span>
-            <ul>
-              {detail.ingredients.map((ing, i) => (
-                <li key={i}>
-                  {ing.name} {ing.qty}
-                  {ing.unit}
-                </li>
-              ))}
-            </ul>
-            <ol>
-              {detail.steps.map((step, i) => (
-                <li key={i}>{step}</li>
-              ))}
-            </ol>
+            <span className="panel-note">{t("kitchen.companion.catalogNote")}</span>
+            <SourceList item={item} />
           </span>
         )}
       </span>
@@ -265,7 +248,7 @@ export function CompanionPanel({ recipeId }: { recipeId: number }) {
       {data.items.length ? (
         <div className="menu-cands">
           {data.items.map((item) => (
-            <CompanionCard key={item.key} item={item} mainId={recipeId} onChanged={load} />
+            <CompanionCard key={item.key} item={item} mainId={recipeId} />
           ))}
         </div>
       ) : (
