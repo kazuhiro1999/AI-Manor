@@ -209,8 +209,45 @@ _HASHTAG_RE = re.compile(r"#([^\s#]+)")
 _AMOUNT_HINT_RE = re.compile(r"(大さじ|小さじ|カップ|適量|少々|ひとつまみ|お好み|\d+\s*(?:g|kg|ml|cc|個|本|枚|片|束|袋|丁|切れ|パック|株|房|玉|かけ|cm))", re.IGNORECASE)
 
 
+#: 行頭の丸数字（①〜⑳・❶〜❿・➀〜➉）。**NFKC にかける前に**番号へ直す——NFKC は ① を「1」に
+#: してしまい、手順の番号として読めなくなる（2026-09-25 の実物: 「①きゅうりは…」が「1きゅうりは…」）。
+_CIRCLED: dict[str, int] = {
+    **{chr(0x2460 + i): i + 1 for i in range(20)},
+    **{chr(0x2776 + i): i + 1 for i in range(10)},
+    **{chr(0x2780 + i): i + 1 for i in range(10)},
+}
+
+
 def _lines(text: str) -> list[str]:
-    return [unicodedata.normalize("NFKC", ln).strip() for ln in str(text or "").splitlines()]
+    out: list[str] = []
+    for raw in str(text or "").splitlines():
+        line = raw.strip()
+        if line and line[0] in _CIRCLED:
+            line = f"{_CIRCLED[line[0]]}. {line[1:]}"
+        out.append(unicodedata.normalize("NFKC", line).strip())
+    return out
+
+
+#: 「きゅうり(2本)」「炒りごま・ごま油(大さじ1)」——量が括弧の中にある書き方（YouTube のコメントに多い）。
+_PAREN_AMOUNT_RE = re.compile(r"^(?P<name>.+?)\s*[(（](?P<amount>[^()（）]+)[)）]\s*$")
+
+
+def _amount_out_of_parens(line: str) -> str:
+    """「名前(量)」を「名前 量」に直す（サイトの取り込みと同じ分解に渡せる形）。
+
+    名前が「・」「、」で並んでいれば、その量は**それぞれ**の量なので「各」を補う
+    （「炒りごま・ごま油(大さじ1)」→「炒りごま・ごま油 各大さじ1」→ 2 行）。
+    括弧の中が量に見えなければ（「豚肉(こま切れ)」）そのまま返す。
+    """
+    m = _PAREN_AMOUNT_RE.match(line)
+    if not m:
+        return line
+    name, amount = m.group("name").strip(), m.group("amount").strip()
+    if not _AMOUNT_HINT_RE.search(amount) and not re.search(r"\d", amount):
+        return line
+    if re.search(r"[・、,]", name) and not amount.startswith("各"):
+        amount = f"各{amount}"
+    return f"{name} {amount}"
 
 
 def _is_ingredient_line(line: str) -> bool:
@@ -258,7 +295,11 @@ def extract_recipe(text: str) -> dict[str, Any]:
             elif _is_ingredient_line(line):
                 ing_lines.append(line)
         elif section == "step":
-            step_lines.append(line)
+            # 番号の付いた手順のあとの番号の無い行は、前の手順の続き（「その間に…」）。
+            if step_lines and _STEP_LINE_RE.match(step_lines[0]) and not _STEP_LINE_RE.match(line):
+                step_lines[-1] = f"{step_lines[-1]} {line}"
+            else:
+                step_lines.append(line)
 
     if not ing_lines:
         # 見出しが無い: 量の付いた行が 3 行以上続くところ（一番長い連続）を材料とみなす。
@@ -279,6 +320,12 @@ def extract_recipe(text: str) -> dict[str, Any]:
     ingredients: list[dict[str, str]] = []
     for line in ing_lines:
         body = re.sub(r"^[・*＊\-●○◎☆★■◆◇▶▷>]+\s*", "", line)
+        # 先頭の【A】(A) はグループの札（parse_ingredient_line が拾う）。量が括弧の中なら外へ出す。
+        group_match = re.match(r"^([【\[(（][^】\])）]{1,3}[】\])）])\s*(.*)$", body)
+        if group_match:
+            body = f"{group_match.group(1)}{_amount_out_of_parens(group_match.group(2))}"
+        else:
+            body = _amount_out_of_parens(body)
         ingredients.extend(p for p in shaping.parse_ingredient_line(body) if p.get("name"))
     steps = [re.sub(r"^\s*(?:[0-9]{1,2}\s*[.)．、:：]|[①-⑳❶-❿➀-➉]|step\s*\d+|\(\d{1,2}\)|（\d{1,2}）)\s*", "", s, flags=re.IGNORECASE) for s in step_lines]
     steps = [s for s in steps if s and not s.startswith(("#", "http"))]

@@ -145,3 +145,45 @@ def test_probe_reports_a_private_playlist_and_closed_comments() -> None:
     video = result["videos"][0]
     assert video["comments_closed"] == "commentsDisabled"
     assert video["recipe_source"] == "description" and video["short"] is False
+
+
+# 2026-09-25 の実物（ショートの投稿者コメント）と同じ**書き方**の合成データ（文面は写さない）:
+# 題名の行・「・名前（量）」・【A】の札・「A・B（量）」・《作り方》・丸数字・続きの行。
+OWNER_COMMENT = """★やみつき大根
+・大根（300g）
+・塩（小さじ1/2）
+【A】ぽん酢（大さじ2）
+【A】白ごま・ごま油（大さじ1）
+【A】鷹の爪（適量）
+
+《作り方》
+①大根は拍子木切りにし、塩をまぶして10分置いて洗い流す。
+その間に袋に【A】を合わせる。
+②袋に①を入れて15分漬ける。
+"""
+
+
+def test_amounts_in_parentheses_groups_and_shared_amounts() -> None:
+    got = yt.extract_recipe(OWNER_COMMENT)
+    assert got["ingredients"] == [
+        {"name": "大根", "qty": "300", "unit": "g", "group": ""},
+        {"name": "塩", "qty": "1/2", "unit": "小さじ", "group": ""},
+        {"name": "ぽん酢", "qty": "2", "unit": "大さじ", "group": "A"},
+        {"name": "白ごま", "qty": "1", "unit": "大さじ", "group": "A"},
+        {"name": "ごま油", "qty": "1", "unit": "大さじ", "group": "A"},
+        {"name": "鷹の爪", "qty": "", "unit": "適量", "group": "A"},
+    ]
+
+
+def test_circled_step_numbers_and_continuation_lines() -> None:
+    """NFKC は ① を「1」にする——正規化の前に番号として読む。番号の無い行は前の手順の続き。"""
+    got = yt.extract_recipe(OWNER_COMMENT)
+    assert got["steps"] == [
+        "大根は拍子木切りにし、塩をまぶして10分置いて洗い流す。 その間に袋に【A】を合わせる。",
+        "袋に1を入れて15分漬ける。",
+    ]
+
+
+def test_parentheses_that_are_not_amounts_are_kept() -> None:
+    got = yt.extract_recipe("【材料】\n・豚肉（こま切れ） 200g\n・玉ねぎ（中） 1個\n")
+    assert [i["name"] for i in got["ingredients"]] == ["豚肉(こま切れ)", "玉ねぎ(中)"]
