@@ -283,6 +283,8 @@ export function describeImportMethod(method: string, t: (key: TranslationKey, pa
   if (method === "jsonld") return t("kitchen.recipes.methodJsonld");
   if (method === "claude") return t("kitchen.recipes.methodClaude");
   if (method === "generic") return t("kitchen.recipes.methodGeneric");
+  // ADR-023 D2: YouTube の概要欄・コメントから（`youtube:description` / `youtube:comment_1_owner` …）。
+  if (method.startsWith("youtube:")) return t("kitchen.recipes.methodYoutube");
   if (method.startsWith("adapter:")) {
     const site = method.slice("adapter:".length);
     return t("kitchen.recipes.methodAdapterGeneric", { site: ADAPTER_SITE_LABEL[site] || site });

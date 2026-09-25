@@ -68,6 +68,15 @@ def _nutrition_error_to_http(exc: ManorError) -> HTTPException:
     return manor_error_to_http(exc)
 
 
+def _recipe_error_to_http(exc: ManorError) -> HTTPException:
+    """レシピの登録・編集の誤り。同じ出典がもうあるのは 409（ADR-023 D3）、他は従来どおり。"""
+    from ...staff.chef import recipes as chef_recipes
+
+    if exc.key == chef_recipes.ERR_DUPLICATE_SOURCE:
+        return HTTPException(status_code=409, detail=exc.message_ja)
+    return manor_error_to_http(exc)
+
+
 def _companion_error_to_http(exc: ManorError) -> HTTPException:
     """ADR-021 の状態コードへ写す。定番が無いのは 404、それ以外は献立と同じ写し方。"""
     from ...staff.chef import companion as chef_companion
@@ -406,7 +415,7 @@ def register(app: FastAPI, ctx: WebContext) -> None:
                 chef_nutrition.refresh(conn, recipe_id)
             except ManorError as exc:
                 conn.rollback()
-                raise manor_error_to_http(exc)
+                raise _recipe_error_to_http(exc)
             result = chef_recipes.get(conn, recipe_id)
             commit_and_render(conn, ctx)
         # ADR-022 D4: 名寄せ・換算の未解決があれば背景で Claude に調べてもらう（登録は待たせない）。
@@ -428,7 +437,7 @@ def register(app: FastAPI, ctx: WebContext) -> None:
                 result = chef_recipes.get(conn, recipe_id)
             except ManorError as exc:
                 conn.rollback()
-                raise manor_error_to_http(exc)
+                raise _recipe_error_to_http(exc)
             commit_and_render(conn, ctx)
         kitchen_resolve.request_if_auto(ctx.home)  # ADR-022 D4（登録と同じ）
         return result
@@ -467,22 +476,41 @@ def register(app: FastAPI, ctx: WebContext) -> None:
     # --- recipes: 取り込み・栄養推定（ADR-015 R2。`claude -p` を呼ぶ） ---
 
     @app.post("/api/v1/kitchen/recipes/import")
-    def recipe_import_from_url(body: RecipeImportRequest) -> dict[str, object]:
+    def recipe_import_from_url(request: Request, body: RecipeImportRequest) -> dict[str, object]:
         """**保存しない。** 下書きを返すだけ（登録は `POST /api/v1/kitchen/recipes`）。
         `mode` の既定は `"auto"`（ADR-015 D7。自動抽出を先に）。
+
+        YouTube の動画の URL は YouTube Data API で概要欄・コメントから読む（ADR-023 D2。
+        見ている利用者の API キー、無ければ principal のキー）。同じ出典のレシピが既にあれば
+        `duplicate` に添える（登録は `POST /recipes` が 409 で断る。ADR-023 D3）。
         """
         from ...staff.chef import recipe_import as chef_recipe_import
+        from ...staff.chef import recipes as chef_recipes
+        from ...staff.chef import youtube as chef_youtube
 
         with open_conn(ctx) as conn:
             _require_chef_recipes(conn)
+            uid = viewing_user_id(request, conn)
+        parsed = chef_youtube.parse_url(body.url)
         try:
-            result = chef_recipe_import.import_from_url(body.url, mode=body.mode)
+            if parsed is not None and parsed[0] == "video":
+                key = chef_youtube.api_key_for(ctx.home, uid) or chef_youtube.api_key_for(ctx.home)
+                if not key:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="YouTube の API キーが未登録です（拡張機能 → YouTube で登録してください）",
+                    )
+                result = chef_youtube.draft_from_video(chef_youtube.http_fetcher(key), body.url)
+            else:
+                result = chef_recipe_import.import_from_url(body.url, mode=body.mode)
         except ManorError as exc:
             raise manor_error_to_http(exc)
         if not result.get("ok"):
             raise HTTPException(status_code=502, detail=str(result.get("reason") or ""))
         recipe = result["recipe"]
         assert isinstance(recipe, dict)  # noqa: S101 - import_from_url() が ok なら必ず dict
+        with open_conn(ctx) as conn:
+            duplicate = chef_recipes.find_by_source(conn, str(recipe.get("source_url") or body.url))
         return {
             "recipe": recipe,
             "method": result.get("method", ""),
@@ -490,6 +518,7 @@ def register(app: FastAPI, ctx: WebContext) -> None:
             # 画面は result.meta を読む（コーディネーターの指示。2026-09-12）。
             # recipe["meta"] と同じ辞書——CLI/`--save` はそちらを使うので残す。
             "meta": recipe.get("meta"),
+            "duplicate": duplicate,
         }
 
     @app.post("/api/v1/kitchen/recipes/refine")

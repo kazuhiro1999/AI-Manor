@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import urllib.parse
 from typing import Any
 
 from manor import util
@@ -250,23 +251,32 @@ def classify(recipe: dict, *, site_tags: list[str] | None = None) -> dict[str, s
     分類3軸を推定する（ADR-015 D9）。当たらなければ空文字——手がかり語は
     `lexicon.toml` が唯一の出どころ（`ops.recipe_*_cues`）。
     """
-    parts: list[str] = [str(recipe.get("title") or "")]
+    # 基礎調味料（`[basics]`）は**種類と主な材料**の手がかりにしない——「鶏がらスープの素」の
+    # 「スープ」で汁物、「鶏」で肉に化けていた（2026-09-25。YouTube のきゅうりの和え物で実測）。
+    # ジャンルには効かせる（「顆粒和風だし」→和食・「オイスターソース」→中華は正しい手がかり）。
+    staples = ops.basics()
+    head: list[str] = [str(recipe.get("title") or "")]
+    seasonings: list[str] = []
     for ing in recipe.get("ingredients") or []:
         if isinstance(ing, dict):
-            parts.append(str(ing.get("name") or ""))
+            name = str(ing.get("name") or "")
+            if not name:
+                continue
+            (seasonings if ops.is_staple(name, staples) else head).append(name)
     meta = recipe.get("meta")
     if isinstance(meta, dict):
-        parts.extend(str(t) for t in (meta.get("tags") or []))
-    parts.extend(str(t) for t in (site_tags or []))
+        head.extend(str(t) for t in (meta.get("tags") or []))
+    head.extend(str(t) for t in (site_tags or []))
     # **小文字に均す**（2026-09-13）。`lexicon.toml` の手がかり語に英語（`side dish`・
     # `japanese`）が入り、出典サイトは `Side dish` のように大文字で書くことがある。
     # 日本語は `lower()` で変わらないので、既存の手がかり語の当たり方は変わらない。
-    haystack = " ".join(parts).lower()
+    haystack = " ".join(head).lower()
+    with_seasonings = " ".join(head + seasonings).lower()
 
     return {
         "category": ops.classify_dish_type(haystack, ops.recipe_category_cues()) or "",
         "main_ingredient": ops.classify_dish_type(haystack, ops.recipe_main_ingredient_cues()) or "",
-        "cuisine": ops.classify_dish_type(haystack, ops.recipe_cuisine_cues()) or "",
+        "cuisine": ops.classify_dish_type(with_seasonings, ops.recipe_cuisine_cues()) or "",
     }
 
 
@@ -278,6 +288,73 @@ def _body_json(v: dict) -> str:
 
 
 # --- CRUD -----------------------------------------------------------------------------
+
+
+#: 同じ出典のレシピがもうある（ADR-023 D3）。web は 409 に写す。
+ERR_DUPLICATE_SOURCE = "error.chef.recipe_duplicate_source"
+
+#: 出典 URL の突き合わせで無視するクエリ（共有や広告の印で、ページの中身は同じ）。
+_TRACKING_PARAMS: tuple[str, ...] = ("utm", "si", "fbclid", "gclid", "ref", "feature", "pp", "igsh")
+
+
+def source_key(url: str) -> str:
+    """出典 URL の突き合わせの鍵（ADR-023 D3「同じレシピを2度入れない」）。空なら空。
+
+    - YouTube は URL の形が何通りもある（`youtu.be/<id>?si=…`・`watch?v=<id>`・`shorts/<id>`）ので
+      **動画 ID** で突き合わせる（`youtube:<id>`）。
+    - それ以外は scheme・host の大小、末尾の `/`、`#…`、共有の印のクエリ（`utm_*`・`si` 等）を無視する。
+      **ページを決めるクエリは残す**（`recipe_page.php?recipe_id=5901` のようなサイトがある）。
+    """
+    text = str(url or "").strip()
+    if not text:
+        return ""
+    from . import youtube  # noqa: PLC0415 - youtube は recipes を import しない（循環しない）
+
+    parsed = youtube.parse_url(text)
+    if parsed is not None and parsed[0] == "video":
+        return f"youtube:{parsed[1]}"
+    try:
+        parts = urllib.parse.urlsplit(text if "://" in text else f"https://{text}")
+    except ValueError:
+        return text
+    query = [
+        (k, v)
+        for k, v in urllib.parse.parse_qsl(parts.query, keep_blank_values=True)
+        if not any(k.lower().startswith(t) for t in _TRACKING_PARAMS)
+    ]
+    path = parts.path.rstrip("/")
+    key = f"{(parts.scheme or 'https').lower()}://{(parts.netloc or '').lower()}{path}"
+    if query:
+        key += "?" + urllib.parse.urlencode(sorted(query))
+    return key
+
+
+def find_by_source(
+    conn: sqlite3.Connection, url: str, *, exclude_id: int | None = None
+) -> dict[str, object] | None:
+    """同じ出典のレシピ（畳んだものは数えない）。無ければ None。`{"id","title","source_url"}`。"""
+    key = source_key(url)
+    if not key:
+        return None
+    for row in conn.execute(
+        "SELECT id, title, source_url FROM chef_recipe WHERE archived_at IS NULL AND source_url <> ''"
+    ).fetchall():
+        if exclude_id is not None and int(row["id"]) == int(exclude_id):
+            continue
+        if source_key(str(row["source_url"])) == key:
+            return {"id": int(row["id"]), "title": str(row["title"]), "source_url": str(row["source_url"])}
+    return None
+
+
+def _refuse_duplicate(conn: sqlite3.Connection, url: str, *, exclude_id: int | None = None) -> None:
+    found = find_by_source(conn, url, exclude_id=exclude_id)
+    if found is not None:
+        raise ManorError(
+            f"同じ出典のレシピがもうレシピ帳にあります: {found['title']}（#{found['id']}）",
+            code=2,
+            key=ERR_DUPLICATE_SOURCE,
+            params={"id": found["id"], "title": found["title"]},
+        )
 
 
 def _recipe_row(conn: sqlite3.Connection, recipe_id: int) -> sqlite3.Row:
@@ -352,6 +429,8 @@ def add(conn: sqlite3.Connection, recipe: dict) -> int:
     （評価・メモ・favorite）は従来どおり `set_meta` の領分のまま触らない。
     """
     v = validate(recipe)
+    # ADR-023 D3: 同じ出典（URL。YouTube は動画 ID）のレシピは2度入れない。
+    _refuse_duplicate(conn, str(v["source_url"]))
     now = util.now()
     cur = conn.execute(
         "INSERT INTO chef_recipe"
@@ -529,6 +608,7 @@ def update(conn: sqlite3.Connection, recipe_id: int, recipe: dict) -> dict[str, 
     """本体の丸ごと差し替え。**`chef_recipe_meta` には触れない**（ADR-015 D1）。"""
     _recipe_row(conn, recipe_id)
     v = validate(recipe)
+    _refuse_duplicate(conn, str(v["source_url"]), exclude_id=recipe_id)  # ADR-023 D3
     now = util.now()
     conn.execute(
         "UPDATE chef_recipe SET title = ?, source_url = ?, source_site = ?, hero_image = ?,"

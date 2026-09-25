@@ -17,7 +17,7 @@
  * 「レシピ帳に入れる」から来る）。**登録はしない**——下書きを見て決めるのは主人。
  */
 import { useEffect, useRef, useState } from "react";
-import { useNavigate, useSearchParams } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { api, ApiError } from "../../app/api";
 import { useToast } from "../../components/Toast";
 import { ScreenHeader } from "../../components/ScreenHeader";
@@ -67,6 +67,8 @@ export function RecipeNewPage() {
   const [refining, setRefining] = useState(false);
   const [warnings, setWarnings] = useState<string[]>([]);
   const [method, setMethod] = useState<string | null>(null);
+  // ADR-023 D3: 同じ出典のレシピがもうあるとき（下書きは見せるが、登録はサーバが 409 で断る）。
+  const [duplicate, setDuplicate] = useState<RecipeImportResult["duplicate"]>(null);
   const [form, setForm] = useState<RecipeFormValue>(() => emptyRecipeForm());
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -100,6 +102,7 @@ export function RecipeNewPage() {
       setForm(recipeBodyToFormValue(res.recipe));
       setWarnings(res.warnings || []);
       setMethod(res.method);
+      setDuplicate(res.duplicate ?? null);
       applyImportedMeta(res.meta);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : t("errors.saveFailed", { reason: t("common.unknown") }));
@@ -138,6 +141,7 @@ export function RecipeNewPage() {
     setForm(emptyRecipeForm());
     setWarnings([]);
     setMethod(null);
+    setDuplicate(null);
     setError(null);
     setImportUrl("");
     setNutrition(emptyNutritionForm());
@@ -212,6 +216,13 @@ export function RecipeNewPage() {
         </div>
 
         {method && <p className="panel-note">{describeImportMethod(method, t)}</p>}
+
+        {duplicate && (
+          <div className="banner warn" style={{ marginTop: 10 }} id="recipe-import-duplicate">
+            {t("kitchen.recipes.duplicateFound", { title: duplicate.title })}{" "}
+            <Link to={`/kitchen/recipes/${duplicate.id}`}>{t("kitchen.recipes.duplicateOpen")}</Link>
+          </div>
+        )}
 
         {warnings.length > 0 && (
           <div className="banner warn" style={{ marginTop: 10 }}>

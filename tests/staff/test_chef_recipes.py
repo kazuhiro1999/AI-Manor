@@ -584,7 +584,8 @@ def test_relink_skips_archived_recipes(conn, home: Path, sample_recipe: dict) ->
 
 def test_relink_can_target_one_recipe(conn, home: Path, sample_recipe: dict) -> None:
     first = _store_with_empty_ingredients_used(conn, sample_recipe)
-    _store_with_empty_ingredients_used(conn, sample_recipe)
+    # 2 本目は出典を変える（同じ出典は2度入れない。ADR-023 D3）
+    _store_with_empty_ingredients_used(conn, {**sample_recipe, "source_url": "https://example.com/another"})
     result = recipes.relink_ingredients_used(conn, recipe_id=first)
     assert result["scanned"] == 1
     assert [item["id"] for item in result["recipes"]] == [first]
@@ -626,3 +627,49 @@ def test_recipe_relink_cli_dry_run_writes_nothing(
         assert any(s["ingredients_used"] for s in recipes.get(conn, recipe_id)["steps"])
     finally:
         conn.close()
+
+
+
+# --- 同じ出典は2度入れない（ADR-023 D3） ----------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("a", "b"),
+    [
+        ("https://youtu.be/bIirGpVJiuQ?si=abc", "https://www.youtube.com/shorts/bIirGpVJiuQ"),
+        ("https://www.youtube.com/watch?v=bIirGpVJiuQ&list=PLx", "https://youtu.be/bIirGpVJiuQ"),
+        ("HTTPS://WWW.Kurashiru.com/recipes/abc/?utm_source=x#top", "https://www.kurashiru.com/recipes/abc"),
+    ],
+)
+def test_source_key_treats_variants_as_the_same(a: str, b: str) -> None:
+    assert recipes.source_key(a) == recipes.source_key(b)
+
+
+def test_source_key_keeps_queries_that_pick_the_page() -> None:
+    a = recipes.source_key("https://example.com/recipe.php?recipe_id=1&utm_medium=x")
+    b = recipes.source_key("https://example.com/recipe.php?recipe_id=2")
+    assert a != b and a.endswith("recipe_id=1")
+
+
+def test_adding_the_same_source_twice_is_refused(conn, sample_recipe: dict) -> None:
+    first = recipes.add(conn, {**sample_recipe, "source_url": "https://youtu.be/bIirGpVJiuQ?si=abc"})
+    with pytest.raises(ManorError) as err:
+        recipes.add(conn, {**sample_recipe, "source_url": "https://www.youtube.com/shorts/bIirGpVJiuQ"})
+    assert err.value.key == recipes.ERR_DUPLICATE_SOURCE and err.value.params["id"] == first
+    # 手入力（出典なし）は何本でも入る
+    recipes.add(conn, {**sample_recipe, "source_url": ""})
+    recipes.add(conn, {**sample_recipe, "source_url": ""})
+
+
+def test_archived_recipe_does_not_block_re_adding(conn, sample_recipe: dict) -> None:
+    first = recipes.add(conn, {**sample_recipe, "source_url": "https://example.com/r/1"})
+    recipes.archive(conn, first)
+    recipes.add(conn, {**sample_recipe, "source_url": "https://example.com/r/1/"})
+
+
+def test_editing_into_another_recipes_source_is_refused(conn, sample_recipe: dict) -> None:
+    a = recipes.add(conn, {**sample_recipe, "source_url": "https://example.com/r/a"})
+    b = recipes.add(conn, {**sample_recipe, "source_url": "https://example.com/r/b"})
+    recipes.update(conn, a, {**sample_recipe, "source_url": "https://example.com/r/a/"})  # 自分自身は可
+    with pytest.raises(ManorError):
+        recipes.update(conn, b, {**sample_recipe, "source_url": "https://example.com/r/a"})

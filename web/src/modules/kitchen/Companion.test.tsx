@@ -176,3 +176,44 @@ describe("kitchen — お供の提案（ADR-021 D5）", () => {
     expect(container.querySelector("#recipe-companions")).toBeNull();
   });
 });
+
+describe("kitchen — 取り込みの重複（ADR-023 D3）", () => {
+  afterEach(() => {
+    cleanup();
+  });
+
+  it("同じ出典のレシピがもうあれば、下書きに『もうレシピ帳にあります』と開く導線を出す", async () => {
+    globalThis.fetch = vi.fn().mockImplementation(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/api/v1/kitchen/recipes/import")) {
+        return {
+          ok: true, status: 200,
+          json: async () => ({
+            recipe: {
+              title: "最強きゅうり", source_url: "https://www.youtube.com/watch?v=bIirGpVJiuQ", source_site: "YouTube（ch）",
+              hero_image: "", servings: null, total_minutes: null,
+              ingredients: [{ name: "きゅうり", qty: "2", unit: "本", prep: "", group: "" }],
+              tools: [], phases: [{ id: "prep", title: "下ごしらえ" }],
+              steps: [{ index: 1, phase: "prep", title: "切る", instruction: "切る。", image: null, ingredients_used: [], timer_sec: null, completion: "manual", tips: [] }],
+            },
+            warnings: ["材料と作り方は投稿者のコメントから読みました。動画と見比べて確かめてください"],
+            method: "youtube:comment_1_owner", meta: null,
+            duplicate: { id: 12, title: "最強きゅうり", source_url: "https://youtu.be/bIirGpVJiuQ" },
+          }),
+        };
+      }
+      return { ok: true, status: 200, json: async () => ({ items: [], values: [] }) };
+    }) as unknown as typeof fetch;
+
+    render(
+      <MemoryRouter initialEntries={["/new?url=" + encodeURIComponent("https://youtu.be/bIirGpVJiuQ")]}>
+        <ToastProvider>
+          <RecipesRouter />
+        </ToastProvider>
+      </MemoryRouter>
+    );
+    await waitFor(() => expect(screen.getByText(/このレシピはもうレシピ帳にあります（最強きゅうり）/)).toBeTruthy());
+    expect((screen.getByRole("link", { name: "そのレシピを開く" }) as HTMLAnchorElement).getAttribute("href")).toBe("/kitchen/recipes/12");
+    expect(screen.getByText(/YouTube の概要欄・コメントから読み取りました/)).toBeTruthy();
+  });
+});

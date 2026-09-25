@@ -589,15 +589,10 @@ def load_sources(path: Path | None = None) -> dict[str, list[dict[str, Any]]]:
 
 
 def normalize_url(url: str) -> str:
-    """出典 URL の突き合わせ用（scheme・host の大小、末尾の `/`、クエリと `#` を無視する）。"""
-    text = str(url or "").strip()
-    for sep in ("#", "?"):
-        text = text.split(sep, 1)[0]
-    if "://" in text:
-        scheme, rest = text.split("://", 1)
-        host, _, path = rest.partition("/")
-        text = f"{scheme.lower()}://{host.lower()}/{path}"
-    return text.rstrip("/")
+    """出典 URL の突き合わせ用（`recipes.source_key` と同じ鍵。重複登録の検出と揃える）。"""
+    from . import recipes  # noqa: PLC0415
+
+    return recipes.source_key(url)
 
 
 def catalog_recipe(dish: Mapping[str, Any]) -> dict[str, Any]:

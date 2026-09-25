@@ -452,6 +452,8 @@ export interface RecipeImportResult {
   // は id・meta を持たない契約なので、これは別枠——登録フォームは検算せず、そのまま
   // 「うちの値」欄の初期値に流し込み、登録直後の `PUT /recipes/{id}/meta` で乗せる。
   meta?: Partial<RecipeMeta>;
+  // 同じ出典（URL。YouTube は動画 ID）のレシピがもうあれば（ADR-023 D3）。登録は 409 で断られる。
+  duplicate?: { id: number; title: string; source_url: string } | null;
 }
 
 export type RecipeImportMode = "auto" | "claude";

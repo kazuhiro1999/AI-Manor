@@ -462,3 +462,109 @@ def check_key(home: Path) -> dict[str, object]:
     except YouTubeError as exc:
         return {"ok": False, "reason": exc.reason}
     return {"ok": bool(data.get("items")), "reason": "" if data.get("items") else "empty_response"}
+
+
+# --- ② レシピの下書き（取り込み画面へ渡す形。保存しない） ----------------------------------
+
+#: 手順が読めなかったときの1手順（レシピ帳は手順が最低1つ要る。ADR-015 §3）。
+NO_STEPS_INSTRUCTION = "動画を見ながら作る（手順は動画の中にあります）"
+
+_SOURCE_LABEL = {"description": "概要欄", "comment": "コメント"}
+_TITLE_MARK_RE = re.compile(r"^[★☆■◆◇●○◎♪♡❤︎♥✿*＊]+\s*")
+
+
+def _source_text(video: Mapping[str, Any]) -> str:
+    src = str(video.get("recipe_source") or "")
+    if src == "description":
+        return str(video.get("description") or "")
+    m = re.match(r"comment_(\d+)", src)
+    if m:
+        comments = video.get("top_comments") or []
+        idx = int(m.group(1)) - 1
+        if 0 <= idx < len(comments):
+            return str(comments[idx].get("text") or "")
+    return ""
+
+
+def recipe_title(video: Mapping[str, Any]) -> str:
+    """レシピの題名。読み取り元の1行目が「★最強きゅうり」のような題名ならそれ、無ければ
+    動画の題名からハッシュタグと絵文字の飾りを落としたもの。"""
+    for line in _lines(_source_text(video))[:2]:
+        if line and _TITLE_MARK_RE.match(line) and not _is_ingredient_line(_TITLE_MARK_RE.sub("", line)):
+            title = _TITLE_MARK_RE.sub("", line).strip()
+            if 1 < len(title) <= 40:
+                return title
+    title = _HASHTAG_RE.sub("", unicodedata.normalize("NFKC", str(video.get("title") or "")))
+    title = re.sub(r"[\U0001F000-\U0001FAFF☀-➿]", "", title)
+    return re.sub(r"\s+", " ", title).strip()[:60] or "YouTube のレシピ"
+
+
+def draft_from_video(fetch: Fetcher, url: str, *, comments: int = 10) -> dict[str, Any]:
+    """動画1本 → 取り込み画面の下書き（ADR-023 D2。**保存しない**。登録するかは使う人が決める）。
+
+    戻り値は `recipe_import.import_from_url` と同じ形 `{"ok","recipe","method","warnings","reason","units"}`。
+    材料が読めなくても下書きは返す（題名・動画へのリンク・写真だけでも、手で書き足せる）。
+    """
+    from . import recipes  # noqa: PLC0415
+
+    parsed = parse_url(url)
+    if parsed is None or parsed[0] != "video":
+        return {"ok": False, "recipe": None, "method": "", "warnings": [], "reason": "YouTube の動画の URL ではありません", "units": 0}
+    try:
+        result = probe(fetch, [url], comments=comments, limit=1)
+    except YouTubeError as exc:
+        return {"ok": False, "recipe": None, "method": "", "warnings": [], "reason": f"YouTube を読めませんでした: {exc.reason}", "units": 0}
+    if not result["videos"]:
+        reason = result["errors"][0]["reason"] if result["errors"] else "not_found"
+        return {"ok": False, "recipe": None, "method": "", "warnings": [], "reason": f"動画を読めませんでした: {reason}", "units": result["units"]}
+    video = result["videos"][0]
+
+    warnings: list[str] = []
+    source = str(video.get("recipe_source") or "")
+    if not video["ingredients"]:
+        warnings.append("概要欄とコメントから材料を読めませんでした（動画の中にだけあるのかもしれません）。手で書き足してください")
+    elif source.startswith("comment"):
+        who = "投稿者の" if source.endswith("_owner") else "視聴者の"
+        warnings.append(f"材料と作り方は{who}コメントから読みました。動画と見比べて確かめてください")
+    else:
+        warnings.append("材料と作り方は概要欄から読みました。動画と見比べて確かめてください")
+
+    step_texts = list(video["steps"]) or [NO_STEPS_INSTRUCTION]
+    if not video["steps"] and video["ingredients"]:
+        warnings.append("作り方は書かれていなかったので「動画を見ながら作る」の1手順にしました")
+    steps = shaping.assign_phases(
+        [
+            {
+                "index": i,
+                "title": shaping.derive_step_title(text) or f"手順{i}",
+                "instruction": text,
+                "completion": "manual",
+                "ingredients_used": [],
+                "tips": [],
+                "timer_sec": None,
+                "image": None,
+            }
+            for i, text in enumerate(step_texts, start=1)
+        ]
+    )
+    long_steps = [s["index"] for s in steps if len(str(s["instruction"])) > 100]
+    if long_steps:
+        warnings.append(f"手順 {', '.join(map(str, long_steps))} が 100 字を超えています。登録の前に分けるか短くしてください")
+
+    recipe: dict[str, Any] = {
+        "title": recipe_title(video),
+        "source_url": str(video["url"]),
+        "source_site": f"YouTube（{video['channel']}）" if video.get("channel") else "YouTube",
+        "hero_image": str(video.get("thumbnail") or ""),
+        "servings": video.get("servings"),
+        "total_minutes": None,
+        "ingredients": [{**i, "prep": ""} for i in video["ingredients"]],
+        "tools": [],
+        "phases": shaping.phases_used(steps),
+        "steps": steps,
+    }
+    # 分類の手がかりはハッシュタグとタグだけ（材料名は recipe の材料として classify が見る。
+    # 検索語には材料名も混ぜてあるので、そのまま渡すと調味料で分類が化ける）。
+    site_tags = keywords(str(video.get("title") or ""), str(video.get("description") or ""), list(video.get("tags") or []), [])
+    recipe["meta"] = {**recipes.classify(recipe, site_tags=site_tags), "tags": []}
+    return {"ok": True, "recipe": recipe, "method": f"youtube:{source or 'none'}", "warnings": warnings, "reason": "", "units": result["units"]}
