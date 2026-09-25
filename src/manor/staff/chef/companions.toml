@@ -1,0 +1,1074 @@
+# お供の定番（ADR-021 D4）。主菜に添える副菜・汁物の既定カタログ。
+# レシピ帳の副菜・汁物が少ない（2026-09-25 時点で1件）ので、まずここに標準的な
+# メニューを並べておく。候補は「レシピ帳の副菜・汁物」＋「この定番」を混ぜて出す
+# （menu._dish_matches が題名で突き合わせ、レシピ帳にあるものを優先する）。
+#
+# 栄養値はここに**持たない**——`nutrition.estimate_nutrition()` が材料から成分表を引いて
+# 出す（ADR-019）。数字の出どころを1つにするための割り切りで、ここに書いた材料・
+# グラムが不正確だと栄養の推定も不正確になる。主人が実測で書き換えてよい。
+#
+# 定番は気に入ったら「レシピ帳に入れる」で `chef_recipe` に昇格できる（材料・手順を
+# そのまま写す）。ここは呼び水の一覧であって、正式なレシピ帳の代わりではない。
+#
+# 各行の語彙:
+#   key         … ASCII の snake_case。一意・安定（画面や API から指すための ID）
+#   title       … 料理名（自然な日本語。サイト名・ブランド名は書かない）
+#   category    … "副菜" / "汁物" のどちらか
+#   kind        … 型。"生"（サラダ・和え物・酢の物・浅漬け・おひたし等、火を通さない
+#                 か、さっと茹でて和えるだけのもの）/ "汁物" / "煮物" / "焼き物" /
+#                 "炒め物" / "蒸し物"
+#   tags        … 0〜4個。固定語彙: 酸味 生野菜 海藻 きのこ 豆 乳 卵 葉物 根菜 温野菜
+#                 辛味 ごま さっぱり こってり
+#   cuisine     … 和食 / 洋食 / 中華 / 韓国 / エスニック
+#   minutes     … 実際にかかる総時間（分）の目安
+#   heat        … "none"（火もレンジも使わない）/ "range"（電子レンジだけ）/
+#                 "stove"（コンロを使う）。主菜がコンロを使っている間に作れるかの目安
+#                 （ADR-021 D3）
+#   servings    … 何人前の分量か（ここでは 2 に揃えている）
+#   ingredients … { name, qty, unit } の並び。qty は文字列（"1" "0.5" "1/2" 可）、
+#                 unit は g / ml / 大さじ / 小さじ / カップ / 個 / 本 / 枚 / 片 / 束 /
+#                 丁 / 株 / 袋 / 切れ / cm / ""（qty に「少々」等）のどれか
+#   steps       … 2〜4行。1行60字以内の平易な命令形
+
+[[dish]]
+key = "sunomono_wakame_kyuri"
+title = "きゅうりとわかめの酢の物"
+category = "副菜"
+kind = "生"
+tags = ["酸味", "海藻"]
+cuisine = "和食"
+minutes = 10
+heat = "none"
+servings = 2
+ingredients = [
+  { name = "きゅうり", qty = "1", unit = "本" },
+  { name = "乾燥わかめ", qty = "4", unit = "g" },
+  { name = "酢", qty = "2", unit = "大さじ" },
+  { name = "砂糖", qty = "1", unit = "小さじ" },
+  { name = "塩", qty = "0.5", unit = "g" },
+]
+steps = [
+  "わかめを水で戻し、水気を絞る。",
+  "きゅうりを薄切りにして塩もみし、水気を絞る。",
+  "酢と砂糖を混ぜ、わかめ・きゅうりと和える。",
+]
+
+[[dish]]
+key = "hijiki_no_nimono"
+title = "ひじきの煮物"
+category = "副菜"
+kind = "煮物"
+tags = ["海藻", "豆"]
+cuisine = "和食"
+minutes = 25
+heat = "stove"
+servings = 2
+ingredients = [
+  { name = "ひじき", qty = "10", unit = "g" },
+  { name = "にんじん", qty = "30", unit = "g" },
+  { name = "油揚げ", qty = "0.5", unit = "枚" },
+  { name = "醤油", qty = "2", unit = "小さじ" },
+  { name = "みりん", qty = "1", unit = "大さじ" },
+  { name = "砂糖", qty = "1", unit = "小さじ" },
+  { name = "サラダ油", qty = "0.5", unit = "小さじ" },
+  { name = "ごま油", qty = "0.5", unit = "小さじ" },
+]
+steps = [
+  "ひじきを水で戻し、水気を切る。",
+  "にんじん・油揚げを細切りにする。",
+  "油を熱した鍋で軽く炒め、調味料と水を加えて煮る。",
+  "汁気がなくなるまで弱火で煮詰める。",
+]
+
+[[dish]]
+key = "mozuku_su"
+title = "もずく酢"
+category = "副菜"
+kind = "生"
+tags = ["酸味", "海藻"]
+cuisine = "和食"
+minutes = 5
+heat = "none"
+servings = 2
+ingredients = [
+  { name = "もずく", qty = "160", unit = "g" },
+  { name = "酢", qty = "1", unit = "大さじ" },
+  { name = "醤油", qty = "1", unit = "小さじ" },
+  { name = "砂糖", qty = "0.5", unit = "小さじ" },
+]
+steps = [
+  "もずくをざるに上げ、軽く水気を切る。",
+  "酢・醤油・砂糖を混ぜて合わせ酢を作る。",
+  "もずくにかけて器に盛る。",
+]
+
+[[dish]]
+key = "wakame_lettuce_salad"
+title = "わかめとレタスの海藻サラダ"
+category = "副菜"
+kind = "生"
+tags = ["海藻", "さっぱり"]
+cuisine = "和食"
+minutes = 8
+heat = "none"
+servings = 2
+ingredients = [
+  { name = "レタス", qty = "2", unit = "枚" },
+  { name = "乾燥わかめ", qty = "3", unit = "g" },
+  { name = "ミニトマト", qty = "60", unit = "g" },
+  { name = "和風ドレッシング", qty = "2", unit = "大さじ" },
+]
+steps = [
+  "わかめを水で戻し、水気を絞る。",
+  "レタスをちぎり、ミニトマトを半分に切る。",
+  "器に盛り合わせ、ドレッシングをかける。",
+]
+
+[[dish]]
+key = "nori_kyuri_ae"
+title = "きゅうりの海苔和え"
+category = "副菜"
+kind = "生"
+tags = ["海藻", "さっぱり"]
+cuisine = "和食"
+minutes = 8
+heat = "none"
+servings = 2
+ingredients = [
+  { name = "きゅうり", qty = "1", unit = "本" },
+  { name = "のり", qty = "1", unit = "枚" },
+  { name = "醤油", qty = "1", unit = "小さじ" },
+  { name = "ごま油", qty = "1", unit = "小さじ" },
+  { name = "ごま", qty = "2", unit = "g" },
+]
+steps = [
+  "きゅうりを叩くか薄切りにする。",
+  "のりを小さくちぎる。",
+  "醤油・ごま油・ごまと合わせて和える。",
+]
+
+[[dish]]
+key = "coleslaw"
+title = "コールスロー"
+category = "副菜"
+kind = "生"
+tags = ["生野菜", "根菜"]
+cuisine = "洋食"
+minutes = 12
+heat = "none"
+servings = 2
+ingredients = [
+  { name = "キャベツ", qty = "150", unit = "g" },
+  { name = "にんじん", qty = "30", unit = "g" },
+  { name = "塩", qty = "1", unit = "g" },
+  { name = "マヨネーズ", qty = "1.5", unit = "大さじ" },
+  { name = "酢", qty = "1", unit = "小さじ" },
+]
+steps = [
+  "キャベツとにんじんを細切りにする。",
+  "塩をふって軽くもみ、水気を絞る。",
+  "マヨネーズと酢を混ぜて和える。",
+]
+
+[[dish]]
+key = "cabbage_shiomomi"
+title = "キャベツの塩もみ"
+category = "副菜"
+kind = "生"
+tags = ["生野菜", "さっぱり"]
+cuisine = "和食"
+minutes = 8
+heat = "none"
+servings = 2
+ingredients = [
+  { name = "キャベツ", qty = "150", unit = "g" },
+  { name = "塩", qty = "1.5", unit = "g" },
+  { name = "ごま油", qty = "1", unit = "小さじ" },
+  { name = "ごま", qty = "2", unit = "g" },
+]
+steps = [
+  "キャベツをざく切りにする。",
+  "塩をふってもみ、5分置いて水気を絞る。",
+  "ごま油とごまを和える。",
+]
+
+[[dish]]
+key = "cabbage_sengiri_goma_dressing"
+title = "せん切りキャベツのごまドレッシング"
+category = "副菜"
+kind = "生"
+tags = ["生野菜", "ごま"]
+cuisine = "和食"
+minutes = 7
+heat = "none"
+servings = 2
+ingredients = [
+  { name = "キャベツ", qty = "150", unit = "g" },
+  { name = "ごまドレッシング", qty = "2", unit = "大さじ" },
+]
+steps = [
+  "キャベツをせん切りにし、水にさらす。",
+  "水気をよく切って器に盛る。",
+  "ごまドレッシングをかける。",
+]
+
+[[dish]]
+key = "cabbage_asazuke"
+title = "キャベツの浅漬け"
+category = "副菜"
+kind = "生"
+tags = ["生野菜", "さっぱり"]
+cuisine = "和食"
+minutes = 10
+heat = "none"
+servings = 2
+ingredients = [
+  { name = "キャベツ", qty = "150", unit = "g" },
+  { name = "きゅうり", qty = "0.5", unit = "本" },
+  { name = "塩", qty = "2", unit = "g" },
+  { name = "おろししょうが", qty = "1", unit = "cm" },
+]
+steps = [
+  "キャベツはざく切り、きゅうりは薄切りにする。",
+  "塩としょうがを加えてもみ込む。",
+  "重しをして10分ほど置き、水気を絞る。",
+]
+
+[[dish]]
+key = "cabbage_tuna_salad"
+title = "キャベツとツナのサラダ"
+category = "副菜"
+kind = "生"
+tags = ["生野菜"]
+cuisine = "洋食"
+minutes = 10
+heat = "none"
+servings = 2
+ingredients = [
+  { name = "キャベツ", qty = "150", unit = "g" },
+  { name = "ツナ", qty = "70", unit = "g" },
+  { name = "マヨネーズ", qty = "1", unit = "大さじ" },
+  { name = "塩", qty = "0.5", unit = "g" },
+  { name = "こしょう", qty = "", unit = "少々" },
+]
+steps = [
+  "キャベツをせん切りにし、塩もみして水気を絞る。",
+  "ツナ缶の油・汁気を軽く切る。",
+  "キャベツ・ツナ・マヨネーズを和え、こしょうをふる。",
+]
+
+[[dish]]
+key = "cabbage_pakuchi_ethnic_salad"
+title = "キャベツとパクチーのエスニックサラダ"
+category = "副菜"
+kind = "生"
+tags = ["生野菜", "辛味"]
+cuisine = "エスニック"
+minutes = 10
+heat = "none"
+servings = 2
+ingredients = [
+  { name = "キャベツ", qty = "150", unit = "g" },
+  { name = "コリアンダー", qty = "10", unit = "g" },
+  { name = "ナンプラー", qty = "1", unit = "小さじ" },
+  { name = "レモン汁", qty = "1", unit = "大さじ" },
+  { name = "砂糖", qty = "0.5", unit = "小さじ" },
+]
+steps = [
+  "キャベツをせん切り、パクチーはざく切りにする。",
+  "ナンプラー・レモン汁・砂糖を混ぜる。",
+  "野菜と和えて器に盛る。",
+]
+
+[[dish]]
+key = "spinach_ohitashi"
+title = "ほうれん草のおひたし"
+category = "副菜"
+kind = "生"
+tags = ["葉物"]
+cuisine = "和食"
+minutes = 10
+heat = "stove"
+servings = 2
+ingredients = [
+  { name = "ほうれん草", qty = "1", unit = "束" },
+  { name = "醤油", qty = "1", unit = "小さじ" },
+  { name = "和風だし", qty = "1", unit = "g" },
+  { name = "かつお節", qty = "1", unit = "g" },
+]
+steps = [
+  "ほうれん草を熱湯でさっと茹でる。",
+  "冷水にとって水気を絞り、食べやすく切る。",
+  "醤油・だしをかけ、かつお節をのせる。",
+]
+
+[[dish]]
+key = "komatsuna_goma_ae"
+title = "小松菜のごま和え"
+category = "副菜"
+kind = "生"
+tags = ["葉物", "ごま"]
+cuisine = "和食"
+minutes = 10
+heat = "stove"
+servings = 2
+ingredients = [
+  { name = "小松菜", qty = "1", unit = "束" },
+  { name = "ごま", qty = "6", unit = "g" },
+  { name = "醤油", qty = "1", unit = "小さじ" },
+  { name = "砂糖", qty = "1", unit = "小さじ" },
+]
+steps = [
+  "小松菜を熱湯でさっと茹でる。",
+  "冷水にとって水気を絞り、3cm長さに切る。",
+  "すりごま・醤油・砂糖と和える。",
+]
+
+[[dish]]
+key = "hakusai_asazuke"
+title = "白菜の浅漬け"
+category = "副菜"
+kind = "生"
+tags = ["葉物", "さっぱり"]
+cuisine = "和食"
+minutes = 10
+heat = "none"
+servings = 2
+ingredients = [
+  { name = "白菜", qty = "2", unit = "枚" },
+  { name = "塩", qty = "2", unit = "g" },
+  { name = "昆布", qty = "3", unit = "g" },
+  { name = "赤唐辛子", qty = "", unit = "少々" },
+]
+steps = [
+  "白菜を一口大のそぎ切りにする。",
+  "塩と昆布を加えてもみ込む。",
+  "袋に入れて15分ほど置き、水気を軽く絞る。",
+]
+
+[[dish]]
+key = "mizuna_daikon_salad"
+title = "水菜と大根のさっぱりサラダ"
+category = "副菜"
+kind = "生"
+tags = ["葉物", "根菜", "さっぱり"]
+cuisine = "和食"
+minutes = 10
+heat = "none"
+servings = 2
+ingredients = [
+  { name = "水菜", qty = "60", unit = "g" },
+  { name = "大根", qty = "80", unit = "g" },
+  { name = "ポン酢", qty = "1.5", unit = "大さじ" },
+  { name = "ごま油", qty = "0.5", unit = "小さじ" },
+]
+steps = [
+  "水菜は4cm長さ、大根は細切りにする。",
+  "器に盛り合わせる。",
+  "ポン酢とごま油をかける。",
+]
+
+[[dish]]
+key = "tomato_onion_marine"
+title = "トマトと玉ねぎのマリネ"
+category = "副菜"
+kind = "生"
+tags = ["酸味", "生野菜"]
+cuisine = "洋食"
+minutes = 10
+heat = "none"
+servings = 2
+ingredients = [
+  { name = "トマト", qty = "1", unit = "個" },
+  { name = "玉ねぎ", qty = "0.25", unit = "個" },
+  { name = "酢", qty = "1", unit = "大さじ" },
+  { name = "オリーブオイル", qty = "1", unit = "小さじ" },
+  { name = "塩", qty = "1", unit = "g" },
+]
+steps = [
+  "トマトをくし切り、玉ねぎを薄切りにする。",
+  "玉ねぎを軽く水にさらして水気を切る。",
+  "酢・オリーブオイル・塩と和え、冷やす。",
+]
+
+[[dish]]
+key = "tataki_kyuri"
+title = "たたききゅうり"
+category = "副菜"
+kind = "生"
+tags = ["さっぱり", "辛味"]
+cuisine = "中華"
+minutes = 8
+heat = "none"
+servings = 2
+ingredients = [
+  { name = "きゅうり", qty = "2", unit = "本" },
+  { name = "ごま油", qty = "1", unit = "小さじ" },
+  { name = "醤油", qty = "1", unit = "小さじ" },
+  { name = "にんにく", qty = "0.5", unit = "片" },
+  { name = "ラー油", qty = "", unit = "少々" },
+]
+steps = [
+  "きゅうりを麺棒などで叩き、食べやすく割る。",
+  "にんにくをすりおろす。",
+  "ごま油・醤油・にんにく・ラー油と和える。",
+]
+
+[[dish]]
+key = "kyuri_kankoku_zuke"
+title = "きゅうりの韓国風ピリ辛漬け"
+category = "副菜"
+kind = "生"
+tags = ["辛味", "さっぱり"]
+cuisine = "韓国"
+minutes = 10
+heat = "none"
+servings = 2
+ingredients = [
+  { name = "きゅうり", qty = "2", unit = "本" },
+  { name = "塩", qty = "1", unit = "g" },
+  { name = "ごま油", qty = "1", unit = "小さじ" },
+  { name = "豆板醤", qty = "1", unit = "小さじ" },
+  { name = "ごま", qty = "2", unit = "g" },
+]
+steps = [
+  "きゅうりを乱切りにし、塩をふって軽くもむ。",
+  "水気を絞る。",
+  "ごま油・豆板醤・ごまと和える。",
+]
+
+[[dish]]
+key = "broccoli_goma_mayo"
+title = "ブロッコリーのごまマヨ和え"
+category = "副菜"
+kind = "蒸し物"
+tags = ["温野菜", "ごま"]
+cuisine = "和食"
+minutes = 8
+heat = "range"
+servings = 2
+ingredients = [
+  { name = "ブロッコリー", qty = "150", unit = "g" },
+  { name = "マヨネーズ", qty = "1", unit = "大さじ" },
+  { name = "ごま", qty = "3", unit = "g" },
+  { name = "醤油", qty = "0.5", unit = "小さじ" },
+]
+steps = [
+  "ブロッコリーを小房に分け、耐熱皿に並べる。",
+  "ラップをして電子レンジで2分加熱する。",
+  "マヨネーズ・ごま・醤油と和える。",
+]
+
+[[dish]]
+key = "moyashi_namuru"
+title = "もやしのナムル"
+category = "副菜"
+kind = "生"
+tags = ["ごま", "辛味"]
+cuisine = "韓国"
+minutes = 8
+heat = "range"
+servings = 2
+ingredients = [
+  { name = "もやし", qty = "200", unit = "g" },
+  { name = "ごま油", qty = "1", unit = "小さじ" },
+  { name = "鶏がらスープの素", qty = "1", unit = "g" },
+  { name = "塩", qty = "0.5", unit = "g" },
+  { name = "ごま", qty = "2", unit = "g" },
+]
+steps = [
+  "もやしを耐熱皿に入れ、ラップをして2分加熱する。",
+  "粗熱を取り、水気をよく絞る。",
+  "ごま油・鶏がらスープの素・塩・ごまと和える。",
+]
+
+[[dish]]
+key = "hiyayakko"
+title = "冷奴"
+category = "副菜"
+kind = "生"
+tags = ["豆", "さっぱり"]
+cuisine = "和食"
+minutes = 5
+heat = "none"
+servings = 2
+ingredients = [
+  { name = "絹ごし豆腐", qty = "1", unit = "丁" },
+  { name = "長ねぎ", qty = "5", unit = "cm" },
+  { name = "醤油", qty = "1.5", unit = "小さじ" },
+  { name = "かつお節", qty = "1", unit = "g" },
+]
+steps = [
+  "豆腐を半分に切り、器に盛る。",
+  "長ねぎを小口切りにしてのせる。",
+  "醤油をかけ、かつお節を添える。",
+]
+
+[[dish]]
+key = "daikon_salad"
+title = "大根サラダ"
+category = "副菜"
+kind = "生"
+tags = ["根菜", "さっぱり"]
+cuisine = "和食"
+minutes = 10
+heat = "none"
+servings = 2
+ingredients = [
+  { name = "大根", qty = "150", unit = "g" },
+  { name = "かいわれ大根", qty = "15", unit = "g" },
+  { name = "和風ドレッシング", qty = "2", unit = "大さじ" },
+  { name = "かつお節", qty = "1", unit = "g" },
+]
+steps = [
+  "大根をせん切りにし、水気を切る。",
+  "かいわれ大根を根元を落として半分に切る。",
+  "器に盛り、ドレッシングとかつお節をかける。",
+]
+
+[[dish]]
+key = "carrot_rape"
+title = "キャロットラペ"
+category = "副菜"
+kind = "生"
+tags = ["根菜", "酸味"]
+cuisine = "洋食"
+minutes = 10
+heat = "none"
+servings = 2
+ingredients = [
+  { name = "にんじん", qty = "150", unit = "g" },
+  { name = "酢", qty = "1", unit = "大さじ" },
+  { name = "オリーブオイル", qty = "1", unit = "小さじ" },
+  { name = "砂糖", qty = "0.5", unit = "小さじ" },
+  { name = "塩", qty = "0.5", unit = "g" },
+]
+steps = [
+  "にんじんをせん切りにする。",
+  "塩をふって軽くもみ、5分置く。",
+  "酢・オリーブオイル・砂糖と和える。",
+]
+
+[[dish]]
+key = "kinoko_range_ponzu"
+title = "きのこのレンジ蒸しポン酢がけ"
+category = "副菜"
+kind = "蒸し物"
+tags = ["きのこ", "さっぱり"]
+cuisine = "和食"
+minutes = 8
+heat = "range"
+servings = 2
+ingredients = [
+  { name = "しめじ", qty = "1", unit = "株" },
+  { name = "えのき", qty = "0.5", unit = "株" },
+  { name = "ポン酢", qty = "2", unit = "大さじ" },
+  { name = "長ねぎ", qty = "5", unit = "cm" },
+]
+steps = [
+  "しめじ・えのきの石づきを落としてほぐす。",
+  "耐熱皿に広げ、ラップをして2分加熱する。",
+  "小口切りの長ねぎをのせ、ポン酢をかける。",
+]
+
+[[dish]]
+key = "kinoko_marine_youfu"
+title = "きのこの洋風マリネ"
+category = "副菜"
+kind = "生"
+tags = ["きのこ", "酸味"]
+cuisine = "洋食"
+minutes = 12
+heat = "range"
+servings = 2
+ingredients = [
+  { name = "エリンギ", qty = "60", unit = "g" },
+  { name = "しめじ", qty = "0.5", unit = "株" },
+  { name = "オリーブオイル", qty = "1", unit = "大さじ" },
+  { name = "酢", qty = "1", unit = "大さじ" },
+  { name = "塩", qty = "1", unit = "g" },
+]
+steps = [
+  "エリンギ・しめじを食べやすくほぐす。",
+  "耐熱皿に広げ、ラップをして2分加熱する。",
+  "オリーブオイル・酢・塩と和えて冷やす。",
+]
+
+[[dish]]
+key = "kiriboshi_daikon_nimono"
+title = "切り干し大根の煮物"
+category = "副菜"
+kind = "煮物"
+tags = ["根菜"]
+cuisine = "和食"
+minutes = 20
+heat = "stove"
+servings = 2
+ingredients = [
+  { name = "切り干し大根", qty = "20", unit = "g" },
+  { name = "にんじん", qty = "20", unit = "g" },
+  { name = "油揚げ", qty = "0.5", unit = "枚" },
+  { name = "醤油", qty = "2", unit = "小さじ" },
+  { name = "みりん", qty = "1", unit = "大さじ" },
+  { name = "砂糖", qty = "1", unit = "小さじ" },
+]
+steps = [
+  "切り干し大根を水で戻し、水気を絞る。",
+  "にんじん・油揚げを細切りにする。",
+  "鍋に材料と水を入れ、調味料を加える。",
+  "汁気が少なくなるまで弱火で煮る。",
+]
+
+[[dish]]
+key = "kinpira_gobo"
+title = "きんぴらごぼう"
+category = "副菜"
+kind = "炒め物"
+tags = ["根菜", "辛味"]
+cuisine = "和食"
+minutes = 15
+heat = "stove"
+servings = 2
+ingredients = [
+  { name = "ごぼう", qty = "0.5", unit = "本" },
+  { name = "にんじん", qty = "30", unit = "g" },
+  { name = "サラダ油", qty = "1", unit = "小さじ" },
+  { name = "ごま油", qty = "0.5", unit = "小さじ" },
+  { name = "醤油", qty = "2", unit = "小さじ" },
+  { name = "みりん", qty = "1", unit = "大さじ" },
+  { name = "赤唐辛子", qty = "", unit = "少々" },
+  { name = "ごま", qty = "2", unit = "g" },
+]
+steps = [
+  "ごぼう・にんじんを細切りにする。",
+  "ごま油で炒め、油が回ったら調味料を加える。",
+  "汁気がなくなるまで炒め煮にし、ごまをふる。",
+]
+
+[[dish]]
+key = "renkon_kinpira"
+title = "れんこんのきんぴら"
+category = "副菜"
+kind = "炒め物"
+tags = ["根菜"]
+cuisine = "和食"
+minutes = 15
+heat = "stove"
+servings = 2
+ingredients = [
+  { name = "れんこん", qty = "150", unit = "g" },
+  { name = "サラダ油", qty = "1", unit = "小さじ" },
+  { name = "ごま油", qty = "0.5", unit = "小さじ" },
+  { name = "醤油", qty = "2", unit = "小さじ" },
+  { name = "みりん", qty = "1", unit = "大さじ" },
+  { name = "ごま", qty = "2", unit = "g" },
+]
+steps = [
+  "れんこんを薄い半月切りにし、水にさらす。",
+  "ごま油で炒め、油が回ったら調味料を加える。",
+  "汁気がなくなるまで炒め、ごまをふる。",
+]
+
+[[dish]]
+key = "yaki_nasu"
+title = "焼きなす"
+category = "副菜"
+kind = "焼き物"
+tags = ["さっぱり"]
+cuisine = "和食"
+minutes = 12
+heat = "stove"
+servings = 2
+ingredients = [
+  { name = "なす", qty = "2", unit = "個" },
+  { name = "醤油", qty = "1", unit = "小さじ" },
+  { name = "おろししょうが", qty = "2", unit = "cm" },
+  { name = "かつお節", qty = "1", unit = "g" },
+]
+steps = [
+  "なすはヘタを切り、皮に切り込みを入れる。",
+  "魚焼きグリルかフライパンで皮が焦げるまで焼く。",
+  "皮をむいて食べやすく割き、器に盛る。",
+  "しょうがをのせ、醤油をかけてかつお節を散らす。",
+]
+
+[[dish]]
+key = "okura_ume_ae"
+title = "オクラの梅おかか和え"
+category = "副菜"
+kind = "生"
+tags = ["さっぱり"]
+cuisine = "和食"
+minutes = 8
+heat = "stove"
+servings = 2
+ingredients = [
+  { name = "オクラ", qty = "100", unit = "g" },
+  { name = "梅干し", qty = "8", unit = "g" },
+  { name = "かつお節", qty = "1", unit = "g" },
+  { name = "醤油", qty = "0.5", unit = "小さじ" },
+]
+steps = [
+  "オクラはがくを取り、塩ずりしてさっと茹でる。",
+  "冷水にとり、小口切りにする。",
+  "種を除いてたたいた梅干し・かつお節・醤油と和える。",
+]
+
+[[dish]]
+key = "kabocha_no_nimono"
+title = "かぼちゃの煮物"
+category = "副菜"
+kind = "煮物"
+tags = []
+cuisine = "和食"
+minutes = 20
+heat = "stove"
+servings = 2
+ingredients = [
+  { name = "かぼちゃ", qty = "200", unit = "g" },
+  { name = "醤油", qty = "2", unit = "小さじ" },
+  { name = "みりん", qty = "1", unit = "大さじ" },
+  { name = "砂糖", qty = "1", unit = "小さじ" },
+  { name = "和風だし", qty = "1", unit = "g" },
+]
+steps = [
+  "かぼちゃを一口大に切る。",
+  "鍋にかぼちゃと調味料、ひたる程度の水を入れる。",
+  "落としぶたをして竹串が通るまで煮る。",
+]
+
+[[dish]]
+key = "potato_salad"
+title = "ポテトサラダ"
+category = "副菜"
+kind = "煮物"
+tags = ["こってり"]
+cuisine = "洋食"
+minutes = 20
+heat = "stove"
+servings = 2
+ingredients = [
+  { name = "じゃがいも", qty = "2", unit = "個" },
+  { name = "きゅうり", qty = "0.5", unit = "本" },
+  { name = "ハム", qty = "2", unit = "枚" },
+  { name = "マヨネーズ", qty = "2", unit = "大さじ" },
+  { name = "塩", qty = "0.5", unit = "g" },
+  { name = "こしょう", qty = "", unit = "少々" },
+]
+steps = [
+  "じゃがいもを茹でるかレンジで加熱し、つぶす。",
+  "きゅうりを薄切りにして塩もみし、水気を絞る。",
+  "ハムを細切りにする。",
+  "粗熱を取り、マヨネーズ・塩・こしょうと和える。",
+]
+
+[[dish]]
+key = "dashimaki_tamago"
+title = "だし巻き卵"
+category = "副菜"
+kind = "焼き物"
+tags = ["卵"]
+cuisine = "和食"
+minutes = 10
+heat = "stove"
+servings = 2
+ingredients = [
+  { name = "卵", qty = "3", unit = "個" },
+  { name = "和風だし", qty = "1", unit = "g" },
+  { name = "醤油", qty = "0.5", unit = "小さじ" },
+  { name = "砂糖", qty = "1", unit = "小さじ" },
+  { name = "サラダ油", qty = "1", unit = "小さじ" },
+]
+steps = [
+  "卵を溶き、だし・醤油・砂糖を混ぜる。",
+  "卵焼き器に油を薄くひき、数回に分けて焼く。",
+  "巻きながら層にし、食べやすく切る。",
+]
+
+[[dish]]
+key = "paprika_marine"
+title = "パプリカのマリネ"
+category = "副菜"
+kind = "生"
+tags = ["生野菜", "酸味"]
+cuisine = "洋食"
+minutes = 10
+heat = "range"
+servings = 2
+ingredients = [
+  { name = "赤ピーマン", qty = "1", unit = "個" },
+  { name = "黄ピーマン", qty = "1", unit = "個" },
+  { name = "酢", qty = "1", unit = "大さじ" },
+  { name = "オリーブオイル", qty = "1", unit = "小さじ" },
+  { name = "砂糖", qty = "0.5", unit = "小さじ" },
+  { name = "塩", qty = "1", unit = "g" },
+]
+steps = [
+  "赤・黄ピーマンを薄切りにする。",
+  "耐熱皿に並べ、ラップをして1分半加熱する。",
+  "酢・オリーブオイル・砂糖・塩と和えて冷やす。",
+]
+
+[[dish]]
+key = "tuna_corn_salad"
+title = "ツナとコーンのサラダ"
+category = "副菜"
+kind = "生"
+tags = ["生野菜"]
+cuisine = "洋食"
+minutes = 8
+heat = "none"
+servings = 2
+ingredients = [
+  { name = "レタス", qty = "2", unit = "枚" },
+  { name = "ツナ", qty = "35", unit = "g" },
+  { name = "コーン", qty = "40", unit = "g" },
+  { name = "マヨネーズ", qty = "1", unit = "大さじ" },
+]
+steps = [
+  "レタスを食べやすくちぎる。",
+  "ツナの油・汁気を軽く切り、コーンと混ぜる。",
+  "レタスの上に盛り、マヨネーズをかける。",
+]
+
+[[dish]]
+key = "ninjin_shirishiri"
+title = "にんじんしりしり"
+category = "副菜"
+kind = "炒め物"
+tags = ["根菜", "卵"]
+cuisine = "和食"
+minutes = 12
+heat = "stove"
+servings = 2
+ingredients = [
+  { name = "にんじん", qty = "150", unit = "g" },
+  { name = "卵", qty = "1", unit = "個" },
+  { name = "ツナ", qty = "35", unit = "g" },
+  { name = "サラダ油", qty = "1", unit = "小さじ" },
+  { name = "ごま油", qty = "1", unit = "小さじ" },
+  { name = "醤油", qty = "1", unit = "小さじ" },
+]
+steps = [
+  "にんじんをせん切りにする。",
+  "ごま油でにんじん・ツナを炒める。",
+  "しんなりしたら溶き卵を加えて炒め合わせる。",
+  "醤油で味を調える。",
+]
+
+[[dish]]
+key = "chuka_wakame_soup"
+title = "中華風わかめスープ"
+category = "汁物"
+kind = "汁物"
+tags = ["海藻"]
+cuisine = "中華"
+minutes = 10
+heat = "stove"
+servings = 2
+ingredients = [
+  { name = "乾燥わかめ", qty = "2", unit = "g" },
+  { name = "長ねぎ", qty = "5", unit = "cm" },
+  { name = "鶏がらスープの素", qty = "4", unit = "g" },
+  { name = "ごま油", qty = "0.5", unit = "小さじ" },
+  { name = "水", qty = "400", unit = "ml" },
+]
+steps = [
+  "鍋に水と鶏がらスープの素を入れて煮立てる。",
+  "わかめと小口切りの長ねぎを加える。",
+  "ひと煮立ちさせ、ごま油を垂らす。",
+]
+
+[[dish]]
+key = "tofu_wakame_miso_shiru"
+title = "豆腐とわかめの味噌汁"
+category = "汁物"
+kind = "汁物"
+tags = ["海藻", "豆"]
+cuisine = "和食"
+minutes = 10
+heat = "stove"
+servings = 2
+ingredients = [
+  { name = "絹ごし豆腐", qty = "0.3", unit = "丁" },
+  { name = "乾燥わかめ", qty = "2", unit = "g" },
+  { name = "和風だし", qty = "1", unit = "g" },
+  { name = "味噌", qty = "2", unit = "小さじ" },
+  { name = "水", qty = "400", unit = "ml" },
+]
+steps = [
+  "鍋に水とだしを入れて煮立てる。",
+  "豆腐を角切り、わかめとともに加える。",
+  "煮立ったら弱火にし、味噌を溶き入れる。",
+]
+
+[[dish]]
+key = "chuka_tamago_soup"
+title = "中華風卵スープ"
+category = "汁物"
+kind = "汁物"
+tags = ["卵"]
+cuisine = "中華"
+minutes = 10
+heat = "stove"
+servings = 2
+ingredients = [
+  { name = "卵", qty = "1", unit = "個" },
+  { name = "長ねぎ", qty = "5", unit = "cm" },
+  { name = "鶏がらスープの素", qty = "4", unit = "g" },
+  { name = "片栗粉", qty = "1", unit = "小さじ" },
+  { name = "水", qty = "400", unit = "ml" },
+  { name = "ごま油", qty = "0.5", unit = "小さじ" },
+]
+steps = [
+  "鍋に水と鶏がらスープの素を煮立てる。",
+  "水溶き片栗粉でとろみをつける。",
+  "溶き卵を細く流し入れ、ふんわり固める。",
+  "小口切りの長ねぎを散らし、ごま油を垂らす。",
+]
+
+[[dish]]
+key = "kinoko_no_soup"
+title = "きのこのスープ"
+category = "汁物"
+kind = "汁物"
+tags = ["きのこ"]
+cuisine = "洋食"
+minutes = 12
+heat = "stove"
+servings = 2
+ingredients = [
+  { name = "しめじ", qty = "0.5", unit = "株" },
+  { name = "えのき", qty = "0.5", unit = "株" },
+  { name = "コンソメ", qty = "5", unit = "g" },
+  { name = "水", qty = "350", unit = "ml" },
+  { name = "こしょう", qty = "", unit = "少々" },
+]
+steps = [
+  "しめじ・えのきの石づきを落としてほぐす。",
+  "鍋に水・コンソメ・きのこを入れて煮る。",
+  "きのこに火が通ったらこしょうをふる。",
+]
+
+[[dish]]
+key = "consomme_yasai_soup"
+title = "野菜たっぷりコンソメスープ"
+category = "汁物"
+kind = "汁物"
+tags = ["根菜"]
+cuisine = "洋食"
+minutes = 15
+heat = "stove"
+servings = 2
+ingredients = [
+  { name = "玉ねぎ", qty = "0.5", unit = "個" },
+  { name = "にんじん", qty = "40", unit = "g" },
+  { name = "キャベツ", qty = "50", unit = "g" },
+  { name = "コンソメ", qty = "5", unit = "g" },
+  { name = "水", qty = "400", unit = "ml" },
+]
+steps = [
+  "玉ねぎ・にんじん・キャベツを一口大に切る。",
+  "鍋に水・コンソメ・野菜を入れる。",
+  "野菜がやわらかくなるまで煮る。",
+]
+
+[[dish]]
+key = "asari_no_miso_shiru"
+title = "あさりの味噌汁"
+category = "汁物"
+kind = "汁物"
+tags = []
+cuisine = "和食"
+minutes = 15
+heat = "stove"
+servings = 2
+ingredients = [
+  { name = "あさり", qty = "150", unit = "g" },
+  { name = "味噌", qty = "2", unit = "小さじ" },
+  { name = "水", qty = "400", unit = "ml" },
+  { name = "長ねぎ", qty = "5", unit = "cm" },
+]
+steps = [
+  "あさりは塩水につけて砂抜きし、殻をこすり洗う。",
+  "鍋に水とあさりを入れ、口が開くまで煮る。",
+  "弱火にして味噌を溶き入れる。",
+  "小口切りの長ねぎを散らす。",
+]
+
+[[dish]]
+key = "minestrone_fu_soup"
+title = "ミネストローネ風スープ"
+category = "汁物"
+kind = "汁物"
+tags = ["根菜", "豆"]
+cuisine = "洋食"
+minutes = 18
+heat = "stove"
+servings = 2
+ingredients = [
+  { name = "玉ねぎ", qty = "0.5", unit = "個" },
+  { name = "にんじん", qty = "40", unit = "g" },
+  { name = "トマト缶", qty = "150", unit = "g" },
+  { name = "大豆水煮", qty = "50", unit = "g" },
+  { name = "コンソメ", qty = "4", unit = "g" },
+  { name = "水", qty = "300", unit = "ml" },
+  { name = "オリーブオイル", qty = "1", unit = "小さじ" },
+]
+steps = [
+  "玉ねぎ・にんじんを角切りにする。",
+  "鍋にオリーブオイルを熱し、野菜をさっと煮る。",
+  "トマト缶・大豆・コンソメ・水を加えて煮る。",
+  "野菜がやわらかくなるまで15分ほど煮込む。",
+]
+
+[[dish]]
+key = "butajiru"
+title = "豚汁"
+category = "汁物"
+kind = "汁物"
+tags = ["根菜"]
+cuisine = "和食"
+minutes = 20
+heat = "stove"
+servings = 2
+ingredients = [
+  { name = "豚こま切れ肉", qty = "80", unit = "g" },
+  { name = "大根", qty = "60", unit = "g" },
+  { name = "にんじん", qty = "30", unit = "g" },
+  { name = "ごぼう", qty = "0.2", unit = "本" },
+  { name = "こんにゃく", qty = "50", unit = "g" },
+  { name = "和風だし", qty = "1.5", unit = "g" },
+  { name = "味噌", qty = "1", unit = "大さじ" },
+  { name = "水", qty = "400", unit = "ml" },
+]
+steps = [
+  "豚肉・大根・にんじん・ごぼうを一口大に切る。",
+  "こんにゃくはちぎるか薄切りにする。",
+  "鍋に水・だし・具材を入れ、やわらかくなるまで煮る。",
+  "弱火にして味噌を溶き入れる。",
+]
+
+[[dish]]
+key = "kimchi_tofu_soup"
+title = "豆腐とキムチの韓国風スープ"
+category = "汁物"
+kind = "汁物"
+tags = ["辛味", "豆"]
+cuisine = "韓国"
+minutes = 12
+heat = "stove"
+servings = 2
+ingredients = [
+  { name = "絹ごし豆腐", qty = "0.3", unit = "丁" },
+  { name = "キムチ", qty = "60", unit = "g" },
+  { name = "長ねぎ", qty = "5", unit = "cm" },
+  { name = "鶏がらスープの素", qty = "2", unit = "g" },
+  { name = "ごま油", qty = "0.5", unit = "小さじ" },
+  { name = "水", qty = "400", unit = "ml" },
+]
+steps = [
+  "鍋に水と鶏がらスープの素を煮立てる。",
+  "キムチと角切りの豆腐を加えて煮る。",
+  "小口切りの長ねぎを散らし、ごま油を垂らす。",
+]

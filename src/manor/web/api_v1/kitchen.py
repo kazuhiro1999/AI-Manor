@@ -67,6 +67,15 @@ def _nutrition_error_to_http(exc: ManorError) -> HTTPException:
     return manor_error_to_http(exc)
 
 
+def _companion_error_to_http(exc: ManorError) -> HTTPException:
+    """ADR-021 の状態コードへ写す。定番が無いのは 404、それ以外は献立と同じ写し方。"""
+    from ...staff.chef import companion as chef_companion
+
+    if exc.key == chef_companion.ERR_CATALOG_NOT_FOUND:
+        return HTTPException(status_code=404, detail=exc.message_ja)
+    return _menu_error_to_http(exc)
+
+
 def _media_error_to_http(exc: ManorError) -> HTTPException:
     """ADR-016 D3 の状態コードへ写す。**写し先の出どころは `chef/media.py` のキー定数**
     ——`recipes` のように「すべて code=2 → 404」にすると、400（URL が読めない）と
@@ -188,6 +197,15 @@ class MenuPlanRequest(BaseModel):
     date: str
     slot: str = "dinner"
     recipe_ids: list[int] = Field(default_factory=list)
+
+
+class CompanionPlanRequest(BaseModel):
+    """ADR-021 D5「一緒に作る」。お供はレシピ帳の id か定番の key のどちらか1つ。"""
+
+    date: str
+    slot: str = "dinner"
+    companion_recipe_id: int | None = None
+    catalog_key: str | None = None
 
 
 class FoodAliasRequest(BaseModel):
@@ -700,6 +718,72 @@ def register(app: FastAPI, ctx: WebContext) -> None:
             except ManorError as exc:
                 conn.rollback()
                 raise _menu_error_to_http(exc)
+            commit_and_render(conn, ctx)
+            return result
+
+    # --- companions（お供の提案。ADR-021 D5） ---
+    #
+    # 献立と同じく台所は共通（ADR-014 D4）——`viewing_user_id` は絞りに使わない。
+
+    @app.get("/api/v1/kitchen/recipes/{recipe_id}/companions")
+    def recipe_companions(recipe_id: int) -> dict[str, object]:
+        """主菜に合うお供を上位 3 件（ADR-021 D2〜D5）。主菜でなければ `eligible: false`。"""
+        from ...staff.chef import companion as chef_companion
+
+        with open_conn(ctx) as conn:
+            _require_chef_recipes(conn)
+            try:
+                return chef_companion.suggest(conn, recipe_id)
+            except ManorError as exc:
+                raise _companion_error_to_http(exc)
+
+    @app.post("/api/v1/kitchen/recipes/{recipe_id}/companions/plan")
+    def recipe_companions_plan(recipe_id: int, body: CompanionPlanRequest) -> dict[str, object]:
+        """「一緒に作る」: 主菜とお供を `chef_meal` に `planned=1` で書く（ADR-021 D5）。"""
+        require_writable(ctx)
+        from ...staff.chef import companion as chef_companion
+
+        with open_conn(ctx) as conn:
+            _require_chef_recipes(conn)
+            _require_chef(conn)
+            try:
+                result = chef_companion.plan_together(
+                    conn,
+                    recipe_id,
+                    date=body.date,
+                    slot=body.slot,
+                    companion_recipe_id=body.companion_recipe_id,
+                    catalog_key=body.catalog_key,
+                )
+            except ManorError as exc:
+                conn.rollback()
+                raise _companion_error_to_http(exc)
+            commit_and_render(conn, ctx)
+            return result
+
+    @app.get("/api/v1/kitchen/companions/{key}")
+    def companion_detail(key: str) -> dict[str, object]:
+        """お供の定番1品の作り方（材料と手順。ADR-021 D4）。"""
+        from ...staff.chef import companion as chef_companion
+
+        try:
+            return chef_companion.catalog_detail(key)
+        except ManorError as exc:
+            raise _companion_error_to_http(exc)
+
+    @app.post("/api/v1/kitchen/companions/{key}/adopt")
+    def companion_adopt(key: str) -> dict[str, object]:
+        """定番をレシピ帳に入れる（ADR-021 D4「昇格」）。同じ題名があればそれを返す。"""
+        require_writable(ctx)
+        from ...staff.chef import companion as chef_companion
+
+        with open_conn(ctx) as conn:
+            _require_chef_recipes(conn)
+            try:
+                result = chef_companion.adopt(conn, key)
+            except ManorError as exc:
+                conn.rollback()
+                raise _companion_error_to_http(exc)
             commit_and_render(conn, ctx)
             return result
 

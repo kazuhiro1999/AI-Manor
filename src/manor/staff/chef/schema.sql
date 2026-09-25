@@ -59,7 +59,11 @@ CREATE TABLE IF NOT EXISTS chef_recipe_meta (   -- うちの値。手で直し�
   cuisine          TEXT NOT NULL DEFAULT '',
   -- 推定（ADR-019 D4）の解決率（0〜1）。`nutrition_source='estimated'` のときだけ意味を持つ。
   -- 0.8 未満は `partial`＝献立の候補に入れない（ADR-018 D1 に足した規則）。
-  nutrition_coverage REAL
+  nutrition_coverage REAL,
+  -- 足した5項目と野菜の量（ADR-021 D1。1人分）。**出所に関わらず材料から推定する**
+  -- （サイトも手入力も5項目しか持たない）。`micro_coverage` はその解決率（0〜1）。
+  fiber_g REAL, potassium_mg REAL, calcium_mg REAL, iron_mg REAL, vitamin_c_mg REAL,
+  veg_g REAL, micro_coverage REAL
 );
 
 CREATE TABLE IF NOT EXISTS chef_cook_session (  -- XR／画面で「作り始めた」〜「作り終えた」
@@ -98,7 +102,7 @@ CREATE TABLE IF NOT EXISTS chef_media (
 -- 食品成分表の写し（ADR-019 D1）。文部科学省「日本食品標準成分表（八訂）増補 2023 年」を
 -- `manor chef food import` が取り込む。**成分表そのものはリポジトリに入れない**——主人が
 -- 公式サイトから落として `home/` に置く（置き場は `home/ENV.md`）。100g あたりの値だけを
--- 持つ（ビタミン等は要るときに列を足す）。
+-- 持つ（ビタミン等は要るときに列を足す。ADR-021 で食物繊維・K・Ca・Fe・ビタミンC を足した）。
 -- 列名は `group` ではなく `food_group`——`group` は SQL の予約語で、毎回の引用符が要る。
 CREATE TABLE IF NOT EXISTS chef_food (
   food_code      TEXT PRIMARY KEY,          -- 成分表の食品番号（例 01088）
@@ -108,7 +112,9 @@ CREATE TABLE IF NOT EXISTS chef_food (
   refuse_pct     REAL NOT NULL DEFAULT 0,   -- 廃棄率（%）
   per            TEXT NOT NULL DEFAULT '100g',
   source_version TEXT NOT NULL DEFAULT '8th-2023',
-  updated_at     TEXT NOT NULL
+  updated_at     TEXT NOT NULL,
+  -- ADR-021 D1 で足した列（100g あたり。NULL＝その版・その取り込みに値が無い）。
+  fiber_g REAL, potassium_mg REAL, calcium_mg REAL, iron_mg REAL, vitamin_c_mg REAL
 );
 CREATE INDEX IF NOT EXISTS idx_chef_food_name ON chef_food (name);
 

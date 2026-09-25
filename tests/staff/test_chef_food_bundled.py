@@ -42,12 +42,14 @@ def test_bundled_csv_exists_and_is_utf8_lf_without_bom() -> None:
     assert not raw.startswith(b"\xef\xbb\xbf"), "BOM を付けない"
 
 
-def test_bundled_csv_has_exactly_the_nine_columns_in_order() -> None:
+def test_bundled_csv_has_exactly_the_fourteen_columns_in_order() -> None:
+    """9列（ADR-019）＋足した5項目（ADR-021 D1: 食物繊維・カリウム・カルシウム・鉄・ビタミンC）。"""
     header, _ = _read_raw_csv()
     assert header == list(nutrition.COMPACT_CSV_FIELDS)
     assert header == [
         "food_code", "food_group", "name", "kcal", "protein_g",
         "fat_g", "carb_g", "salt_g", "refuse_pct",
+        "fiber_g", "potassium_mg", "calcium_mg", "iron_mg", "vitamin_c_mg",
     ]
 
 
@@ -80,19 +82,36 @@ def test_bundled_csv_names_are_not_empty_and_have_no_full_width_space() -> None:
 def test_bundled_csv_numeric_fields_are_readable() -> None:
     """`nutrition.read_food_rows()` で全行の数値が読める（`Tr`/`-`/括弧は既に数値化済み）。
 
-    `protein_g`/`fat_g` だけ、成分表に未測定の行が実在する（実物5行）ので空欄を許す。
+    以前は `protein_g`/`fat_g` に空欄が5行あったが、それは本表の `(Tr)`（推定の微量）を
+    読み落としていたもの（括弧を外す前に `Tr` を判定していた。ADR-021 で直した）。
+    空欄が残るのは本表で本当に空の1マス（還元水あめの食物繊維）だけ。
     """
     rows = nutrition.read_food_rows(CSV_PATH)
     assert len(rows) == BUNDLED_ROW_COUNT
     for row in rows:
-        assert isinstance(row["kcal"], float)
-        assert isinstance(row["carb_g"], float)
-        assert isinstance(row["salt_g"], float)
-        assert isinstance(row["refuse_pct"], float)
-        assert row["protein_g"] is None or isinstance(row["protein_g"], float)
-        assert row["fat_g"] is None or isinstance(row["fat_g"], float)
-    unmeasured_protein = [r["food_code"] for r in rows if r["protein_g"] is None]
-    assert len(unmeasured_protein) == 5
+        for key in ("kcal", "protein_g", "fat_g", "carb_g", "salt_g", "refuse_pct"):
+            assert isinstance(row[key], float), (row["food_code"], key)
+    empty = [(r["food_code"], k) for r in rows for k in nutrition.MICRO_NUTRIENTS if r[k] is None]
+    assert empty == [("03032", "fiber_g")]
+
+
+def test_bundled_csv_carries_the_added_nutrients_for_the_owners_examples() -> None:
+    """ADR-021 の例（揚げ物にキャベツ・ラーメンに海藻）を数字で言える値が入っている。"""
+    rows = {r["food_code"]: r for r in nutrition.read_food_rows(CSV_PATH)}
+    cabbage = rows["06061"]  # キャベツ 結球葉 生
+    assert cabbage["vitamin_c_mg"] > 30 and cabbage["fiber_g"] > 1
+    wakame = rows["09041"]  # わかめ 乾燥わかめ 素干し 水戻し
+    assert wakame["fiber_g"] > 3 and wakame["potassium_mg"] > 200
+
+
+def test_legacy_nine_column_csv_is_still_readable(tmp_path: Path) -> None:
+    """ADR-021 より前の9列の書き出しも読める（足した列は空＝None。0 と読まない）。"""
+    legacy = tmp_path / "legacy.csv"
+    lines = [",".join(nutrition.LEGACY_COMPACT_CSV_FIELDS), "06061,06,キャベツ 結球葉 生,23.0,1.2,0.1,5.2,0.0,15.0"]
+    legacy.write_bytes(("\n".join(lines) + "\n").encode("utf-8"))
+    rows = nutrition.read_food_rows(legacy)
+    assert rows[0]["kcal"] == 23.0
+    assert all(rows[0][k] is None for k in nutrition.MICRO_NUTRIENTS)
 
 
 def test_bundled_csv_a_known_row_reads_correctly() -> None:
@@ -221,6 +240,30 @@ def test_db_init_seeding_is_idempotent_and_does_not_duplicate(tmp_path: Path) ->
         assert count == BUNDLED_ROW_COUNT
     finally:
         conn2.close()
+
+
+def test_db_init_backfills_the_added_columns_once(tmp_path: Path) -> None:
+    """ADR-021 より前に取り込んだ成分表（足した列が全部空）は、`manor init` で1回だけ埋まる。"""
+    home_dir = tmp_path / "old"
+    db_mod.init(home_dir, seed_chef_food=True)
+    conn4 = sqlite3.connect(home_dir / "manor.db")
+    conn4.row_factory = sqlite3.Row
+    try:
+        cols = ", ".join(f"{k} = NULL" for k in nutrition.MICRO_NUTRIENTS)
+        conn4.execute(f"UPDATE chef_food SET {cols}")
+        conn4.commit()
+    finally:
+        conn4.close()
+
+    db_mod.init(home_dir, seed_chef_food=True)
+    conn4 = sqlite3.connect(home_dir / "manor.db")
+    conn4.row_factory = sqlite3.Row
+    try:
+        row = conn4.execute("SELECT COUNT(*) AS n, COUNT(fiber_g) AS filled FROM chef_food").fetchone()
+        assert row["n"] == BUNDLED_ROW_COUNT
+        assert row["filled"] == BUNDLED_ROW_COUNT - 1  # 還元水あめの食物繊維だけ本表でも空
+    finally:
+        conn4.close()
 
 
 def test_manor_init_cli_seeds_chef_food_quietly(home_path: Path, capsys) -> None:

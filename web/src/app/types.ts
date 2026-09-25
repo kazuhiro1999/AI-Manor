@@ -630,6 +630,60 @@ export interface MenuRecommendation {
   viewing_user_id: string;
 }
 
+/* ---------- kitchen: お供の提案（ADR-021 D5） ---------- */
+
+// 下限で見る6項目（1人分。`[menu.floor]` の鍵）。
+export type CompanionNutrient = "fiber_g" | "potassium_mg" | "calcium_mg" | "iron_mg" | "vitamin_c_mg" | "veg_g";
+export type CompanionHeat = "none" | "range" | "stove";
+
+export interface CompanionItem {
+  key: string;
+  source: "recipe" | "catalog";
+  recipe_id: number | null;
+  catalog_key: string | null;
+  title: string;
+  category: string;
+  kind: string;
+  heat: CompanionHeat;
+  tags: string[];
+  minutes: number | null;
+  hero_image: string;
+  score: number;
+  reasons: MenuReason[];
+  nutrition: MenuNutrition;
+  // 推定できていなければ空（ADR-021 D2「分からないものを補えるとは言わない」）。
+  micro: Partial<Record<CompanionNutrient, number>>;
+}
+
+// `GET /api/v1/kitchen/recipes/{id}/companions`。`eligible` が偽なら主菜ではない（カードを出さない）。
+export interface CompanionSuggestion {
+  recipe_id: number;
+  eligible: boolean;
+  main: {
+    title: string;
+    kind: string;
+    nutrition: Partial<MenuNutrition>;
+    micro: Partial<Record<CompanionNutrient, number>>;
+    // 足りない度合いの大きい順（下限）／帯を超えるもの。
+    under: CompanionNutrient[];
+    over: MenuNutrient[];
+  };
+  floor: Partial<Record<CompanionNutrient, number>>;
+  items: CompanionItem[];
+  catalog_size?: number;
+}
+
+// `GET /api/v1/kitchen/companions/{key}`（定番の作り方）。
+export interface CompanionDetail {
+  key: string;
+  title: string;
+  servings: number;
+  minutes: number | null;
+  heat: CompanionHeat;
+  ingredients: { name: string; qty: string; unit: string }[];
+  steps: string[];
+}
+
 /* ---------- kitchen: 動画リスト（ADR-016 D3） ---------- */
 
 // `GET /api/v1/kitchen/media` の1行。**XR（kitchen-xr）が読むのと同じ形**——ADR-016 D3 の

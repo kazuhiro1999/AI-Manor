@@ -200,6 +200,22 @@ def _migrate_chef_recipe_meta_nutrition_source_site(conn: sqlite3.Connection) ->
     )
 
 
+#: ADR-021 D1 で足した栄養の列（`chef_food` と `chef_recipe_meta` の両方）。
+_CHEF_MICRO_COLUMNS: tuple[str, ...] = ("fiber_g", "potassium_mg", "calcium_mg", "iron_mg", "vitamin_c_mg")
+
+
+def _add_chef_micro_columns(conn: sqlite3.Connection) -> None:
+    """既存 DB の `chef_food`・`chef_recipe_meta` に ADR-021 D1 の列を冪等に足す。
+
+    値は入れない——`chef_food` は `manor chef food import`（同梱 CSV を読み直す）、
+    `chef_recipe_meta` は `manor chef nutrition rebuild` が埋める。表が無ければ何もしない。
+    """
+    for column in _CHEF_MICRO_COLUMNS:
+        _add_column_if_missing(conn, "chef_food", column, "REAL")
+    for column in (*_CHEF_MICRO_COLUMNS, "veg_g", "micro_coverage"):
+        _add_column_if_missing(conn, "chef_recipe_meta", column, "REAL")
+
+
 def _seed_chef_food_if_empty(conn: sqlite3.Connection) -> None:
     """`chef_food` が空なら同梱 CSV を静かに取り込む（ADR-019 §4 追補・2026-09-13）。
 
@@ -221,6 +237,33 @@ def _seed_chef_food_if_empty(conn: sqlite3.Connection) -> None:
     from .staff.chef import nutrition as chef_nutrition
 
     chef_nutrition.import_food_table(conn)
+
+
+def _backfill_chef_food_micro(conn: sqlite3.Connection) -> None:
+    """ADR-021 D1 の列が**1行も埋まっていない**成分表なら、同梱 CSV を読み直して推定し直す。
+
+    ADR-021 より前に取り込んだ home は、列を足しただけでは値が空のまま（お供の提案が
+    食物繊維などを見られない）。`_seed_chef_food_if_empty` と同じ「1回だけ・静かに」で、
+    2回目以降は COUNT 1本で抜ける。同梱 CSV の上書きは冪等（同じ `food_code` は上書き）。
+    推定し直し（`rebuild`）は `site`／`manual` の5項目を触らない約束のまま、足した列を埋める。
+    """
+    exists = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'chef_food'"
+    ).fetchone()
+    if exists is None:
+        return
+    cols = {str(r["name"]) for r in conn.execute("PRAGMA table_info(chef_food)").fetchall()}
+    if "fiber_g" not in cols:
+        return
+    row = conn.execute(
+        "SELECT COUNT(*) AS n, COUNT(fiber_g) AS filled FROM chef_food"
+    ).fetchone()
+    if not row["n"] or row["filled"]:
+        return
+    from .staff.chef import nutrition as chef_nutrition
+
+    chef_nutrition.import_food_table(conn)
+    chef_nutrition.rebuild(conn, quiet=True)
 
 
 def migrate_core(home: Path) -> None:
@@ -282,6 +325,8 @@ def migrate_core(home: Path) -> None:
         # ——`_migrate_chef_recipe_meta_nutrition_source_site` は現在の列をそのまま
         # 新しい表へコピーするので、先に足すとコピー先に無い列を指してしまう。
         _add_column_if_missing(conn, "chef_recipe_meta", "nutrition_coverage", "REAL")
+        # ADR-021 D1（2026-09-25）: 足した5項目と野菜の量。上と同じ理由で表の作り直しの後。
+        _add_chef_micro_columns(conn)
         # **既定の8つもここで入れる**（執事の裁定 2026-09-04）。`manor init` だけに任せると、
         # 更新後に init を忘れた home は「表はあるが空」になり、種類を1つも選べない——
         # `run`／`notion_page` で2度踏んだのと**同じ穴**（GROWTH G5）。
@@ -428,6 +473,8 @@ def init(home: Path, *, seed_chef_food: bool = False) -> list[str]:
         # ——`_migrate_chef_recipe_meta_nutrition_source_site` は現在の列をそのまま
         # 新しい表へコピーするので、先に足すとコピー先に無い列を指してしまう。
         _add_column_if_missing(conn, "chef_recipe_meta", "nutrition_coverage", "REAL")
+        # ADR-021 D1（2026-09-25）: 足した5項目と野菜の量。上と同じ理由で表の作り直しの後。
+        _add_chef_micro_columns(conn)
         # ADR-019 §4 追補（2026-09-13）: `chef_food` が空なら同梱 CSV を静かに取り込む
         # （主人「Excel は面倒、扱いやすいデータ形式に移しておくのはどうか」）。
         # **部下のスキーマ適用の後**（`chef_food` 自体が chef のスキーマで作られる）。
@@ -436,6 +483,8 @@ def init(home: Path, *, seed_chef_food: bool = False) -> list[str]:
         # `seed_chef_food=False`（`init()` の docstring 参照）ならここを丸ごと飛ばす。
         if seed_chef_food:
             _seed_chef_food_if_empty(conn)
+            # ADR-021 D1（2026-09-25）: 足した列が空の成分表は1回だけ読み直す。
+            _backfill_chef_food_micro(conn)
 
         if conn.execute("SELECT value FROM meta WHERE key='schema_version'").fetchone() is None:
             conn.execute("INSERT INTO meta (key, value) VALUES ('schema_version', '1')")

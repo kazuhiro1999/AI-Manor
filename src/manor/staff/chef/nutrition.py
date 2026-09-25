@@ -62,6 +62,18 @@ from . import ops, recipe_shaping as shaping, recipes
 #: 栄養の5項目（`chef_recipe_meta`・`chef_food` の列名。ADR-019 D1）。
 NUTRIENTS: tuple[str, ...] = ("kcal", "protein_g", "fat_g", "carb_g", "salt_g")
 
+#: 足した5項目（ADR-021 D1。ADR-019 D1「ビタミン等は要るときに列を足す」の発動）。
+#: 「ラーメンに海藻」「揚げ物にキャベツ」を数字で言うための物差し。**出典サイトの値
+#: （`site`）を持つレシピでも、これらだけは材料から推定する**——サイトは5項目しか載せない。
+MICRO_NUTRIENTS: tuple[str, ...] = ("fiber_g", "potassium_mg", "calcium_mg", "iron_mg", "vitamin_c_mg")
+
+#: 成分表の1行が持つ栄養の列（`chef_food` の列名）。
+FOOD_NUTRIENTS: tuple[str, ...] = (*NUTRIENTS, *MICRO_NUTRIENTS)
+
+#: 野菜の量（g。1 人前）。成分表の列ではなく、材料のうち `[nutrition.veg_groups]` の
+#: 食品群（野菜・きのこ・藻類）に当たったものの**可食部のグラム**を足して出す（ADR-021 D1）。
+VEG_G = "veg_g"
+
 #: 成分表の版（`chef_food.source_version` の既定）。
 DEFAULT_SOURCE_VERSION = "8th-2023"
 
@@ -111,7 +123,12 @@ DEFAULT_FOOD_CSV_PATH = Path(__file__).with_name("data") / "food_composition_8th
 #: `import_food_table()` の引数（既定 `DEFAULT_SOURCE_VERSION`）・`PER_100G` で足す。
 COMPACT_CSV_FIELDS: tuple[str, ...] = (
     "food_code", "food_group", "name", "kcal", "protein_g", "fat_g", "carb_g", "salt_g", "refuse_pct",
+    *MICRO_NUTRIENTS,
 )
+
+#: ADR-021 より前の同梱 CSV の列（5項目だけ）。**読むだけは受ける**——試験の偽データや、
+#: 主人が手元に残している古い書き出しを、列が足りないというだけで拒まない（足した列は空）。
+LEGACY_COMPACT_CSV_FIELDS: tuple[str, ...] = COMPACT_CSV_FIELDS[:9]
 
 #: 同梱 CSV へ書き出すときの食品名の空白畳み込み（全角空白混じりの連続を半角1つに）。
 #: 成分表の取り込みは NFKC で全角空白を半角にするが、まれに空白が連続する行が残る
@@ -174,6 +191,8 @@ class UnitTables:
     not_counted: frozenset[str] = frozenset()
     #: 調理による油の吸収（`[nutrition.oil_absorption]`。ADR-019 §4 追補）。
     oil: OilAbsorption = field(default_factory=OilAbsorption)
+    #: 「野菜の量」に数える食品群（`[nutrition.veg_groups].groups`。ADR-021 D1）。
+    veg_groups: frozenset[str] = frozenset()
 
 
 def _float_map(raw: Any) -> dict[str, float]:
@@ -249,7 +268,14 @@ def load_unit_tables(path: Path | None = None) -> UnitTables:
         synonyms=synonyms,
         not_counted=not_counted,
         oil=_oil_absorption(lex),
+        veg_groups=_veg_groups(lex),
     )
+
+
+def _veg_groups(lex: Mapping[str, Any]) -> frozenset[str]:
+    """`[nutrition.veg_groups].groups`（野菜の量に数える食品群。ADR-021 D1）。無ければ空。"""
+    raw = dict(dict(lex.get("nutrition") or {}).get("veg_groups") or {})  # type: ignore[union-attr]
+    return frozenset(str(g) for g in (raw.get("groups") or []) if str(g))
 
 
 def coverage_min(path: Path | None = None) -> float:
@@ -611,6 +637,13 @@ def blend_row(
             except (TypeError, ValueError):
                 continue
         out[key] = round(acc / total, 4)
+    # 足した5項目（ADR-021 D1）は、混ぜる食品の**どれか1つでも値を持たなければ空**
+    # ——空を 0 と読んで混ぜると「食物繊維の無い合いびき肉」のような嘘の値になる。
+    for key in MICRO_NUTRIENTS:
+        if any(row.get(key) is None for _w, row in weighted):
+            out[key] = None
+            continue
+        out[key] = round(sum(float(row.get(key) or 0.0) * w for w, row in weighted) / total, 4)
     return out
 
 
@@ -796,6 +829,12 @@ class Estimate:
     unresolved: list[dict[str, Any]] = field(default_factory=list)
     #: 材料表に**書かれていない**ぶんの加算（いまは吸油だけ。ADR-019 §4 追補）。
     adjustments: list[dict[str, Any]] = field(default_factory=list)
+    #: 足した5項目と野菜の量（1 人前。ADR-021 D1）。`fiber_g`…`vitamin_c_mg`・`veg_g`。
+    micro: dict[str, float] = field(default_factory=dict)
+    #: 足した5項目の解決率（重量比）。`coverage` と同じ分母で、分子は「成分表の行が
+    #: **足した列の値を持っていた**材料」だけ——ADR-021 より前に取り込んだ成分表
+    #: （列が空）のままなら 0 になり、お供の採点はこの5項目を見ない。
+    micro_coverage: float = 0.0
 
     @property
     def ok(self) -> bool:
@@ -814,6 +853,8 @@ class Estimate:
             "resolved": self.resolved,
             "unresolved": self.unresolved,
             "adjustments": self.adjustments,
+            "micro": self.micro,
+            "micro_coverage": round(self.micro_coverage, 3),
         }
 
 
@@ -845,6 +886,9 @@ def estimate_nutrition(
         servings = 1
 
     totals = {key: 0.0 for key in NUTRIENTS}
+    micro_totals = {key: 0.0 for key in MICRO_NUTRIENTS}
+    veg_grams = 0.0
+    micro_grams = 0.0  # 足した列の値を持つ食品に当たった材料のグラム（ADR-021 D1）
     resolved_grams = 0.0
     counted_grams = 0.0
     resolved: list[dict[str, Any]] = []
@@ -917,6 +961,15 @@ def estimate_nutrition(
             except (TypeError, ValueError):
                 per100 = 0.0
             totals[key] += per100 * edible / 100.0
+        if all(food.get(key) is not None for key in MICRO_NUTRIENTS):
+            micro_grams += grams
+            for key in MICRO_NUTRIENTS:
+                try:
+                    micro_totals[key] += float(food.get(key) or 0.0) * edible / 100.0
+                except (TypeError, ValueError):
+                    continue
+        if str(food.get("food_group") or "") in tables.veg_groups:
+            veg_grams += edible
         resolved_grams += grams
         if is_main_ingredient(name, tables.oil):
             main_grams += grams
@@ -943,6 +996,8 @@ def estimate_nutrition(
                 totals[key] += float(adjustment.get(key) or 0.0)
 
     coverage = (resolved_grams / counted_grams) if counted_grams > 0 else 0.0
+    micro = {key: round(micro_totals[key] / servings, 1) for key in MICRO_NUTRIENTS}
+    micro[VEG_G] = round(veg_grams / servings, 1)
     return Estimate(
         nutrition={key: round(totals[key] / servings, 1) for key in NUTRIENTS},
         coverage=round(coverage, 4),
@@ -950,6 +1005,8 @@ def estimate_nutrition(
         resolved=resolved,
         unresolved=unresolved,
         adjustments=adjustments,
+        micro=micro,
+        micro_coverage=round((micro_grams / counted_grams) if counted_grams > 0 else 0.0, 4),
     )
 
 
@@ -973,6 +1030,12 @@ _COLUMN_SPECS: tuple[tuple[str, tuple[str, ...], tuple[str, ...], bool], ...] = 
     ("fat_g", ("脂質",), ("脂肪酸", "トリアシル", "コレステロール"), True),
     ("carb_g", ("炭水化物",), ("利用可能", "単糖", "質量", "差引き", "食物繊維", "糖アルコール"), True),
     ("salt_g", ("食塩相当量",), (), True),
+    # ADR-021 D1 で足した列。**必須にしない**——古い版・抜粋の CSV でも5項目は取り込める。
+    ("fiber_g", ("食物繊維総量",), (), False),
+    ("potassium_mg", ("カリウム",), (), False),
+    ("calcium_mg", ("カルシウム",), (), False),
+    ("iron_mg", ("鉄",), (), False),
+    ("vitamin_c_mg", ("ビタミンc",), (), False),
 )
 
 #: 見出しを探す行数の上限（八訂の本表は 10 行前後の飾りがある）。
@@ -1088,9 +1151,11 @@ def _as_float(text: str) -> float | None:
     raw = unicodedata.normalize("NFKC", str(text or "")).strip()
     if not raw:
         return None
+    # 括弧を先に外す——`(Tr)`（推定の微量）が `Tr` の判定をすり抜けて空になっていた
+    # （ADR-021 で足した列を取り込んだときに実測。ビタミンC・鉄に 13 行）。
+    raw = raw.strip("()（）").replace(",", "")
     if raw in ("Tr", "tr", "-", "−", "－"):
         return 0.0
-    raw = raw.strip("()（）").replace(",", "")
     try:
         return float(raw)
     except ValueError:
@@ -1109,13 +1174,13 @@ def _read_compact_csv(rows: Sequence[Sequence[Any]]) -> list[dict[str, Any]] | N
     if not rows:
         return None
     header = [str(c or "").strip() for c in rows[0]]
-    if header != list(COMPACT_CSV_FIELDS):
+    if header not in (list(COMPACT_CSV_FIELDS), list(LEGACY_COMPACT_CSV_FIELDS)):
         return None
     out: list[dict[str, Any]] = []
     for row in rows[1:]:
         if not row or all(_cell(row, i) == "" for i in range(len(row))):
             continue  # 末尾の空行
-        cells = {key: _cell(row, i) for i, key in enumerate(COMPACT_CSV_FIELDS)}
+        cells = {key: _cell(row, i) for i, key in enumerate(header)}
         code, name = cells["food_code"], cells["name"]
         if not code or not name:
             continue
@@ -1130,6 +1195,8 @@ def _read_compact_csv(rows: Sequence[Sequence[Any]]) -> list[dict[str, Any]] | N
                 "carb_g": _as_float(cells["carb_g"]),
                 "salt_g": _as_float(cells["salt_g"]),
                 "refuse_pct": _as_float(cells["refuse_pct"]) or 0.0,
+                # 古い形（5項目だけ）なら足した列は空（None）——0 と読まない。
+                **{key: _as_float(cells.get(key, "")) for key in MICRO_NUTRIENTS},
             }
         )
     return out
@@ -1199,6 +1266,10 @@ def read_food_rows(path: Path) -> list[dict[str, Any]]:
                         if "refuse_pct" in columns
                         else 0.0
                     ),
+                    **{
+                        key: _as_float(_cell(row, columns[key])) if key in columns else None
+                        for key in MICRO_NUTRIENTS
+                    },
                 }
             )
     if not out:
@@ -1241,22 +1312,26 @@ def import_food_table(
     rows = read_food_rows(resolved)
     now = util.now()
     before = int(conn.execute("SELECT COUNT(*) AS n FROM chef_food").fetchone()["n"])
+    micro_cols = ", ".join(MICRO_NUTRIENTS)
+    micro_marks = ", ".join("?" for _ in MICRO_NUTRIENTS)
+    micro_set = ", ".join(f"{key} = excluded.{key}" for key in MICRO_NUTRIENTS)
     for row in rows:
         conn.execute(
             "INSERT INTO chef_food"
             " (food_code, food_group, name, kcal, protein_g, fat_g, carb_g, salt_g,"
-            "  refuse_pct, per, source_version, updated_at)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+            f"  refuse_pct, per, source_version, updated_at, {micro_cols})"
+            f" VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, {micro_marks})"
             " ON CONFLICT (food_code) DO UPDATE SET"
             "  food_group = excluded.food_group, name = excluded.name, kcal = excluded.kcal,"
             "  protein_g = excluded.protein_g, fat_g = excluded.fat_g, carb_g = excluded.carb_g,"
             "  salt_g = excluded.salt_g, refuse_pct = excluded.refuse_pct,"
             "  per = excluded.per, source_version = excluded.source_version,"
-            "  updated_at = excluded.updated_at",
+            f"  updated_at = excluded.updated_at, {micro_set}",
             (
                 row["food_code"], row["food_group"], row["name"], row["kcal"], row["protein_g"],
                 row["fat_g"], row["carb_g"], row["salt_g"], row["refuse_pct"],
                 PER_100G, source_version, now,
+                *(row.get(key) for key in MICRO_NUTRIENTS),
             ),
         )
     after = int(conn.execute("SELECT COUNT(*) AS n FROM chef_food").fetchone()["n"])
@@ -1275,15 +1350,14 @@ def export_food_table(conn: sqlite3.Connection, path: Path | str | None = None) 
 
     同梱 CSV（`DEFAULT_FOOD_CSV_PATH`）を作り直すときに使う——版を上げて `.xlsx` を
     取り込み直した後、この関数でもう一度書き出せば同梱 CSV が更新できる。列は
-    `COMPACT_CSV_FIELDS` の9つだけ。名前は空白の連続を半角1つに畳む
+    `COMPACT_CSV_FIELDS` の14（ADR-021 で5つ足した）だけ。名前は空白の連続を半角1つに畳む
     （`_EXPORT_NAME_SPACE_RE`。実物 2,538 行で1行だけ空白が連続していた実測に基づく）。
     UTF-8・LF（`lineterminator="\\n"`）で書く——Windows の既定（CRLF）にしない。
     """
     require_food_table(conn)
     out_path = Path(path) if path is not None else DEFAULT_FOOD_CSV_PATH
     rows = conn.execute(
-        "SELECT food_code, food_group, name, kcal, protein_g, fat_g, carb_g, salt_g, refuse_pct"
-        " FROM chef_food ORDER BY food_code"
+        f"SELECT {', '.join(COMPACT_CSV_FIELDS)} FROM chef_food ORDER BY food_code"
     ).fetchall()
     out_path.parent.mkdir(parents=True, exist_ok=True)
     with out_path.open("w", encoding="utf-8", newline="") as f:
@@ -1690,16 +1764,21 @@ def rebuild(
     oil_adjusted = 0   # 吸油を足したレシピの数（CLI が1行で言う。ADR-019 §4 追補）
     oil_grams = 0.0
     items: list[dict[str, object]] = []
+    micro_ready = _has_micro_columns(conn)
     for rid in _recipe_ids(conn, recipe_id):
         meta = _meta_row(conn, rid)
         source = str(meta["nutrition_source"]) if meta is not None else ""
+        est = estimate_for_recipe(
+            conn, rid, index=index, aliases=aliases, tables=tables, blends=blends
+        )
+        # 足した5項目と野菜の量（ADR-021 D1）は **`site`／`manual` でも書く**——サイトも
+        # 主人の手入力も5項目しか持たないので、ここは材料から推定するほか無い。
+        if micro_ready and est.ok:
+            _write_micro(conn, rid, est)
         if source in ("site", "manual"):
             skipped += 1
             items.append({"recipe_id": rid, "skipped": source})
             continue
-        est = estimate_for_recipe(
-            conn, rid, index=index, aliases=aliases, tables=tables, blends=blends
-        )
         if not est.ok:
             skipped += 1
             items.append({"recipe_id": rid, "skipped": "no_match", "unresolved": len(est.unresolved)})
@@ -1736,6 +1815,29 @@ def rebuild(
     }
 
 
+#: `chef_recipe_meta` の足した列（ADR-021 D1）。`micro_coverage` は足した5項目の解決率。
+META_MICRO_COLUMNS: tuple[str, ...] = (*MICRO_NUTRIENTS, VEG_G, "micro_coverage")
+
+
+def _has_micro_columns(conn: sqlite3.Connection) -> bool:
+    """`chef_recipe_meta` が足した列を持つか（`db.migrate_core` を通す前の home では持たない）。"""
+    cols = {str(r["name"]) for r in conn.execute("PRAGMA table_info(chef_recipe_meta)").fetchall()}
+    return all(c in cols for c in META_MICRO_COLUMNS)
+
+
+def _write_micro(conn: sqlite3.Connection, recipe_id: int, est: Estimate) -> None:
+    """足した5項目・野菜の量・解決率を書く（**5項目と `nutrition_source` には触れない**）。"""
+    conn.execute(
+        "INSERT OR IGNORE INTO chef_recipe_meta (recipe_id, nutrition_source, tags, favorite, times_cooked)"
+        " VALUES (?, '', '[]', 0, 0)",
+        (recipe_id,),
+    )
+    sets = ", ".join(f"{c} = ?" for c in META_MICRO_COLUMNS)
+    values = [est.micro.get(k) for k in (*MICRO_NUTRIENTS, VEG_G)]
+    values.append(round(est.micro_coverage, 4))
+    conn.execute(f"UPDATE chef_recipe_meta SET {sets} WHERE recipe_id = ?", (*values, recipe_id))
+
+
 def refresh(conn: sqlite3.Connection, recipe_id: int) -> dict[str, object]:
     """1 レシピぶんの再計算（登録・材料の編集の直後に差し込む。静かに失敗する）。"""
     return rebuild(conn, recipe_id=recipe_id, quiet=True)
@@ -1770,6 +1872,9 @@ def nutrition_payload(conn: sqlite3.Connection, recipe_id: int) -> dict[str, obj
     unresolved: list[dict[str, Any]] = []
     adjustments: list[dict[str, Any]] = []
     live_coverage: float | None = None
+    # 足した5項目と野菜の量（ADR-021 D1）。5項目と違い**その場で推定した値**を見せる
+    # （出所に関わらず材料からしか出せないので、保存値と食い違う理由が無い）。
+    micro: dict[str, Any] = {}
     if available and int(conn.execute("SELECT COUNT(*) AS n FROM chef_food").fetchone()["n"]) > 0:
         tables = load_unit_tables()
         est = estimate_nutrition(
@@ -1778,6 +1883,7 @@ def nutrition_payload(conn: sqlite3.Connection, recipe_id: int) -> dict[str, obj
         unresolved = est.unresolved
         adjustments = est.adjustments
         live_coverage = est.coverage
+        micro = {**est.micro, "micro_coverage": round(est.micro_coverage, 3)}
     else:
         available = False
 
@@ -1795,6 +1901,7 @@ def nutrition_payload(conn: sqlite3.Connection, recipe_id: int) -> dict[str, obj
         "partial": bool(source == "estimated" and coverage is not None and float(coverage) < minimum),
         "unresolved": unresolved,
         "adjustments": adjustments,
+        "micro": micro,
         "food_table_available": available,
     }
 

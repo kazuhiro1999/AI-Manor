@@ -68,6 +68,12 @@ ALLOWLIST: set[str] = {
     # 許す**——この module は語彙の塊で、行番号で固定すると編集のたびに壊れる
     # （`task.py` の許可が3日で2度ずれた前例）。
     "staff/chef/nutrition.py",
+    # [データ] staff/chef/companion.py（ADR-021・2026-09-25）: お供の提案。日本語の文字列は
+    # 全部 `lexicon.toml` の語彙と突き合わせる語（型の「生」「汁物」・印の「生野菜」）と、
+    # 定番をレシピ帳へ昇格するときに DB に永続するレシピ本体の語（工程の段「作る」・
+    # 「手順N」）。理由は符牒で返し、画面が `kitchen.companion.reason.*` で訳す。
+    # nutrition.py と同じくファイル単位で許す。
+    "staff/chef/companion.py",
     # [データ] JSON 出力のキーとして使われる日本語ラベル(`tests/staff/test_housekeeper.py`
     # が実際にこの文字列をキーとして検算している——データ契約であって UI 文言ではない。
     # chef/cli.py の VALID_AISLES と同じ判断。5h-2 のサブエージェントが検分して報告)。

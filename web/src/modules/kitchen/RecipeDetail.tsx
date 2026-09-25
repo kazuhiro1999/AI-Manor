@@ -12,6 +12,7 @@ import { ScreenHeader } from "../../components/ScreenHeader";
 import { formatDay, useT } from "../../app/i18n";
 import type { Recipe, RecipeNutrition } from "../../app/types";
 import { NUTRITION_SOURCE_LABEL_KEY, NUTRITION_UNRESOLVED_REASON_KEY, formatIngredientAmount } from "./recipeShared";
+import { CompanionPanel } from "./CompanionPanel";
 
 export function RecipeDetail() {
   const t = useT();
@@ -237,6 +238,9 @@ export function RecipeDetail() {
               ))}
             </div>
           </section>
+
+          {/* ADR-021 D5: 主菜のときだけ「お供にこんなメニューはどうですか？」。閉じられる。 */}
+          <CompanionPanel recipeId={recipeId} />
         </div>
 
         <aside style={{ flex: "1 1 260px", minWidth: 240 }}>
