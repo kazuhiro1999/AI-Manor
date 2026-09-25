@@ -78,6 +78,10 @@ ALLOWLIST: set[str] = {
     # （receipt_reader.py の読み取りの指示と同じ扱い）と、DB に残す記録の語。画面の文言は
     # Web が `settings.food.*` で訳す。
     "staff/chef/food_resolve.py",
+    # [データ]+[検証] staff/chef/youtube.py: レシピの見出し・量の語彙（「材料」「作り方」「大さじ」…）を
+    # 正規表現に持つ（recipe_shaping と同じ扱い）。extensions/youtube.py は他の拡張のマニフェストと同じ [共有]。
+    "staff/chef/youtube.py",
+    "extensions/youtube.py",
     # [データ] JSON 出力のキーとして使われる日本語ラベル(`tests/staff/test_housekeeper.py`
     # が実際にこの文字列をキーとして検算している——データ契約であって UI 文言ではない。
     # chef/cli.py の VALID_AISLES と同じ判断。5h-2 のサブエージェントが検分して報告)。

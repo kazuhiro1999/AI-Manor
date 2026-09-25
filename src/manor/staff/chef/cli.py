@@ -687,6 +687,33 @@ def cmd_food_resolve(conn, home, args) -> object:
     return food_resolve.resolve(conn)
 
 
+def cmd_youtube_probe(conn, home, args) -> object:
+    """YouTube のレシピ動画を読み、何が取れてレシピとして読めたかを報告する（検証。DB には書かない）。"""
+    from . import youtube as yt
+
+    key = yt.api_key_for(home, args.user)
+    if not key:
+        return "YouTube の API キーが未登録です: uv run manor ext set youtube --secret api_key"
+    result = yt.probe(yt.http_fetcher(key), args.urls, comments=args.comments, limit=args.limit)
+    if args.json:
+        return result
+    lines = [f"割り当て: {result['units']} 単位"]
+    for pl in result["playlists"]:
+        lines.append(f"再生リスト「{pl['title']}」: {pl['videos']} 本")
+    for err in result["errors"]:
+        lines.append(f"読めない: {err['url']}（{err['reason']}）")
+    for v in result["videos"]:
+        where = v["recipe_source"] or "（レシピ無し）"
+        lines.append(
+            f"- {v['title'][:40]} / {v['channel']} / {v['seconds']}秒{'・ショート' if v['short'] else ''}"
+            f" / 概要欄 {v['description_chars']}字・コメント {v['comments']}件"
+            f" → 材料 {len(v['ingredients'])}・手順 {len(v['steps'])}（{where}）"
+        )
+        if v["keywords"]:
+            lines.append(f"    語: {'、'.join(v['keywords'][:12])}")
+    return "\n".join(lines)
+
+
 def cmd_nutrition_rebuild(conn, home, args) -> object:
     """材料から栄養値を推定して書く（ADR-019 D4）。`--recipe` で1本だけ。
 
@@ -1077,6 +1104,17 @@ def register(subparsers) -> None:
     p.add_argument("--limit", type=int, default=20)
     p.add_argument("--json", action="store_true")
     p.set_defaults(func=cmd_food_search, is_write=False)
+
+    # --- youtube（レシピ動画の検証。DB には書かない） ---
+    youtube_p = chef_sub.add_parser("youtube")
+    youtube_sub = youtube_p.add_subparsers(dest="youtube_verb")
+    p = youtube_sub.add_parser("probe")
+    p.add_argument("urls", nargs="+")
+    p.add_argument("--user", default=None)
+    p.add_argument("--comments", type=int, default=5)
+    p.add_argument("--limit", type=int, default=50)
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=cmd_youtube_probe, is_write=False)
 
     # --- nutrition（材料からの推定。ADR-019 D4） ---
     nutrition_p = chef_sub.add_parser("nutrition", help=i18n.t("cli.chef.nutrition.help"))
