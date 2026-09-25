@@ -424,8 +424,11 @@ def read_image(
     return {"draft": draft, "checks": checks, "review": review, "method": method, "attempts": attempts, "reason": "", "ocr_text": ocr_text}
 
 
-def process(conn: sqlite3.Connection, home: Path, receipt_id: int, *, claude_bin: str | None = None) -> dict[str, Any]:
-    """行 1 つを読んで登録まで進める。**例外は投げない**（結果は行に残る）。戻り値は `detail()`。"""
+def process(
+    conn: sqlite3.Connection, home: Path, receipt_id: int, *, claude_bin: str | None = None, allow_claude: bool | None = None
+) -> dict[str, Any]:
+    """行 1 つを読んで登録まで進める。**例外は投げない**（結果は行に残る）。戻り値は `detail()`。
+    `allow_claude=False` で OCR だけの経路を強制できる（T100。Claude の後ろ盾なしで検算が通るかの確認用）。"""
     row = get_row(conn, receipt_id)
     if row is None:
         return {}
@@ -434,7 +437,7 @@ def process(conn: sqlite3.Connection, home: Path, receipt_id: int, *, claude_bin
     conn.commit()
     path = image_path(home, row["image_path"])
     try:
-        result = read_image(path, cfg=cfg, claude_bin=claude_bin)
+        result = read_image(path, cfg=cfg, claude_bin=claude_bin, allow_claude=allow_claude)
     except Exception as exc:  # noqa: BLE001
         conn.execute("UPDATE steward_receipt SET status = 'failed', reason = ? WHERE id = ?", (f"error:{type(exc).__name__}", receipt_id))
         conn.commit()

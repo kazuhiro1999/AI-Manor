@@ -423,7 +423,8 @@ def cmd_receipt_read(conn: sqlite3.Connection, home, args) -> object:
         rel = receipts.store_image(Path(home), src.read_bytes(), ext="png" if ext == "png" else "jpg")
         rid = receipts.create(conn, rel, created_by=getattr(args, "user", "") or "")
         conn.commit()
-        d = receipts.process(conn, Path(home), rid)
+        allow_claude = False if getattr(args, "no_claude", False) else None
+        d = receipts.process(conn, Path(home), rid, allow_claude=allow_claude)
         results.append(d)
         lines.append(_receipt_line(_summary_of(d)))
         checks = d.get("checks") or {}
@@ -626,6 +627,7 @@ def register(subparsers) -> None:
     p.add_argument("images", nargs="+")
     p.add_argument("--json", action="store_true")
     p.add_argument("--no-render", action="store_true")
+    p.add_argument("--no-claude", action="store_true", help="OCR だけで読む（Claude を呼ばない。T100）")
     p.set_defaults(func=cmd_receipt_read, is_write=True)
 
     p = receipt_sub.add_parser("quick", help=i18n.t("cli.money.receipt.quick.help"))
