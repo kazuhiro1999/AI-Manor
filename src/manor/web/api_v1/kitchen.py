@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field
 
 from ...board import api_staff as board_staff
 from ...errors import ManorError
+from . import kitchen_resolve
 from .._common import (
     WebContext,
     commit_and_render,
@@ -208,6 +209,14 @@ class CompanionPlanRequest(BaseModel):
     catalog_key: str | None = None
 
 
+class FoodUnitRequest(BaseModel):
+    """ADR-022 D1: 「1 単位あたりの重さ」を主人が手で入れる（manual。Claude の値より強い）。"""
+
+    name: str = Field(..., min_length=1)
+    unit: str = Field(..., min_length=1)
+    grams: float
+
+
 class FoodAliasRequest(BaseModel):
     """ADR-019 D2。未解決の材料名に食品を選んで `manual` で結ぶ。"""
 
@@ -400,7 +409,9 @@ def register(app: FastAPI, ctx: WebContext) -> None:
                 raise manor_error_to_http(exc)
             result = chef_recipes.get(conn, recipe_id)
             commit_and_render(conn, ctx)
-            return result
+        # ADR-022 D4: 名寄せ・換算の未解決があれば背景で Claude に調べてもらう（登録は待たせない）。
+        kitchen_resolve.request_if_auto(ctx.home)
+        return result
 
     @app.put("/api/v1/kitchen/recipes/{recipe_id}")
     def recipe_update(recipe_id: int, body: dict) -> dict[str, object]:
@@ -419,7 +430,8 @@ def register(app: FastAPI, ctx: WebContext) -> None:
                 conn.rollback()
                 raise manor_error_to_http(exc)
             commit_and_render(conn, ctx)
-            return result
+        kitchen_resolve.request_if_auto(ctx.home)  # ADR-022 D4（登録と同じ）
+        return result
 
     @app.put("/api/v1/kitchen/recipes/{recipe_id}/meta")
     def recipe_set_meta(recipe_id: int, body: RecipeMetaRequest) -> dict[str, object]:
@@ -560,11 +572,16 @@ def register(app: FastAPI, ctx: WebContext) -> None:
                 aliases = chef_nutrition.list_aliases(conn)
             except ManorError as exc:
                 raise _nutrition_error_to_http(exc)
+            from ...staff.chef import food_resolve
+
             return {
                 "unresolved": unresolved["items"],
                 "unresolved_total": unresolved["total"],
                 "food_table_available": unresolved.get("available", True),
                 "aliases": aliases,
+                # ADR-022: 覚えた換算（主人の値と Claude が調べた値。出典つき）と、調べ係の様子
+                "units": food_resolve.list_units(conn),
+                "resolve": kitchen_resolve.worker_for(ctx.home).snapshot(),
             }
 
     @app.post("/api/v1/kitchen/food/aliases")
@@ -586,6 +603,53 @@ def register(app: FastAPI, ctx: WebContext) -> None:
                 raise _nutrition_error_to_http(exc)
             commit_and_render(conn, ctx)
             return {"alias": saved, "rebuilt": {k: rebuilt[k] for k in ("updated", "skipped")}}
+
+    @app.post("/api/v1/kitchen/food/resolve")
+    def food_resolve_start() -> dict[str, object]:
+        """未解決をまとめて Claude（Web 検索つき）に調べてもらう（ADR-022）。背景で走り、すぐ返る。"""
+        require_writable(ctx)
+        return kitchen_resolve.worker_for(ctx.home).request()
+
+    @app.get("/api/v1/kitchen/food/resolve")
+    def food_resolve_status() -> dict[str, object]:
+        """調べ係の様子（走っているか・前回の結果）。画面が数秒おきに見る。"""
+        return kitchen_resolve.worker_for(ctx.home).snapshot()
+
+    @app.post("/api/v1/kitchen/food/units")
+    def food_unit_set(body: FoodUnitRequest) -> dict[str, object]:
+        """「1 単位あたりの重さ」を手で入れ（manual）、推定し直す（ADR-022 D1）。"""
+        require_writable(ctx)
+        from ...staff.chef import food_resolve
+        from ...staff.chef import nutrition as chef_nutrition
+
+        with open_conn(ctx) as conn:
+            _require_chef_recipes(conn)
+            _require_chef_food(conn)
+            try:
+                saved = food_resolve.set_unit(conn, body.name, body.unit, body.grams, confidence="manual")
+                chef_nutrition.rebuild(conn)
+            except ManorError as exc:
+                conn.rollback()
+                if exc.key == food_resolve.ERR_BAD_UNIT:
+                    raise HTTPException(status_code=400, detail=exc.message_ja)
+                raise _nutrition_error_to_http(exc)
+            commit_and_render(conn, ctx)
+            return {"unit": saved}
+
+    @app.delete("/api/v1/kitchen/food/units")
+    def food_unit_remove(name: str, unit: str) -> dict[str, object]:
+        """覚えた換算を1件消し、推定し直す（Claude の値が違ったときの戻し口）。"""
+        require_writable(ctx)
+        from ...staff.chef import food_resolve
+        from ...staff.chef import nutrition as chef_nutrition
+
+        with open_conn(ctx) as conn:
+            _require_chef_recipes(conn)
+            _require_chef_food(conn)
+            removed = food_resolve.remove_unit(conn, name, unit)
+            chef_nutrition.rebuild(conn)
+            commit_and_render(conn, ctx)
+            return removed
 
     @app.delete("/api/v1/kitchen/food/aliases/{alias}")
     def food_alias_remove(alias: str) -> dict[str, object]:

@@ -278,6 +278,35 @@ def _veg_groups(lex: Mapping[str, Any]) -> frozenset[str]:
     return frozenset(str(g) for g in (raw.get("groups") or []) if str(g))
 
 
+def tables_for(conn: sqlite3.Connection, tables: UnitTables | None = None) -> UnitTables:
+    """`lexicon.toml` の物差しに、DB に覚えた換算（`chef_food_unit`。ADR-022 D1）を重ねる。
+
+    重ねる順は **llm → lexicon → manual**（後ろが勝つ）——主人が画面で入れた値が一番強く、
+    Claude が調べた値は lexicon に無いときだけ使う。表が無い home では lexicon のまま。
+    """
+    import dataclasses  # noqa: PLC0415
+
+    tables = tables or load_unit_tables()
+    exists = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'chef_food_unit'"
+    ).fetchone()
+    if exists is None:
+        return tables
+    rows = conn.execute("SELECT name, unit, grams, confidence FROM chef_food_unit").fetchall()
+    if not rows:
+        return tables
+    piece: dict[str, dict[str, float]] = {}
+    for row in rows:
+        if str(row["confidence"]) == "llm":
+            piece.setdefault(str(row["unit"]), {})[str(row["name"])] = float(row["grams"])
+    for unit, table in tables.piece.items():
+        piece.setdefault(unit, {}).update(table)
+    for row in rows:
+        if str(row["confidence"]) == "manual":
+            piece.setdefault(str(row["unit"]), {})[str(row["name"])] = float(row["grams"])
+    return dataclasses.replace(tables, piece=piece)
+
+
 def coverage_min(path: Path | None = None) -> float:
     """`partial` の境目（`[menu.rules].nutrition_coverage_min`）。
 
@@ -1716,7 +1745,7 @@ def estimate_for_recipe(
     blends: Mapping[str, Sequence[Mapping[str, Any]]] | None = None,
 ) -> Estimate:
     """1 レシピを推定する（**書かない**）。画面・API の「見せるだけ」用。"""
-    tables = tables or load_unit_tables()
+    tables = tables or tables_for(conn)
     if index is None:
         index = build_index(food_rows(conn), tables)
     if aliases is None:
@@ -1753,7 +1782,7 @@ def rebuild(
                 "oil_adjusted": 0, "oil_grams": 0.0,
                 "items": [], "available": False,
             }
-    tables = load_unit_tables()
+    tables = tables_for(conn)
     index = build_index(food_rows(conn), tables)
     aliases = alias_map(conn)
     blends = blend_map(conn)
@@ -1876,7 +1905,7 @@ def nutrition_payload(conn: sqlite3.Connection, recipe_id: int) -> dict[str, obj
     # （出所に関わらず材料からしか出せないので、保存値と食い違う理由が無い）。
     micro: dict[str, Any] = {}
     if available and int(conn.execute("SELECT COUNT(*) AS n FROM chef_food").fetchone()["n"]) > 0:
-        tables = load_unit_tables()
+        tables = tables_for(conn)
         est = estimate_nutrition(
             recipe, build_index(food_rows(conn), tables), alias_map(conn), tables, blend_map(conn)
         )
@@ -1919,7 +1948,7 @@ def unresolved_summary(conn: sqlite3.Connection) -> dict[str, object]:
     require_food_table(conn)
     if int(conn.execute("SELECT COUNT(*) AS n FROM chef_food").fetchone()["n"]) == 0:
         return {"items": [], "total": 0, "available": False}
-    tables = load_unit_tables()
+    tables = tables_for(conn)
     index = build_index(food_rows(conn), tables)
     aliases = alias_map(conn)
     blends = blend_map(conn)
@@ -1935,6 +1964,8 @@ def unresolved_summary(conn: sqlite3.Connection) -> dict[str, object]:
                     "normalized": key,
                     "names": [],
                     "reason": item.get("reason"),
+                    # 換算できない単位（ADR-022: 画面が「1袋 = ? g」と聞けるように）
+                    "units": [],
                     "count": 0,
                     "recipes": [],
                 },
@@ -1942,6 +1973,9 @@ def unresolved_summary(conn: sqlite3.Connection) -> dict[str, object]:
             entry["count"] = int(entry["count"]) + 1
             if item["name"] not in entry["names"]:
                 entry["names"].append(item["name"])
+            unit_word = unicodedata.normalize("NFKC", str(item.get("unit") or "")).strip()
+            if unit_word and unit_word not in entry["units"]:
+                entry["units"].append(unit_word)
             if len(entry["recipes"]) < 5:
                 entry["recipes"].append({"recipe_id": rid, "title": str(recipe.get("title") or "")})
     items = sorted(groups.values(), key=lambda e: (-int(e["count"]), str(e["normalized"])))

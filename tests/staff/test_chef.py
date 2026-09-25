@@ -179,6 +179,8 @@ def test_all_chef_tables_are_prefixed(home: Path) -> None:
         # ADR-019 D1・D2: 食品成分表の写しと、材料名 → 食品番号の名寄せ。
         # `chef_food_blend` は §4 追補の混ぜ物（合いびき肉＝うし＋ぶた）。
         "chef_food", "chef_food_alias", "chef_food_blend",
+        # ADR-022 D1・D3: 覚えた換算（1袋 = 200 g。manual／Claude が調べた llm）と、調べた記録。
+        "chef_food_unit", "chef_food_resolve_attempt",
     }
 
 

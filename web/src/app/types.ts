@@ -535,8 +535,36 @@ export interface FoodUnresolvedItem {
   normalized: string;
   names: string[];
   reason: string;
+  // 換算できない単位（ADR-022。「1袋 = ? g」と聞くため）。古いサーバでは無い。
+  units?: string[];
   count: number;
   recipes: { recipe_id: number; title: string }[];
+}
+
+// 覚えた換算（ADR-022 D1）。`llm` は Claude が Web で調べた値（出典つき）。
+export interface FoodUnit {
+  name: string;
+  unit: string;
+  grams: number;
+  confidence: "manual" | "llm";
+  source_url: string;
+  note: string;
+  updated_at: string;
+}
+
+// 調べ係の前回の結果（ADR-022 D4）。
+export interface FoodResolveResult {
+  asked: number;
+  resolved: number;
+  unresolved: number;
+  failed: boolean;
+  reason: string;
+  finished_at?: string;
+}
+
+export interface FoodResolveStatus {
+  running: boolean;
+  last: FoodResolveResult | null;
 }
 
 // `GET /api/v1/kitchen/food/aliases`（設定 → 食品の名寄せ）。
@@ -545,6 +573,8 @@ export interface FoodAliasesPayload {
   unresolved_total: number;
   food_table_available: boolean;
   aliases: FoodAlias[];
+  units?: FoodUnit[];
+  resolve?: FoodResolveStatus;
 }
 
 /* ---------- kitchen: 献立のおすすめ（ADR-018 D3） ---------- */

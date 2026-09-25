@@ -1364,6 +1364,21 @@ export const ja = {
   "settings.food.unlink": "外す",
   "settings.food.unlinked": "名寄せを外しました",
   "settings.food.foodKcal": (p) => `${p.kcal} kcal/100g`,
+  "settings.food.resolveStart": "Claude に調べてもらう",
+  "settings.food.resolveRunning": "調べています…",
+  "settings.food.resolveHint": "名寄せできない材料や「1袋が何 g か」を、Claude が Web で調べてまとめて埋めます（1回の呼び出しで全部）。レシピを登録・編集した後は自動でも走ります。調べた値は下の「覚えた換算」に出典つきで残り、外せます。",
+  "settings.food.resolveDone": (p) => `前回: ${p.asked}件のうち ${p.resolved}件を調べて埋めました`,
+  "settings.food.resolveNothing": "前回: 調べるものはありませんでした",
+  "settings.food.resolveFailed": (p) => `前回は調べられませんでした: ${p.reason}`,
+  "settings.food.unitAsk": (p) => `${p.name} 1${p.unit} =`,
+  "settings.food.unitSave": "保存",
+  "settings.food.unitSaved": (p) => `${p.name} 1${p.unit} = ${p.grams} g を覚えました`,
+  "settings.food.unitRemoved": "換算を外しました",
+  "settings.food.unitsHeading": "覚えた換算（1単位あたりの重さ）",
+  "settings.food.unitLine": (p) => `${p.name} 1${p.unit} = ${p.grams} g`,
+  "settings.food.unitByClaude": "Claude が調べた値",
+  "settings.food.unitByHand": "手で入れた値",
+  "settings.food.unitSource": "出典",
 } satisfies Record<string, Entry>;
 
 export type TranslationKey = keyof typeof ja;

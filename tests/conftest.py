@@ -38,6 +38,8 @@ def _default_cli_language(monkeypatch: pytest.MonkeyPatch):
     # 言語そのものを検算する試験（`tests/test_i18n.py`）は自分で `setenv`/`delenv` するので、
     # そちらが勝つ（後から呼んだ monkeypatch が優先される）。
     monkeypatch.setenv("MANOR_LANG", "ja")
+    # ADR-022: レシピの登録の後に背景で本物の claude を呼ばない（呼ぶ試験は runner を差し替える）。
+    monkeypatch.setenv("MANOR_CLAUDE_RESOLVE", "off")
     i18n_mod.set_language("ja")
     yield
     i18n_mod.reset_cache()

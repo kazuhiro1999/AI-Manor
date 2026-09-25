@@ -676,6 +676,17 @@ def cmd_food_search(conn, home, args) -> object:
     )
 
 
+def cmd_food_resolve(conn, home, args) -> object:
+    """名寄せ・換算の未解決をまとめて Claude（Web 検索つき）に調べてもらう（ADR-022）。
+
+    Web の自動（レシピの登録・編集の後）と同じ本体を、前で1回だけ回す。結果は JSON の形で返す
+    （夜勤や手元の確かめで読む。未解決が無ければ Claude は呼ばない）。
+    """
+    from . import food_resolve
+
+    return food_resolve.resolve(conn)
+
+
 def cmd_nutrition_rebuild(conn, home, args) -> object:
     """材料から栄養値を推定して書く（ADR-019 D4）。`--recipe` で1本だけ。
 
@@ -1055,6 +1066,11 @@ def register(subparsers) -> None:
     p.add_argument("--json", action="store_true")
     p.add_argument("--no-render", action="store_true")
     p.set_defaults(func=cmd_food_seed, is_write=True)
+
+    p = food_sub.add_parser("resolve")
+    p.add_argument("--json", action="store_true")
+    p.add_argument("--no-render", action="store_true")
+    p.set_defaults(func=cmd_food_resolve, is_write=True)
 
     p = food_sub.add_parser("search")
     p.add_argument("q")

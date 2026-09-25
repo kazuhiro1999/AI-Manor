@@ -74,6 +74,10 @@ ALLOWLIST: set[str] = {
     # 「手順N」）。理由は符牒で返し、画面が `kitchen.companion.reason.*` で訳す。
     # nutrition.py と同じくファイル単位で許す。
     "staff/chef/companion.py",
+    # [エージェント向け]+[データ] staff/chef/food_resolve.py（ADR-022）: `claude -p` へ渡す調べ方の指示文
+    # （receipt_reader.py の読み取りの指示と同じ扱い）と、DB に残す記録の語。画面の文言は
+    # Web が `settings.food.*` で訳す。
+    "staff/chef/food_resolve.py",
     # [データ] JSON 出力のキーとして使われる日本語ラベル(`tests/staff/test_housekeeper.py`
     # が実際にこの文字列をキーとして検算している——データ契約であって UI 文言ではない。
     # chef/cli.py の VALID_AISLES と同じ判断。5h-2 のサブエージェントが検分して報告)。

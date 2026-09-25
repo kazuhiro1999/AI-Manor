@@ -6,7 +6,7 @@ import { usePolling } from "../../app/polling";
 import { APP_NAME } from "../../app/brand";
 import { useEditingGuard } from "../../app/editing";
 import { api, apiUpload, ApiError } from "../../app/api";
-import type { DeviceInfo, FaceModelEntry, FoodAliasesPayload, FoodRow, Meta, RunKindStat, RunRow, RunsData, RunStatsData, SettingsData, SetupInfo, TaskKind, UserInfo } from "../../app/types";
+import type { DeviceInfo, FaceModelEntry, FoodAliasesPayload, FoodResolveStatus, FoodRow, FoodUnresolvedItem, Meta, RunKindStat, RunRow, RunsData, RunStatsData, SettingsData, SetupInfo, TaskKind, UserInfo } from "../../app/types";
 import { NUTRITION_UNRESOLVED_REASON_KEY } from "../kitchen/recipeShared";
 import { useTheme, THEMES, type Theme } from "../../app/theme";
 import { fmtCost, fmtDateTime, fmtSeconds, runKindLabel } from "../../app/format";
@@ -1030,6 +1030,12 @@ function TaskKindsSection() {
  *
  * ポーリングを使わない（他の節と違う）——名寄せは主人が1件ずつ手で決める作業で、
  * 5 秒ごとに一覧が入れ替わると選んでいる途中の行が消える。読み直しは操作の後だけ。
+ * 例外は ADR-022 の「Claude に調べてもらう」が走っている間だけ——3 秒おきに様子を見て、
+ * 終わったら一覧を読み直す。
+ *
+ * ADR-022: 「1袋が何 g か分からない」（no_piece／unknown_unit）は食品を選んでも直らないので、
+ * その行には「1袋 = [ ] g」の入力を出す（manual。Claude の値より強い）。Claude が調べた値と
+ * 手で入れた値は「覚えた換算」に出典つきで並び、外せる。
  */
 function FoodAliasesSection() {
   const t = useT();
@@ -1037,14 +1043,59 @@ function FoodAliasesSection() {
   const [data, setData] = useState<FoodAliasesPayload | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [openAlias, setOpenAlias] = useState<string | null>(null);
+  const [resolve, setResolve] = useState<FoodResolveStatus | null>(null);
 
   const reload = () => {
     api<FoodAliasesPayload>("/kitchen/food/aliases")
       .then((payload) => {
         setData(payload);
+        setResolve(payload.resolve ?? null);
         setError(null);
       })
       .catch((err) => setError(err instanceof ApiError ? err.message : t("errors.genericLoadFailed")));
+  };
+
+  // 調べ係が走っている間だけ様子を見る（終わったら一覧を読み直す）。
+  useEffect(() => {
+    if (!resolve?.running) return;
+    const timer = window.setInterval(() => {
+      api<FoodResolveStatus>("/kitchen/food/resolve")
+        .then((status) => {
+          setResolve(status);
+          if (!status.running) reload();
+        })
+        .catch(() => undefined);
+    }, 3000);
+    return () => window.clearInterval(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [resolve?.running]);
+
+  const startResolve = async () => {
+    try {
+      setResolve(await api<FoodResolveStatus>("/kitchen/food/resolve", { method: "POST" }));
+    } catch (err) {
+      show(t("settings.food.linkFailed", { reason: err instanceof ApiError ? err.message : t("common.unknown") }), "error");
+    }
+  };
+
+  const saveUnit = async (name: string, unit: string, grams: number) => {
+    try {
+      await api("/kitchen/food/units", { method: "POST", body: { name, unit, grams } });
+      show(t("settings.food.unitSaved", { name, unit, grams }), "ok", 3000);
+      reload();
+    } catch (err) {
+      show(t("settings.food.linkFailed", { reason: err instanceof ApiError ? err.message : t("common.unknown") }), "error");
+    }
+  };
+
+  const removeUnit = async (name: string, unit: string) => {
+    try {
+      await api(`/kitchen/food/units?name=${encodeURIComponent(name)}&unit=${encodeURIComponent(unit)}`, { method: "DELETE" });
+      show(t("settings.food.unitRemoved"), "ok", 3000);
+      reload();
+    } catch (err) {
+      show(t("settings.food.linkFailed", { reason: err instanceof ApiError ? err.message : t("common.unknown") }), "error");
+    }
   };
 
   useEffect(() => {
@@ -1082,6 +1133,23 @@ function FoodAliasesSection() {
       {error && <p className="panel-note">{t("errors.loadFailed", { reason: error })}</p>}
       {data && !data.food_table_available && <p className="panel-note">{t("settings.food.tableMissing")}</p>}
 
+      {/* ADR-022: 未解決をまとめて Claude（Web 検索つき）に調べてもらう。登録の後は自動でも走る。 */}
+      <div className="form-actions" id="settings-food-resolve">
+        <button className="btn btn-small btn-primary" type="button" onClick={startResolve} disabled={!!resolve?.running}>
+          {resolve?.running ? t("settings.food.resolveRunning") : t("settings.food.resolveStart")}
+        </button>
+        {resolve?.last && !resolve.running && (
+          <span className="panel-note">
+            {resolve.last.failed
+              ? t("settings.food.resolveFailed", { reason: resolve.last.reason })
+              : resolve.last.asked === 0
+                ? t("settings.food.resolveNothing")
+                : t("settings.food.resolveDone", { resolved: resolve.last.resolved, asked: resolve.last.asked })}
+          </span>
+        )}
+      </div>
+      <p className="panel-note">{t("settings.food.resolveHint")}</p>
+
       <h3 className="panel-note">{t("settings.food.unresolvedHeading")}</h3>
       <div className="rows">
         {data && data.unresolved.length === 0 && <p className="panel-note">{t("settings.food.unresolvedEmpty")}</p>}
@@ -1105,6 +1173,37 @@ function FoodAliasesSection() {
             {openAlias === item.normalized && (
               <FoodPicker alias={item.names[0] ?? item.normalized} onPick={(food) => link(item.names[0] ?? item.normalized, food)} />
             )}
+            {isUnitProblem(item) &&
+              (item.units ?? []).map((unit) => (
+                <UnitInput key={unit} name={item.normalized} unit={unit} onSave={(grams) => saveUnit(item.normalized, unit, grams)} />
+              ))}
+          </div>
+        ))}
+      </div>
+
+      <h3 className="panel-note">{t("settings.food.unitsHeading")}</h3>
+      <div className="rows" id="settings-food-units">
+        {data && (data.units ?? []).length === 0 && <p className="panel-note">{t("settings.food.aliasesEmpty")}</p>}
+        {(data?.units ?? []).map((u) => (
+          <div className="row" key={`${u.name}|${u.unit}`}>
+            <div className="row-main">
+              <span className="row-title">{t("settings.food.unitLine", { name: u.name, unit: u.unit, grams: u.grams })}</span>
+              <span className="panel-note">
+                {t(u.confidence === "llm" ? "settings.food.unitByClaude" : "settings.food.unitByHand")}
+                {u.note && ` — ${u.note}`}
+                {u.source_url && (
+                  <>
+                    {" "}
+                    <a href={u.source_url} target="_blank" rel="noreferrer">
+                      {t("settings.food.unitSource")}
+                    </a>
+                  </>
+                )}
+              </span>
+            </div>
+            <button className="btn btn-small btn-danger" type="button" onClick={() => removeUnit(u.name, u.unit)}>
+              {t("settings.food.unlink")}
+            </button>
           </div>
         ))}
       </div>
@@ -1127,6 +1226,39 @@ function FoodAliasesSection() {
         ))}
       </div>
     </section>
+  );
+}
+
+/** 未解決の理由が「単位を g にできない」か（ADR-022。食品を選んでも直らない種類）。 */
+function isUnitProblem(item: FoodUnresolvedItem): boolean {
+  return item.reason === "no_piece" || item.reason === "unknown_unit";
+}
+
+/** 「1袋 = [ ] g」を手で入れる（ADR-022 D1。manual）。 */
+function UnitInput({ name, unit, onSave }: { name: string; unit: string; onSave: (grams: number) => void }) {
+  const t = useT();
+  const [grams, setGrams] = useState("");
+  const value = Number(grams);
+  return (
+    <div className="form-inline">
+      <label className="panel-note">
+        {t("settings.food.unitAsk", { name, unit })}{" "}
+        <input
+          type="number"
+          min="0"
+          step="any"
+          inputMode="decimal"
+          value={grams}
+          onChange={(e) => setGrams(e.target.value)}
+          aria-label={t("settings.food.unitAsk", { name, unit })}
+          style={{ width: 90 }}
+        />{" "}
+        g
+      </label>
+      <button className="btn btn-small" type="button" disabled={!(value > 0)} onClick={() => onSave(value)}>
+        {t("settings.food.unitSave")}
+      </button>
+    </div>
   );
 }
 

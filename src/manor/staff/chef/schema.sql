@@ -139,3 +139,26 @@ CREATE TABLE IF NOT EXISTS chef_food_blend (
   updated_at TEXT NOT NULL,
   PRIMARY KEY (alias, food_code)
 );
+
+-- 覚えた換算（ADR-022 D1）。「ほうれん草 1袋」のように `lexicon.toml` の `[units.piece]` に
+-- 無い「1 単位あたりの重さ」を、主人が画面で入れた値（manual）か、Claude が Web で調べた値
+-- （llm。出典 URL つき）として持つ。引く順は manual → lexicon → llm（`nutrition.tables_for`）。
+CREATE TABLE IF NOT EXISTS chef_food_unit (
+  name       TEXT NOT NULL,                 -- 正規化済みの材料名（`nutrition.normalize_name`）
+  unit       TEXT NOT NULL,                 -- 単位の語（袋・パック・房…）
+  grams      REAL NOT NULL,                 -- 1 単位あたりの g
+  confidence TEXT NOT NULL DEFAULT 'manual' CHECK (confidence IN ('manual','llm')),
+  source_url TEXT NOT NULL DEFAULT '',
+  note       TEXT NOT NULL DEFAULT '',
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY (name, unit)
+);
+
+-- Claude に調べてもらった記録（ADR-022 D3）。同じ未解決を何度も聞かないため
+-- （`[nutrition.claude_resolve].retry_days` の間は聞き直さない）。
+CREATE TABLE IF NOT EXISTS chef_food_resolve_attempt (
+  key        TEXT PRIMARY KEY,              -- 「reason|name|unit」
+  outcome    TEXT NOT NULL,                 -- resolved / unresolved / failed
+  detail     TEXT NOT NULL DEFAULT '',
+  tried_at   TEXT NOT NULL
+);

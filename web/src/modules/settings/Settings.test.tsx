@@ -222,6 +222,20 @@ function mockFetchFor(handlers: {
     if (url.includes("/kitchen/food/aliases/") && method === "DELETE") {
       return { ok: true, status: 200, json: async () => ({ alias: "x", removed: true }) };
     }
+    // ADR-022: 換算を手で入れる・外す、Claude に調べてもらう。
+    if (url.includes("/kitchen/food/units") && method === "POST") {
+      const body = init?.body ? JSON.parse(String(init.body)) : {};
+      return { ok: true, status: 200, json: async () => ({ unit: { ...body, confidence: "manual" } }) };
+    }
+    if (url.includes("/kitchen/food/units") && method === "DELETE") {
+      return { ok: true, status: 200, json: async () => ({ removed: true }) };
+    }
+    if (url.includes("/kitchen/food/resolve") && method === "POST") {
+      return { ok: true, status: 200, json: async () => ({ running: true, last: null }) };
+    }
+    if (url.includes("/kitchen/food/resolve")) {
+      return { ok: true, status: 200, json: async () => ({ running: false, last: { asked: 1, resolved: 1, unresolved: 0, failed: false, reason: "" } }) };
+    }
 
     const json = async () => {
       if (url.includes("/kitchen/food/search")) return { items: handlers.foodSearch ?? [] };
@@ -1130,6 +1144,48 @@ describe("settings — 食品の名寄せ（ADR-019 D5）", () => {
 
     await waitFor(() => expect(posted.length).toBe(1));
     expect(posted[0].body).toEqual({ alias: "合いびき肉", food_code: "11221" });
+  });
+
+  // ADR-022: 「1袋が何 g か」は食品を選んでも直らない——その行に g の入力を出す。
+  it("単位の未解決には『1袋 = ? g』を出し、手で入れると manual で送る。覚えた換算は出典つきで並ぶ", async () => {
+    const posted: { url: string; body: unknown }[] = [];
+    mockFetchFor({
+      ...EMPTY_RUNS,
+      foodAliases: {
+        unresolved: [
+          { normalized: "ほうれん草", names: ["ほうれん草"], reason: "no_piece", units: ["袋"], count: 1, recipes: [{ recipe_id: 9, title: "おひたし" }] },
+        ],
+        unresolved_total: 1,
+        food_table_available: true,
+        aliases: [],
+        units: [
+          { name: "小松菜", unit: "束", grams: 250, confidence: "llm", source_url: "https://example.com/komatsuna", note: "1束250g前後", updated_at: "2026-09-25T15:00:00" },
+        ],
+        resolve: { running: false, last: null },
+      },
+      onFetch: (url, init) => {
+        const method = (init?.method || "GET").toUpperCase();
+        if (method === "POST" && (url.includes("/kitchen/food/units") || url.includes("/kitchen/food/resolve"))) {
+          posted.push({ url, body: init?.body ? JSON.parse(String(init.body)) : null });
+        }
+      },
+    });
+
+    render(<MemoryRouter><ToastProvider><ToastBanner />{SettingsScreen}</ToastProvider></MemoryRouter>);
+
+    const panel = (await screen.findByText("食品の名寄せ")).closest(".panel") as HTMLElement;
+    await waitFor(() => expect(within(panel).getByText("小松菜 1束 = 250 g")).toBeTruthy());
+    expect(within(panel).getByText(/Claude が調べた値/)).toBeTruthy();
+    expect((within(panel).getByRole("link", { name: "出典" }) as HTMLAnchorElement).href).toBe("https://example.com/komatsuna");
+
+    const user = userEvent.setup();
+    await user.type(within(panel).getByLabelText("ほうれん草 1袋 ="), "200");
+    await user.click(within(panel).getByRole("button", { name: "保存" }));
+    await waitFor(() => expect(posted.length).toBe(1));
+    expect(posted[0].body).toEqual({ name: "ほうれん草", unit: "袋", grams: 200 });
+
+    await user.click(within(panel).getByRole("button", { name: "Claude に調べてもらう" }));
+    await waitFor(() => expect(posted.some((p) => p.url.includes("/kitchen/food/resolve"))).toBe(true));
   });
 
   it("成分表をまだ取り込んでいなければ、取り込み方の案内を出す", async () => {

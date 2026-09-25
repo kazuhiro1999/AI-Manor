@@ -656,11 +656,15 @@ def _catalog_fingerprint(conn: sqlite3.Connection, path: Path) -> tuple[Any, ...
         blend = tuple(conn.execute("SELECT COUNT(*) AS n, MAX(updated_at) AS t FROM chef_food_blend").fetchone())
     except sqlite3.OperationalError:
         blend = ()
+    try:  # 覚えた換算（ADR-022）が変われば推定も変わる
+        units = tuple(conn.execute("SELECT COUNT(*) AS n, MAX(updated_at) AS t FROM chef_food_unit").fetchone())
+    except sqlite3.OperationalError:
+        units = ()
     stat = path.stat() if path.is_file() else None
     return (
         str(path),
         stat.st_mtime_ns if stat else None,
-        tuple(food), tuple(alias), blend,
+        tuple(food), tuple(alias), blend, units,
         nutrition._has_micro_columns(conn),
     )
 
@@ -673,7 +677,7 @@ def estimate_catalog(conn: sqlite3.Connection, path: Path | None = None) -> list
     fp = _catalog_fingerprint(conn, p)
     if _catalog_cache["fingerprint"] == fp:
         return list(_catalog_cache["items"])
-    tables = nutrition.load_unit_tables()
+    tables = nutrition.tables_for(conn)
     index = nutrition.build_index(nutrition.food_rows(conn), tables)
     aliases = nutrition.alias_map(conn)
     blends = nutrition.blend_map(conn)
