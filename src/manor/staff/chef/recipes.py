@@ -357,6 +357,60 @@ def _refuse_duplicate(conn: sqlite3.Connection, url: str, *, exclude_id: int | N
         )
 
 
+# --- 検索の当て方（レシピ帳と YouTube の動画で同じ。ADR-023 D5） --------------------------
+
+
+def _fold(text: str) -> str:
+    """突き合わせ用の均し: NFKC・小文字・カタカナ→ひらがな（「キュウリ」＝「きゅうり」）。"""
+    import unicodedata  # noqa: PLC0415
+
+    out = []
+    for ch in unicodedata.normalize("NFKC", str(text or "")).lower():
+        code = ord(ch)
+        out.append(chr(code - 0x60) if 0x30A1 <= code <= 0x30F6 else ch)
+    return "".join(out)
+
+
+def search_synonyms() -> list[list[str]]:
+    """`lexicon.toml` の `[search].synonyms`（言い換えの仲間。均した形で返す）。"""
+    raw = dict(ops.load_lexicon().get("search") or {}).get("synonyms") or []  # type: ignore[union-attr]
+    return [[_fold(w) for w in group if str(w).strip()] for group in raw if isinstance(group, list)]
+
+
+def _variants(term: str, groups: list[list[str]]) -> list[str]:
+    folded = _fold(term)
+    out = [folded]
+    for group in groups:
+        if folded in group:
+            out.extend(w for w in group if w not in out)
+    return out
+
+
+def match_query(
+    q: str, fields: list[tuple[str, str]], groups: list[list[str]] | None = None
+) -> list[tuple[str, str]] | None:
+    """空白で区切った語が**全部**どこかに当たれば、当たった `(欄, 語)` の並び。1 つでも外れれば None。
+
+    `fields` は `[("title", 題名), ("ingredient", 材料名), ("tag", "#豚肉レシピ"), …]`。欄は並びの順に
+    見るので、題名を先に置けば「題名に当たった」が理由になる。言い換え（`[search].synonyms`）と
+    カタカナ・ひらがなの違いは吸収する。語が空なら `[]`（＝全部当たる）。
+    """
+    terms = [t for t in str(q or "").replace("　", " ").split(" ") if t.strip()]
+    if not terms:
+        return []
+    groups = search_synonyms() if groups is None else groups
+    folded = [(label, text, _fold(text)) for label, text in fields if text]
+    reasons: list[tuple[str, str]] = []
+    for term in terms:
+        variants = _variants(term, groups)
+        hit = next(((label, text) for label, text, f in folded if any(v and v in f for v in variants)), None)
+        if hit is None:
+            return None
+        if hit not in reasons:
+            reasons.append(hit)
+    return reasons
+
+
 def _recipe_row(conn: sqlite3.Connection, recipe_id: int) -> sqlite3.Row:
     row = conn.execute("SELECT * FROM chef_recipe WHERE id = ?", (recipe_id,)).fetchone()
     if row is None:
@@ -508,6 +562,7 @@ def list_recipes(
     ).fetchall()
 
     out: list[dict[str, object]] = []
+    groups = search_synonyms() if q else []
     for row in rows:
         if not include_archived and row["archived_at"] is not None:
             continue
@@ -518,12 +573,13 @@ def list_recipes(
         row_cuisine = row["meta_cuisine"] or ""
 
         if q:
+            # 題名と材料名。空白で区切った語は全部に当たるもの、言い換え（豚肉＝豚バラ…）も拾う
+            # （ADR-023 D5。YouTube の動画と同じ当て方）。
             body = json.loads(row["body"])
-            ingredient_names = " ".join(
-                str(ing.get("name", "")) for ing in body.get("ingredients") or []
-            )
-            haystack = f"{row['title']} {ingredient_names}".lower()
-            if q.lower() not in haystack:
+            fields = [("title", str(row["title"]))] + [
+                ("ingredient", str(ing.get("name", ""))) for ing in body.get("ingredients") or []
+            ]
+            if match_query(q, fields, groups) is None:
                 continue
         if tag and tag not in tags:
             continue

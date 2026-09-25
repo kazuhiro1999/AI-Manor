@@ -398,13 +398,22 @@ def probe(fetch: Fetcher, urls: Sequence[str], *, comments: int = 5, limit: int 
         except YouTubeError as exc:
             errors.append({"url": url, "reason": exc.reason})
 
-    videos: list[dict[str, Any]] = []
     try:
-        items = client.videos(video_ids[:limit])
+        videos = analyze_videos(client, video_ids[:limit], comments=comments)
     except YouTubeError as exc:
         errors.append({"url": "videos.list", "reason": exc.reason})
-        items = []
-    for item in items:
+        videos = []
+    return {"units": client.units, "playlists": playlists, "videos": videos, "errors": errors}
+
+
+def analyze_videos(client: Client, ids: Sequence[str], *, comments: int = 5) -> list[dict[str, Any]]:
+    """動画 id の並び → 1 本ごとの「取れたもの・読めたレシピ」（`probe` と同期が共通で使う）。
+
+    `videos.list` に出てこない id（削除・非公開になった動画）は返さない。コメントが読めないのは
+    その動画だけの話なので、理由を添えて続ける。
+    """
+    out: list[dict[str, Any]] = []
+    for item in client.videos(list(ids)):
         snippet = item.get("snippet") or {}
         vid = str(item.get("id") or "")
         seconds = parse_duration(str((item.get("contentDetails") or {}).get("duration") or ""))
@@ -414,17 +423,20 @@ def probe(fetch: Fetcher, urls: Sequence[str], *, comments: int = 5, limit: int 
         except YouTubeError as exc:
             top, closed = [], exc.reason
         recipe = best_recipe(description, top, channel_id=str(snippet.get("channelId") or ""))
-        videos.append(
+        title = str(snippet.get("title") or "")
+        tags = list(snippet.get("tags") or [])
+        out.append(
             {
                 "id": vid,
                 "url": f"https://www.youtube.com/watch?v={vid}",
-                "title": str(snippet.get("title") or ""),
+                "title": title,
                 "channel": str(snippet.get("channelTitle") or ""),
+                "channel_id": str(snippet.get("channelId") or ""),
                 "seconds": seconds,
                 "short": seconds is not None and seconds <= 180,
                 "thumbnail": str(((snippet.get("thumbnails") or {}).get("high") or {}).get("url") or ""),
                 "description_chars": len(description),
-                "tags": list(snippet.get("tags") or []),
+                "tags": tags,
                 "comments": len(top),
                 "comments_closed": closed,
                 "recipe_source": recipe["source"],
@@ -432,12 +444,289 @@ def probe(fetch: Fetcher, urls: Sequence[str], *, comments: int = 5, limit: int 
                 "ingredients": recipe["ingredients"],
                 "steps": recipe["steps"],
                 "servings": recipe["servings"],
-                "keywords": keywords(str(snippet.get("title") or ""), description, list(snippet.get("tags") or []), recipe["ingredients"]),
+                "hashtags": keywords(title, description, tags, []),
+                "keywords": keywords(title, description, tags, recipe["ingredients"]),
                 "description": description,
                 "top_comments": top,
             }
         )
-    return {"units": client.units, "playlists": playlists, "videos": videos, "errors": errors}
+    return out
+
+
+# --- ① 再生リストの同期と、レシピ帳の検索（ADR-023 D1・D5） -----------------------------------
+#
+# 動画は**動画 ID で1行**（`chef_video`）。どの人のどの再生リストにあるかは `chef_video_source`。
+# 同期のたびに全部取り直し（30 日の起点 `fetched_at` を更新）、再生リストから外れたもの・
+# 30 日取り直せなかったものは消す（YouTube API の規約 III.E.4）。
+
+
+def load_settings(path: Path | None = None) -> dict[str, Any]:
+    from . import ops  # noqa: PLC0415
+
+    raw = dict(ops.load_lexicon(path).get("youtube") or {})  # type: ignore[arg-type]
+    return {
+        "cache_days": int(raw.get("cache_days", 30)),
+        "sync_hours": float(raw.get("sync_hours", 12)),
+        "comments": int(raw.get("comments", 5)),
+        "max_videos": int(raw.get("max_videos", 500)),
+    }
+
+
+def playlist_ids(text: str) -> list[str]:
+    """設定の「再生リスト」（URL をカンマ・空白・改行で区切ったもの）→ 再生リストの id。"""
+    out: list[str] = []
+    for part in re.split(r"[,\s、]+", str(text or "")):
+        parsed = parse_url(part) if part else None
+        if parsed is not None and parsed[0] == "playlist" and parsed[1] not in out:
+            out.append(parsed[1])
+    return out
+
+
+def configured_playlists(conn: Any, home: Path) -> list[dict[str, Any]]:
+    """人の利用者ごとの `{user_id, name, key, playlists}`。キーはその人のもの、無ければ principal のもの
+    （公開・限定公開の再生リストは誰のキーでも読める）。再生リストの無い人は並べない。"""
+    from ... import extensions as ext_mod  # noqa: PLC0415
+    from ... import user as user_mod  # noqa: PLC0415
+
+    principal_key = api_key_for(home)
+    out: list[dict[str, Any]] = []
+    for u in user_mod.list_users(conn):
+        if u["role"] == "butler":
+            continue
+        uid = str(u["id"])
+        ids = playlist_ids(ext_mod.per_user_value(home, EXT_ID, "playlists", uid) or "")
+        if ids:
+            out.append({"user_id": uid, "name": str(u.get("callname") or u["name"]), "key": api_key_for(home, uid) or principal_key, "playlists": ids})
+    return out
+
+
+def _now(now: str | None) -> str:
+    from manor import util  # noqa: PLC0415
+
+    return now or util.now()
+
+
+def _record_sync(conn: Any, user_id: str, playlist_id: str, stamp: str, *, ok: bool, reason: str = "", videos: int = 0) -> None:
+    conn.execute(
+        "INSERT INTO chef_video_sync (user_id, playlist_id, synced_at, ok, reason, videos) VALUES (?, ?, ?, ?, ?, ?)"
+        " ON CONFLICT (user_id, playlist_id) DO UPDATE SET synced_at = excluded.synced_at, ok = excluded.ok,"
+        "  reason = excluded.reason, videos = excluded.videos",
+        (user_id, playlist_id, stamp, 1 if ok else 0, reason, videos),
+    )
+
+
+def sync(
+    conn: Any,
+    home: Path,
+    *,
+    fetcher_factory: Callable[[str], Fetcher] | None = None,
+    now: str | None = None,
+    settings: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """全員の再生リストを読み直して控えを更新する（ADR-023 D1）。**書くのは chef_video* だけ。**
+
+    戻り値 `{"units","playlists":[{user_id,playlist_id,title,videos,ok,reason}],"videos","removed","expired"}`。
+    再生リストが読めなかったとき（非公開・キー切れ）は、その再生リストの控えを**消さない**
+    （一時的な失敗で家族の動画が消えないように。30 日の期限だけは効く）。
+    """
+    from datetime import datetime, timedelta  # noqa: PLC0415
+
+    from . import recipes  # noqa: PLC0415
+
+    settings = dict(settings or load_settings())
+    factory = fetcher_factory or http_fetcher
+    stamp = _now(now)
+    units = 0
+    report: list[dict[str, Any]] = []
+    seen: dict[tuple[str, str], tuple[str, list[str]]] = {}
+    analyzer_key: str | None = None
+
+    configured = configured_playlists(conn, home)
+    for entry in configured:
+        uid = entry["user_id"]
+        if not entry["key"]:
+            for pid in entry["playlists"]:
+                _record_sync(conn, uid, pid, stamp, ok=False, reason="no_key")
+                report.append({"user_id": uid, "playlist_id": pid, "title": "", "videos": 0, "ok": False, "reason": "no_key"})
+            continue
+        analyzer_key = analyzer_key or entry["key"]
+        client = Client(factory(entry["key"]))
+        for pid in entry["playlists"]:
+            try:
+                title = client.playlist_title(pid)
+                if title is None:
+                    raise YouTubeError("playlist_not_visible")
+                ids = client.playlist_video_ids(pid, limit=int(settings["max_videos"]))
+            except YouTubeError as exc:
+                _record_sync(conn, uid, pid, stamp, ok=False, reason=exc.reason)
+                report.append({"user_id": uid, "playlist_id": pid, "title": "", "videos": 0, "ok": False, "reason": exc.reason})
+                continue
+            seen[(uid, pid)] = (title, ids)
+            _record_sync(conn, uid, pid, stamp, ok=True, videos=len(ids))
+            report.append({"user_id": uid, "playlist_id": pid, "title": title, "videos": len(ids), "ok": True, "reason": ""})
+        units += client.units
+
+    # 動画の中身は1回だけ読む（家族の再生リストに同じ動画があっても1回）。
+    wanted: list[str] = []
+    for _title, ids in seen.values():
+        wanted.extend(v for v in ids if v not in wanted)
+    wanted = wanted[: int(settings["max_videos"])]
+    analyzed: list[dict[str, Any]] = []
+    if wanted and analyzer_key:
+        client = Client(factory(analyzer_key))
+        try:
+            analyzed = analyze_videos(client, wanted, comments=int(settings["comments"]))
+        except YouTubeError as exc:
+            report.append({"user_id": "", "playlist_id": "videos.list", "title": "", "videos": 0, "ok": False, "reason": exc.reason})
+        units += client.units
+
+    for v in analyzed:
+        names = [str(i.get("name") or "") for i in v["ingredients"] if str(i.get("name") or "")]
+        axes = recipes.classify({"title": v["title"], "ingredients": v["ingredients"]}, site_tags=v["hashtags"])
+        conn.execute(
+            "INSERT INTO chef_video (video_id, title, channel, channel_id, thumbnail_url, seconds, tags, keywords,"
+            " ingredients, has_recipe, recipe_source, category, main_ingredient, cuisine, fetched_at, first_seen_at)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+            " ON CONFLICT (video_id) DO UPDATE SET title = excluded.title, channel = excluded.channel,"
+            "  channel_id = excluded.channel_id, thumbnail_url = excluded.thumbnail_url, seconds = excluded.seconds,"
+            "  tags = excluded.tags, keywords = excluded.keywords, ingredients = excluded.ingredients,"
+            "  has_recipe = excluded.has_recipe, recipe_source = excluded.recipe_source,"
+            "  category = excluded.category, main_ingredient = excluded.main_ingredient, cuisine = excluded.cuisine,"
+            "  fetched_at = excluded.fetched_at",
+            (
+                v["id"], v["title"], v["channel"], v["channel_id"], v["thumbnail"], v["seconds"],
+                json.dumps(v["tags"], ensure_ascii=False), json.dumps(v["keywords"], ensure_ascii=False),
+                json.dumps(names, ensure_ascii=False), 1 if names else 0, v["recipe_source"],
+                axes["category"], axes["main_ingredient"], axes["cuisine"], stamp, stamp,
+            ),
+        )
+    got = {v["id"] for v in analyzed}
+
+    for (uid, pid), (title, ids) in seen.items():
+        for vid in ids:
+            if vid not in got:
+                continue  # 削除・非公開になった動画（中身が読めない）は並べない
+            conn.execute(
+                "INSERT INTO chef_video_source (video_id, user_id, playlist_id, playlist_title, last_seen_at)"
+                " VALUES (?, ?, ?, ?, ?) ON CONFLICT (video_id, user_id, playlist_id) DO UPDATE SET"
+                "  playlist_title = excluded.playlist_title, last_seen_at = excluded.last_seen_at",
+                (vid, uid, pid, title, stamp),
+            )
+        # この回に読めた再生リストから外れた動画
+        conn.execute(
+            f"DELETE FROM chef_video_source WHERE user_id = ? AND playlist_id = ? AND video_id NOT IN ({','.join('?' for _ in ids) or chr(39) * 2})",
+            (uid, pid, *ids),
+        )
+    # 設定から外した再生リスト（人ごと）
+    still = {(e["user_id"], pid) for e in configured for pid in e["playlists"]}
+    for row in conn.execute("SELECT DISTINCT user_id, playlist_id FROM chef_video_source").fetchall():
+        if (str(row["user_id"]), str(row["playlist_id"])) not in still:
+            conn.execute("DELETE FROM chef_video_source WHERE user_id = ? AND playlist_id = ?", (row["user_id"], row["playlist_id"]))
+    removed = conn.execute(
+        "DELETE FROM chef_video WHERE video_id NOT IN (SELECT DISTINCT video_id FROM chef_video_source)"
+    ).rowcount
+    limit = (datetime.fromisoformat(stamp) - timedelta(days=int(settings["cache_days"]))).isoformat(timespec="seconds")
+    expired_ids = [str(r["video_id"]) for r in conn.execute("SELECT video_id FROM chef_video WHERE fetched_at < ?", (limit,)).fetchall()]
+    for vid in expired_ids:
+        conn.execute("DELETE FROM chef_video_source WHERE video_id = ?", (vid,))
+        conn.execute("DELETE FROM chef_video WHERE video_id = ?", (vid,))
+    return {"units": units, "playlists": report, "videos": len(got), "removed": int(removed or 0), "expired": len(expired_ids), "synced_at": stamp}
+
+
+def last_sync(conn: Any) -> dict[str, Any]:
+    """最後の同期（一番新しい時刻と、読めなかった再生リスト）。一度も同期していなければ時刻は None。"""
+    rows = [dict(r) for r in conn.execute("SELECT * FROM chef_video_sync ORDER BY synced_at DESC").fetchall()]
+    return {
+        "synced_at": rows[0]["synced_at"] if rows else None,
+        "failed": [{"user_id": r["user_id"], "playlist_id": r["playlist_id"], "reason": r["reason"]} for r in rows if not r["ok"]],
+    }
+
+
+def sync_due(conn: Any, *, now: str | None = None, settings: Mapping[str, Any] | None = None) -> bool:
+    """前の同期から `sync_hours` 以上たったか（一度も同期していなければ真）。"""
+    from datetime import datetime, timedelta  # noqa: PLC0415
+
+    settings = dict(settings or load_settings())
+    last = last_sync(conn)["synced_at"]
+    if not last:
+        return True
+    return datetime.fromisoformat(_now(now)) - datetime.fromisoformat(str(last)) >= timedelta(hours=float(settings["sync_hours"]))
+
+
+def list_videos(
+    conn: Any,
+    *,
+    q: str | None = None,
+    category: str | None = None,
+    main_ingredient: str | None = None,
+    cuisine: str | None = None,
+) -> list[dict[str, Any]]:
+    """レシピ帳に並べる YouTube の動画（ADR-023 D5）。**取り込み済み（同じ出典のレシピがある）は出さない**
+    ——取り込んだレシピのほうが並ぶ。`q` はレシピと同じ当て方（題名 → 材料名 → ハッシュタグ・タグ）。"""
+    from manor import user as user_mod  # noqa: PLC0415
+
+    from . import recipes  # noqa: PLC0415
+
+    imported = {
+        recipes.source_key(str(r["source_url"]))
+        for r in conn.execute("SELECT source_url FROM chef_recipe WHERE archived_at IS NULL AND source_url <> ''").fetchall()
+    }
+    names = {str(u["id"]): str(u.get("callname") or u["name"]) for u in user_mod.list_users(conn, include_archived=True)}
+    sources: dict[str, list[dict[str, str]]] = {}
+    for r in conn.execute("SELECT video_id, user_id, playlist_title FROM chef_video_source ORDER BY user_id").fetchall():
+        sources.setdefault(str(r["video_id"]), []).append(
+            {"user_id": str(r["user_id"]), "user_name": names.get(str(r["user_id"]), str(r["user_id"])), "playlist_title": str(r["playlist_title"])}
+        )
+    groups = recipes.search_synonyms() if q else []
+    rank = {"title": 0, "ingredient": 1, "tag": 2}
+    out: list[tuple[int, str, dict[str, Any]]] = []
+    for row in conn.execute("SELECT * FROM chef_video").fetchall():
+        vid = str(row["video_id"])
+        if f"youtube:{vid}" in imported or vid not in sources:
+            continue
+        if category and row["category"] != category:
+            continue
+        if main_ingredient and row["main_ingredient"] != main_ingredient:
+            continue
+        if cuisine and row["cuisine"] != cuisine:
+            continue
+        ingredients = json.loads(row["ingredients"] or "[]")
+        kw = [k for k in json.loads(row["keywords"] or "[]") if k not in ingredients]
+        reasons = recipes.match_query(
+            q or "",
+            [("title", str(row["title"]))] + [("ingredient", n) for n in ingredients] + [("tag", f"#{k}") for k in kw],
+            groups,
+        )
+        if reasons is None:
+            continue
+        out.append(
+            (
+                min((rank.get(label, 3) for label, _ in reasons), default=3),
+                str(row["first_seen_at"]),
+                {
+                    "video_id": vid,
+                    "url": f"https://www.youtube.com/watch?v={vid}",
+                    "title": clean_title(str(row["title"])) or str(row["title"]),
+                    "channel": str(row["channel"]),
+                    "thumbnail_url": str(row["thumbnail_url"]),
+                    "seconds": row["seconds"],
+                    "has_recipe": bool(row["has_recipe"]),
+                    "category": str(row["category"]),
+                    "main_ingredient": str(row["main_ingredient"]),
+                    "cuisine": str(row["cuisine"]),
+                    "sources": sources[vid],
+                    "matched": [{"field": label, "text": text} for label, text in reasons],
+                },
+            )
+        )
+    # 当たり方（題名 → 材料 → タグ）、同じなら新しく入った順。
+    out.sort(key=lambda t: (t[0], _desc(t[1])))
+    return [item for _r, _s, item in out]
+
+
+def _desc(text: str) -> str:
+    """文字列の降順ソート用（ISO の時刻は字の並びが時の並び）。"""
+    return "".join(chr(0x10FFFF - ord(c)) for c in text)
 
 
 # --- 鍵（拡張の秘密の置き場から。ADR-009 D4） -------------------------------------------------
@@ -486,6 +775,13 @@ def _source_text(video: Mapping[str, Any]) -> str:
     return ""
 
 
+def clean_title(title: str) -> str:
+    """動画の題名からハッシュタグと絵文字の飾りを落とす（表示用。探すときは元の題名で当てる）。"""
+    text = _HASHTAG_RE.sub("", unicodedata.normalize("NFKC", str(title or "")))
+    text = re.sub(r"[\U0001F000-\U0001FAFF☀-➿]", "", text)
+    return re.sub(r"\s+", " ", text).strip()
+
+
 def recipe_title(video: Mapping[str, Any]) -> str:
     """レシピの題名。読み取り元の1行目が「★最強きゅうり」のような題名ならそれ、無ければ
     動画の題名からハッシュタグと絵文字の飾りを落としたもの。"""
@@ -494,9 +790,7 @@ def recipe_title(video: Mapping[str, Any]) -> str:
             title = _TITLE_MARK_RE.sub("", line).strip()
             if 1 < len(title) <= 40:
                 return title
-    title = _HASHTAG_RE.sub("", unicodedata.normalize("NFKC", str(video.get("title") or "")))
-    title = re.sub(r"[\U0001F000-\U0001FAFF☀-➿]", "", title)
-    return re.sub(r"\s+", " ", title).strip()[:60] or "YouTube のレシピ"
+    return clean_title(str(video.get("title") or ""))[:60] or "YouTube のレシピ"
 
 
 def draft_from_video(fetch: Fetcher, url: str, *, comments: int = 10) -> dict[str, Any]:

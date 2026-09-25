@@ -181,6 +181,8 @@ def test_all_chef_tables_are_prefixed(home: Path) -> None:
         "chef_food", "chef_food_alias", "chef_food_blend",
         # ADR-022 D1・D3: 覚えた換算（1袋 = 200 g。manual／Claude が調べた llm）と、調べた記録。
         "chef_food_unit", "chef_food_resolve_attempt",
+        # ADR-023 D1: YouTube のレシピ動画の控え（30 日）・どの再生リストからか・同期の記録。
+        "chef_video", "chef_video_source", "chef_video_sync",
     }
 
 

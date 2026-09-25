@@ -40,6 +40,8 @@ def _default_cli_language(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv("MANOR_LANG", "ja")
     # ADR-022: レシピの登録の後に背景で本物の claude を呼ばない（呼ぶ試験は runner を差し替える）。
     monkeypatch.setenv("MANOR_CLAUDE_RESOLVE", "off")
+    # ADR-023: レシピ帳の一覧を開いたときに本物の YouTube API で同期しない。
+    monkeypatch.setenv("MANOR_YOUTUBE_SYNC", "off")
     i18n_mod.set_language("ja")
     yield
     i18n_mod.reset_cache()

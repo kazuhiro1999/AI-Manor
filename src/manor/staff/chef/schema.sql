@@ -162,3 +162,46 @@ CREATE TABLE IF NOT EXISTS chef_food_resolve_attempt (
   detail     TEXT NOT NULL DEFAULT '',
   tried_at   TEXT NOT NULL
 );
+
+-- YouTube のレシピ動画の控え（ADR-023 D1・D5）。再生リストの同期で取り直す**一時的な控え**で、
+-- YouTube API の規約（III.E.4）どおり **30 日取り直せなかったものは消す**。動画は動画 ID で1行
+-- （家族の再生リストに同じ動画があっても1行）。どの再生リストから来たかは chef_video_source。
+CREATE TABLE IF NOT EXISTS chef_video (
+  video_id        TEXT PRIMARY KEY,
+  title           TEXT NOT NULL,
+  channel         TEXT NOT NULL DEFAULT '',
+  channel_id      TEXT NOT NULL DEFAULT '',
+  thumbnail_url   TEXT NOT NULL DEFAULT '',
+  seconds         INTEGER,
+  tags            TEXT NOT NULL DEFAULT '[]',   -- 動画のタグ（JSON）
+  keywords        TEXT NOT NULL DEFAULT '[]',   -- 探す語: ハッシュタグ・タグ・読めた材料名（JSON）
+  ingredients     TEXT NOT NULL DEFAULT '[]',   -- 読めた材料名（JSON）
+  has_recipe      INTEGER NOT NULL DEFAULT 0,   -- 概要欄・コメントから材料が読めたか
+  recipe_source   TEXT NOT NULL DEFAULT '',     -- description / comment_1_owner …
+  category        TEXT NOT NULL DEFAULT '',
+  main_ingredient TEXT NOT NULL DEFAULT '',
+  cuisine         TEXT NOT NULL DEFAULT '',
+  fetched_at      TEXT NOT NULL,                -- 最後に API から取り直した時刻（30 日の起点）
+  first_seen_at   TEXT NOT NULL
+);
+
+-- どの人のどの再生リストにあるか（同じ動画が2人の再生リストにあれば2行）。
+CREATE TABLE IF NOT EXISTS chef_video_source (
+  video_id       TEXT NOT NULL REFERENCES chef_video(video_id) ON DELETE CASCADE,
+  user_id        TEXT NOT NULL,
+  playlist_id    TEXT NOT NULL,
+  playlist_title TEXT NOT NULL DEFAULT '',
+  last_seen_at   TEXT NOT NULL,
+  PRIMARY KEY (video_id, user_id, playlist_id)
+);
+
+-- 再生リストごとの最後の同期（画面の「最後の同期」と、自動同期の間隔の判定）。
+CREATE TABLE IF NOT EXISTS chef_video_sync (
+  user_id     TEXT NOT NULL,
+  playlist_id TEXT NOT NULL,
+  synced_at   TEXT NOT NULL,
+  ok          INTEGER NOT NULL DEFAULT 1,
+  reason      TEXT NOT NULL DEFAULT '',
+  videos      INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (user_id, playlist_id)
+);

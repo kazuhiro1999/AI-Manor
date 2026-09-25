@@ -687,6 +687,13 @@ def cmd_food_resolve(conn, home, args) -> object:
     return food_resolve.resolve(conn)
 
 
+def cmd_youtube_sync(conn, home, args) -> object:
+    """全員の再生リストを読み直し、レシピ帳に並べる動画の控えを更新する（ADR-023 D1。30 日の控え）。"""
+    from . import youtube as yt
+
+    return yt.sync(conn, home)
+
+
 def cmd_youtube_probe(conn, home, args) -> object:
     """YouTube のレシピ動画を読み、何が取れてレシピとして読めたかを報告する（検証。DB には書かない）。"""
     from . import youtube as yt
@@ -1108,6 +1115,11 @@ def register(subparsers) -> None:
     # --- youtube（レシピ動画の検証。DB には書かない） ---
     youtube_p = chef_sub.add_parser("youtube")
     youtube_sub = youtube_p.add_subparsers(dest="youtube_verb")
+    p = youtube_sub.add_parser("sync")
+    p.add_argument("--json", action="store_true")
+    p.add_argument("--no-render", action="store_true")
+    p.set_defaults(func=cmd_youtube_sync, is_write=True)
+
     p = youtube_sub.add_parser("probe")
     p.add_argument("urls", nargs="+")
     p.add_argument("--user", default=None)

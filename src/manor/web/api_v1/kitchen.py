@@ -11,7 +11,7 @@ from pydantic import BaseModel, Field
 
 from ...board import api_staff as board_staff
 from ...errors import ManorError
-from . import kitchen_resolve
+from . import kitchen_resolve, kitchen_youtube
 from .._common import (
     WebContext,
     commit_and_render,
@@ -378,6 +378,43 @@ def register(app: FastAPI, ctx: WebContext) -> None:
             except ManorError as exc:
                 raise manor_error_to_http(exc)
             return {"items": items}
+
+    # --- videos（YouTube のレシピ動画の控え。ADR-023 D1・D5） ---
+    #
+    # レシピ帳の一覧と同じ絞り（q・分類3軸）で、家族の再生リストの動画を返す（台所は共通。
+    # 取り込み済みの動画は出さない）。前の同期から間が空いていれば背景で同期を頼む。
+
+    @app.get("/api/v1/kitchen/videos")
+    def videos_list(
+        q: str | None = None,
+        category: str | None = None,
+        main_ingredient: str | None = None,
+        cuisine: str | None = None,
+    ) -> dict[str, object]:
+        from ...staff.chef import youtube as chef_youtube
+
+        worker = kitchen_youtube.worker_for(ctx.home)
+        with open_conn(ctx) as conn:
+            _require_chef_recipes(conn)
+            if not table_exists(conn, "chef_video"):
+                return {"items": [], "configured": False, "sync": {"synced_at": None, "failed": [], "running": False}}
+            configured = bool(chef_youtube.configured_playlists(conn, ctx.home))
+            if configured and not ctx.read_only and kitchen_youtube.auto_enabled() and chef_youtube.sync_due(conn):
+                worker.request()
+            items = chef_youtube.list_videos(
+                conn, q=q, category=category, main_ingredient=main_ingredient, cuisine=cuisine
+            )
+            return {
+                "items": items,
+                "configured": configured,
+                "sync": {**chef_youtube.last_sync(conn), "running": worker.snapshot()["running"]},
+            }
+
+    @app.post("/api/v1/kitchen/videos/sync")
+    def videos_sync() -> dict[str, object]:
+        """再生リストを今すぐ読み直す（背景で走り、すぐ返る。画面は数秒おきに一覧を読み直す）。"""
+        require_writable(ctx)
+        return kitchen_youtube.worker_for(ctx.home).request()
 
     @app.get("/api/v1/kitchen/recipes/facets")
     def recipes_facets() -> dict[str, object]:

@@ -8,13 +8,18 @@
  * 絞り込みが1つも効いていないときだけ、参考画面（主人の指定）のように**分類ごとの見出し＋
  * 横スクロールの列**にする——絞ってしまえば分類の見出しに意味が無いので、そのときは
  * 1つのグリッドへ切り替える。
+ *
+ * ADR-023 D5: 家族の再生リストの **YouTube の動画**も同じ絞り（検索語・分類3軸）で並べる
+ * （`GET /kitchen/videos`）。カードに YouTube の印を付け、押すと YouTube を開く（工程ごとの図は
+ * 用意できないので、作るときは動画を見る——主人の裁定）。読めるものは「下書きにする」で取り込み画面へ。
+ * タグ・お気に入りで絞っているときは動画を出さない（動画はどちらも持たない）。
  */
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { ApiError } from "../../app/api";
+import { api, ApiError } from "../../app/api";
 import { ScreenHeader } from "../../components/ScreenHeader";
 import { useT } from "../../app/i18n";
-import type { RecipeFacets, RecipeFacetValue, RecipeListItem } from "../../app/types";
+import type { RecipeFacets, RecipeFacetValue, RecipeListItem, RecipeVideo, RecipeVideosPayload } from "../../app/types";
 import { CATEGORY_OPTIONS, fetchRecipeFacets, fetchRecipeList, type RecipeSortMode } from "./recipeShared";
 
 function RecipeCard({ item }: { item: RecipeListItem }) {
@@ -40,6 +45,52 @@ function RecipeCard({ item }: { item: RecipeListItem }) {
         {item.total_minutes != null && <span>{t("format.minutes", { n: item.total_minutes })}</span>}
         {item.kcal != null && <span>{t("kitchen.recipes.kcalPerServing", { n: item.kcal })}</span>}
         <span>{t("kitchen.recipes.timesCookedShort", { n: item.times_cooked })}</span>
+      </div>
+    </div>
+  );
+}
+
+/** YouTube の動画1本（ADR-023 D5）。押すと YouTube を新しいタブで開く。 */
+function VideoCard({ item }: { item: RecipeVideo }) {
+  const t = useT();
+  const minutes = item.seconds != null ? Math.max(1, Math.round(item.seconds / 60)) : null;
+  const matched = item.matched.find((m) => m.field !== "title");
+  return (
+    <div className="recipe-card-wrap recipe-video" data-video-id={item.video_id}>
+      <a className="recipe-card" href={item.url} target="_blank" rel="noreferrer" title={item.title}>
+        {item.thumbnail_url ? (
+          <img src={item.thumbnail_url} alt="" loading="lazy" />
+        ) : (
+          <span className="recipe-card-placeholder">{t("kitchen.recipes.noPhoto")}</span>
+        )}
+        <span
+          className="recipe-card-fav"
+          style={{ left: 6, right: "auto", background: "#e00", borderRadius: 4, padding: "0 5px", fontSize: 10.5, fontWeight: 700 }}
+        >
+          ▶ YouTube
+        </span>
+        <span className="recipe-card-title">{item.title}</span>
+      </a>
+      <div className="recipe-card-meta">
+        {item.seconds != null && (
+          <span>{item.seconds <= 60 ? t("kitchen.videos.seconds", { n: item.seconds }) : t("format.minutes", { n: minutes ?? 1 })}</span>
+        )}
+        {item.channel && <span>{item.channel}</span>}
+      </div>
+      <div className="recipe-card-meta">
+        {item.sources.map((src) => (
+          <span key={`${src.user_id}-${src.playlist_title}`}>{t("kitchen.videos.source", { user: src.user_name, playlist: src.playlist_title })}</span>
+        ))}
+      </div>
+      {matched && (
+        <div className="recipe-card-meta">
+          <span>{t(matched.field === "ingredient" ? "kitchen.videos.matchedIngredient" : "kitchen.videos.matchedTag", { text: matched.text })}</span>
+        </div>
+      )}
+      <div className="recipe-card-meta">
+        <Link to={`/kitchen/recipes/new?url=${encodeURIComponent(item.url)}`}>
+          {t(item.has_recipe ? "kitchen.videos.toDraft" : "kitchen.videos.toDraftEmpty")}
+        </Link>
       </div>
     </div>
   );
@@ -94,6 +145,8 @@ export function RecipeList() {
   const [cuisine, setCuisine] = useState<string | null>(null);
   const [favoriteOnly, setFavoriteOnly] = useState(false);
   const [sortMode, setSortMode] = useState<RecipeSortMode>("recent");
+  const [videos, setVideos] = useState<RecipeVideosPayload | null>(null);
+  const [videoTick, setVideoTick] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -125,6 +178,47 @@ export function RecipeList() {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [q, tag, favoriteOnly, category, mainIngredient, cuisine, sortMode]);
+
+  // ADR-023 D5: 同じ絞りで YouTube の動画も引く。落ちてもレシピの一覧は壊さない。
+  const videosOff = !!tag || favoriteOnly;
+  useEffect(() => {
+    if (videosOff) {
+      setVideos(null);
+      return;
+    }
+    let cancelled = false;
+    const query = new URLSearchParams();
+    if (q.trim()) query.set("q", q.trim());
+    if (category) query.set("category", category);
+    if (mainIngredient) query.set("main_ingredient", mainIngredient);
+    if (cuisine) query.set("cuisine", cuisine);
+    const qs = query.toString();
+    api<RecipeVideosPayload>(`/kitchen/videos${qs ? `?${qs}` : ""}`)
+      .then((res) => {
+        if (!cancelled) setVideos(res);
+      })
+      .catch(() => {
+        if (!cancelled) setVideos(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [q, category, mainIngredient, cuisine, videosOff, videoTick]);
+
+  // 同期が走っている間は 3 秒おきに読み直す（終われば止まる）。
+  useEffect(() => {
+    if (!videos?.sync.running) return;
+    const timer = window.setTimeout(() => setVideoTick((n) => n + 1), 3000);
+    return () => window.clearTimeout(timer);
+  }, [videos]);
+
+  const syncVideos = async () => {
+    try {
+      await api("/kitchen/videos/sync", { method: "POST" });
+    } finally {
+      setVideoTick((n) => n + 1);
+    }
+  };
 
   if (error) {
     return (
@@ -215,12 +309,35 @@ export function RecipeList() {
         )}
       </section>
 
+      {videos?.configured && (
+        <section className="panel" id="recipe-videos-sync">
+          <div className="form-inline">
+            <span className="panel-note">
+              {videos.sync.running
+                ? t("kitchen.videos.syncing")
+                : videos.sync.synced_at
+                  ? t("kitchen.videos.lastSync", { at: videos.sync.synced_at.replace("T", " ").slice(0, 16) })
+                  : t("kitchen.videos.neverSynced")}
+            </span>
+            <button type="button" className="btn btn-small" disabled={videos.sync.running} onClick={syncVideos}>
+              {t("kitchen.videos.syncButton")}
+            </button>
+          </div>
+          {videos.sync.failed.length > 0 && (
+            <p className="panel-note">{t("kitchen.videos.syncFailed", { reason: videos.sync.failed.map((f) => f.reason).join(", ") })}</p>
+          )}
+        </section>
+      )}
+
       <section className="panel">
-        {!items.length && <p className="panel-note">{t("kitchen.recipes.empty")}</p>}
+        {!items.length && !(videos?.items.length) && <p className="panel-note">{t("kitchen.recipes.empty")}</p>}
         {hasFilter ? (
           <div className="recipe-grid">
             {items.map((it) => (
               <RecipeCard item={it} key={it.id} />
+            ))}
+            {(videos?.items ?? []).map((v) => (
+              <VideoCard item={v} key={v.video_id} />
             ))}
           </div>
         ) : (
@@ -235,6 +352,16 @@ export function RecipeList() {
                 </div>
               </div>
             ))}
+            {(videos?.items.length ?? 0) > 0 && (
+              <div key="__youtube">
+                <div className="recipe-category-head">{t("kitchen.videos.heading")}</div>
+                <div className="recipe-category-scroll">
+                  {(videos?.items ?? []).map((v) => (
+                    <VideoCard item={v} key={v.video_id} />
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         )}
       </section>

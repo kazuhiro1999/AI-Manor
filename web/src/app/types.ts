@@ -427,6 +427,29 @@ export interface RecipeListItem {
   updated_at: string;
 }
 
+// `GET /api/v1/kitchen/videos`（ADR-023 D1・D5）。家族の再生リストの YouTube の動画（30 日の控え）。
+// 取り込み済みの動画はサーバが出さない（取り込んだレシピのほうが並ぶ）。
+export interface RecipeVideo {
+  video_id: string;
+  url: string;
+  title: string;
+  channel: string;
+  thumbnail_url: string;
+  seconds: number | null;
+  has_recipe: boolean; // 概要欄・コメントから材料が読めた（下書きにできる）
+  category: string;
+  main_ingredient: string;
+  cuisine: string;
+  sources: { user_id: string; user_name: string; playlist_title: string }[];
+  matched: { field: "title" | "ingredient" | "tag"; text: string }[];
+}
+
+export interface RecipeVideosPayload {
+  items: RecipeVideo[];
+  configured: boolean; // 誰かの再生リストが設定されているか
+  sync: { synced_at: string | null; failed: { user_id: string; playlist_id: string; reason: string }[]; running: boolean };
+}
+
 // `GET /api/v1/kitchen/recipes/facets`（§6 D9）。一覧の chip 列に添える件数つきの語彙。
 export interface RecipeFacetValue {
   value: string;
