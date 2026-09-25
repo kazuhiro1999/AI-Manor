@@ -323,7 +323,8 @@ def resolve(
 ) -> dict[str, Any]:
     """未解決をまとめて1回調べ、採れた答えを書いて推定し直す。
 
-    戻り値 `{"asked","resolved","unresolved","failed","reason","items":[…],"rebuilt"}`。
+    戻り値 `{"asked","resolved","unresolved","failed","reason","items":[…],"rebuilt","cost"}`
+    （`cost` は Claude を呼んだときだけ。USD）。
     未解決が無ければ Claude を呼ばない（`asked: 0`）。
     """
     settings = dict(settings or load_settings())
@@ -339,6 +340,7 @@ def resolve(
 
     prompt, by_id = build_prompt(items, candidates)
     reply = (runner or call_claude)(prompt, settings)
+    result["cost"] = float(reply.get("cost") or 0.0)
     stamp = now.isoformat(timespec="seconds") if now else util.now()
     if not reply.get("ok"):
         result.update(failed=True, reason=str(reply.get("reason") or ""))

@@ -12,12 +12,14 @@ from __future__ import annotations
 
 import os
 import threading
+import time
 from pathlib import Path
 from typing import Any
 
 from ... import db as db_mod
 from ... import render as render_mod
 from ...staff.chef import food_resolve
+from .. import oplog
 
 ENV_SWITCH = "MANOR_CLAUDE_RESOLVE"
 
@@ -41,6 +43,7 @@ class ResolveWorker:
 
     def request(self) -> dict[str, Any]:
         """調べてもらう。走っていれば「もう1回」の印だけ立てる。"""
+        oplog.note("bg:food_resolve")  # ADR-024: 起こした要求の行に添える
         with self._lock:
             if self._thread is not None and self._thread.is_alive():
                 self._again = True
@@ -56,6 +59,7 @@ class ResolveWorker:
 
     def _run(self) -> None:
         while True:
+            started = time.monotonic()
             conn = db_mod.connect(self.home)
             try:
                 result = food_resolve.resolve(conn)
@@ -71,6 +75,12 @@ class ResolveWorker:
             finally:
                 conn.close()
             result["finished_at"] = food_resolve.util.now()
+            if result.get("asked"):
+                oplog.write(self.home, (
+                    f"bg food_resolve asked={result['asked']} resolved={result.get('resolved', 0)}"
+                    f" cost=${float(result.get('cost') or 0):.4f} {int(time.monotonic() - started)}s"
+                    + (f" failed={result.get('reason')}" if result.get("failed") else "")
+                ))
             with self._lock:
                 self.status["last"] = result
                 if not self._again:

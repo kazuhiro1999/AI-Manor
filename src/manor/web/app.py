@@ -152,6 +152,34 @@ class _AuthMiddleware(BaseHTTPMiddleware):
         return await call_next(request)
 
 
+class _OpLogMiddleware(BaseHTTPMiddleware):
+    """操作ログ（ADR-024。`web/oplog.py`）。**門（`_AuthMiddleware`）の内側**に置く——
+    門が返した 401/403 は残らないが、端末鍵の `last_seen_at` の更新（門の中の書き込み）を
+    利用者の操作と取り違えない。ログインの成否は `/auth/login` が門を通るので残る。
+    """
+
+    async def dispatch(self, request: Request, call_next):  # type: ignore[no-untyped-def]
+        from . import oplog as oplog_mod
+
+        if not request.url.path.startswith("/api/v1/"):
+            return await call_next(request)
+        ctx: WebContext = request.app.state.web_ctx
+        items, token = oplog_mod.begin()
+        started = time.monotonic()
+        status = 500
+        try:
+            response = await call_next(request)
+            status = response.status_code
+            return response
+        finally:
+            oplog_mod.end(token)
+            elapsed = int((time.monotonic() - started) * 1000)
+            try:
+                oplog_mod.record(request, ctx.home, status, elapsed, items)
+            except Exception:  # noqa: BLE001 - ログの失敗で応答を落とさない
+                pass
+
+
 def _looks_like_a_file(path: str) -> bool:
     """`/assets/index-abc123.js` のような**ファイルを狙った経路**か。
 
@@ -243,6 +271,8 @@ def create_app(
     )
     app.state.web_ctx = ctx
     app.state.discovery = None
+    # 後に足したものが外側（Starlette）。操作ログは門の内側（`_OpLogMiddleware` の docstring）。
+    app.add_middleware(_OpLogMiddleware)
     app.add_middleware(_AuthMiddleware)
 
     from . import face as face_mod

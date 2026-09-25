@@ -1,7 +1,7 @@
 """manor の家庭用 Web アプリ（ADR-004・ADR-005）。`python -m manor.web` で起動する。
 
 `register(subparsers)` は `src/manor/cli.py` の `build_parser()` に配線するための公開口
-（`src/manor/board/__init__.py` と同じ形）。`manor web serve|build|install|uninstall|status`
+（`src/manor/board/__init__.py` と同じ形）。`manor web serve|build|install|uninstall|status|device|log`
 を足す。
 """
 
@@ -30,6 +30,7 @@ def register(subparsers: "argparse._SubParsersAction") -> None:
     _add_uninstall(sub)
     _add_status(sub)
     _add_device(sub)
+    _add_log(sub)
 
 
 # --- serve -----------------------------------------------------------------------
@@ -295,6 +296,40 @@ def _cmd_status(args: "argparse.Namespace") -> int:
             print(i18n.t("web.status.not_registered"))
         else:
             print(i18n.t("web.status.unknown", detail=sched.get("detail", "")))
+    return 0
+
+
+# --- log（ADR-024。操作ログを運用側で見る） -----------------------------------------
+
+
+def _add_log(sub: "argparse._SubParsersAction") -> None:
+    p = sub.add_parser("log", help=i18n.t("cli.web.log.help"))
+    p.add_argument("--month", default=None, help=i18n.t("cli.web.log.month.help"))
+    p.add_argument("--user", default=None, help=i18n.t("cli.web.log.user.help"))
+    p.add_argument("--grep", default=None, help=i18n.t("cli.web.log.grep.help"))
+    p.add_argument("-n", "--tail", type=int, default=50, help=i18n.t("cli.web.log.tail.help"))
+    p.add_argument("--months", action="store_true", help=i18n.t("cli.web.log.months.help"))
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=_cmd_log, is_write=False, needs_db=False)
+
+
+def _cmd_log(args: "argparse.Namespace") -> int:
+    """`manor web log`: `home/logs/web-YYYY-MM.log` の末尾を出す（`web/oplog.py`）。"""
+    from . import oplog
+
+    home = util.manor_home()
+    if args.months:
+        data: object = oplog.months(home)
+        lines = [str(m) for m in data]  # type: ignore[attr-defined]
+    else:
+        lines = oplog.read_lines(home, month=args.month, user=args.user, grep=args.grep, tail=args.tail)
+        data = lines
+    if args.json:
+        print(json.dumps(data, ensure_ascii=False, indent=2))
+    elif not lines:
+        print(i18n.t("web.log.empty"))
+    else:
+        print("\n".join(lines))
     return 0
 
 

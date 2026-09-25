@@ -19,6 +19,7 @@ from .. import db as db_mod
 from .. import render as render_mod
 from .. import user as user_mod
 from ..errors import ManorError
+from . import oplog as oplog_mod
 from .auth import KeyedRateLimiter, RateLimiter, auth_mode_for_host, is_loopback
 
 COOKIE_NAME = "manor_session"
@@ -76,6 +77,8 @@ def open_conn(ctx: WebContext) -> Iterator[sqlite3.Connection]:
     `sqlite3.Connection` はスレッド間で共有しない約束・FastAPI はスレッドプールで動く）。
     """
     conn = db_mod.connect(ctx.home)
+    # ADR-024: 要求のあいだに書いた表の名前を操作ログへ（値は拾わない。`web/oplog.py`）。
+    oplog_mod.trace_writes(conn)
     if ctx.read_only:
         conn.execute("PRAGMA query_only = ON")
     try:

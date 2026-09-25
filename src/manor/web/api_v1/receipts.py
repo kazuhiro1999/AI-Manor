@@ -35,6 +35,9 @@ class _Worker:
         self._thread: threading.Thread | None = None
 
     def enqueue(self, receipt_id: int) -> None:
+        from .. import oplog
+
+        oplog.note(f"bg:receipt_read#{receipt_id}")  # ADR-024: 起こした要求の行に添える
         with self._lock:
             if receipt_id in self.pending:
                 return

@@ -10,11 +10,13 @@ from __future__ import annotations
 
 import os
 import threading
+import time
 from pathlib import Path
 from typing import Any
 
 from ... import db as db_mod
 from ...staff.chef import youtube
+from .. import oplog
 
 ENV_SWITCH = "MANOR_YOUTUBE_SYNC"
 
@@ -32,6 +34,7 @@ class SyncWorker:
         self.status: dict[str, Any] = {"running": False, "last": None}
 
     def request(self) -> dict[str, Any]:
+        oplog.note("bg:youtube_sync")  # ADR-024: 起こした要求の行に添える
         with self._lock:
             if self._thread is not None and self._thread.is_alive():
                 self._again = True
@@ -47,6 +50,7 @@ class SyncWorker:
 
     def _run(self) -> None:
         while True:
+            started = time.monotonic()
             conn = db_mod.connect(self.home)
             try:
                 result: dict[str, Any] = youtube.sync(conn, self.home)
@@ -56,6 +60,10 @@ class SyncWorker:
                 result = {"units": 0, "playlists": [], "videos": 0, "failed": True, "reason": f"error: {type(exc).__name__}"}
             finally:
                 conn.close()
+            oplog.write(self.home, (
+                f"bg youtube_sync videos={result.get('videos', 0)} units={result.get('units', 0)}"
+                f" {int(time.monotonic() - started)}s" + (f" failed={result.get('reason')}" if result.get("failed") else "")
+            ))
             with self._lock:
                 self.status["last"] = result
                 if not self._again:
