@@ -474,15 +474,17 @@ export interface RecipeNutritionUnresolved {
 // ——画面はこれを内訳の1行として見せる。`method` は調理法の語（「唐揚げ」「炒め物」）で、
 // `lexicon.toml` の語彙そのもの（訳さない。`reason` のような閉じた符牒ではない）。
 export interface RecipeNutritionAdjustment {
-  kind: string; // oil_absorption
-  method: string;
-  grams: number;
-  food_code: string;
-  food_name: string;
-  kcal: number;
-  protein_g: number;
-  fat_g: number;
-  carb_g: number;
+  // oil_absorption（書かれていない揚げ油を足した）／salt_discard（茹で湯・塩もみの塩を減らした。ADR-019 §6）
+  kind: string;
+  method: string; // 揚げ物の型、または boil / rub_squeeze / rub_rinse
+  grams: number; // 足した油／減らした塩の g（レシピ全体）
+  food_code?: string;
+  food_name?: string;
+  kept_g?: number; // salt_discard: 口に入ると見なした塩の g（レシピ全体）
+  kcal?: number;
+  protein_g?: number;
+  fat_g?: number;
+  carb_g?: number;
   salt_g: number;
 }
 

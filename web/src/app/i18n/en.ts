@@ -1324,6 +1324,9 @@ export const en: { [K in TranslationKey]: MirrorEntry<K> } = {
     `Coverage is below ${p.min}%, so this recipe is left out of menu suggestions.`,
   "kitchen.nutrition.oilAbsorption": (p) =>
     `Oil absorbed while cooking (${p.method}, estimated): about ${p.grams} g, +${p.kcal} kcal`,
+  "kitchen.nutrition.saltDiscard.boil": "Salt in the boiling water counts only what is absorbed ({grams} g is poured away; about {kept} g is eaten)",
+  "kitchen.nutrition.saltDiscard.rub_squeeze": "Salt used for rubbing excludes what is squeezed out ({grams} g removed; about {kept} g remains)",
+  "kitchen.nutrition.saltDiscard.rub_rinse": "Salt used for rubbing excludes what is rinsed off ({grams} g removed; about {kept} g remains)",
   "kitchen.nutrition.unresolvedHeading": "Ingredients not matched",
   "kitchen.nutrition.unresolvedLine": (p) => `${p.name} (${p.amount})`,
   "kitchen.nutrition.amountUnknown": "no amount",

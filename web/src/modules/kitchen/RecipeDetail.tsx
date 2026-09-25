@@ -9,10 +9,17 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import { api, ApiError } from "../../app/api";
 import { useToast } from "../../components/Toast";
 import { ScreenHeader } from "../../components/ScreenHeader";
-import { formatDay, useT } from "../../app/i18n";
+import { formatDay, useT, type TranslationKey } from "../../app/i18n";
 import type { Recipe, RecipeNutrition } from "../../app/types";
 import { NUTRITION_SOURCE_LABEL_KEY, NUTRITION_UNRESOLVED_REASON_KEY, formatIngredientAmount } from "./recipeShared";
 import { CompanionPanel } from "./CompanionPanel";
+
+/** 捨てる塩の型 → 文（ADR-019 §6）。 */
+const SALT_DISCARD_KEY: Record<string, TranslationKey> = {
+  boil: "kitchen.nutrition.saltDiscard.boil",
+  rub_squeeze: "kitchen.nutrition.saltDiscard.rub_squeeze",
+  rub_rinse: "kitchen.nutrition.saltDiscard.rub_rinse",
+};
 
 export function RecipeDetail() {
   const t = useT();
@@ -283,11 +290,17 @@ export function RecipeDetail() {
                 <ul className="panel-note">
                   {(nutrition.adjustments ?? []).map((a) => (
                     <li key={`${a.kind}-${a.method}`}>
-                      {t("kitchen.nutrition.oilAbsorption", {
-                        method: a.method,
-                        grams: Math.round(a.grams),
-                        kcal: Math.round(a.kcal),
-                      })}
+                      {a.kind === "salt_discard"
+                        ? /* ADR-019 §6: 茹で湯・塩もみの塩は口に入る分だけ数えた（塩分が黙って減らないように）。 */
+                          t(SALT_DISCARD_KEY[a.method] ?? "kitchen.nutrition.saltDiscard.boil", {
+                            grams: a.grams,
+                            kept: a.kept_g ?? 0,
+                          })
+                        : t("kitchen.nutrition.oilAbsorption", {
+                            method: a.method,
+                            grams: Math.round(a.grams),
+                            kcal: Math.round(a.kcal ?? 0),
+                          })}
                     </li>
                   ))}
                 </ul>

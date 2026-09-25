@@ -847,6 +847,44 @@ describe("kitchen recipes — 表示（ADR-015 D4）", () => {
     expect(container.querySelector("#recipe-nutrition-unresolved")).toBeNull();
   });
 
+  // ADR-019 §6: 茹で湯・塩もみの塩は口に入る分だけ数えた——塩分が黙って減らないよう内訳で言う。
+  it("茹で湯の塩を減らしたときは、その内訳を1行で出す", async () => {
+    const recipe = { ...chahan(), meta: baseMeta({ kcal: 41, nutrition_source: "estimated" }) };
+    globalThis.fetch = vi.fn().mockImplementation(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.endsWith("/api/v1/kitchen/recipes/1")) {
+        return { ok: true, status: 200, json: async () => recipe };
+      }
+      if (url.endsWith("/api/v1/kitchen/recipes/1/nutrition")) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            recipe_id: 1, servings: 2,
+            kcal: 41, protein_g: 3, fat_g: 0.4, carb_g: 4, salt_g: 0.9,
+            source: "estimated", coverage: 1, coverage_min: 0.8, partial: false,
+            unresolved: [],
+            adjustments: [{ kind: "salt_discard", method: "boil", grams: 5.9, kept_g: 0.1, salt_g: -5.9 }],
+            food_table_available: true,
+          }),
+        };
+      }
+      throw new Error("unexpected fetch: " + url);
+    }) as unknown as typeof fetch;
+
+    const { container } = render(
+      <MemoryRouter initialEntries={["/1"]}>
+        <ToastProvider>
+          <RecipesRouter />
+        </ToastProvider>
+      </MemoryRouter>
+    );
+
+    await waitFor(() => expect(container.querySelector("#recipe-nutrition-adjustments")).not.toBeNull());
+    const adjustments = container.querySelector("#recipe-nutrition-adjustments") as HTMLElement;
+    expect(within(adjustments).getByText(/茹で湯の塩は口に入る分だけ数えています（5.9 g は湯と一緒に捨てる・食べるのは約 0.1 g）/)).toBeTruthy();
+  });
+
   it("材料の表は qty と unit が別々の列に来ても崩れない", async () => {
     const recipe = {
       ...chahan(),

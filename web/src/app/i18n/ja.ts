@@ -1330,6 +1330,9 @@ export const ja = {
      量は**レシピ全体ぶん**（1 人分の値には既に按分して入っている）。 */
   "kitchen.nutrition.oilAbsorption": (p) =>
     `${p.method}の油の吸収（推定）約 ${p.grams}g・+${p.kcal}kcal`,
+  "kitchen.nutrition.saltDiscard.boil": "茹で湯の塩は口に入る分だけ数えています（{grams} g は湯と一緒に捨てる・食べるのは約 {kept} g）",
+  "kitchen.nutrition.saltDiscard.rub_squeeze": "塩もみの塩は絞って捨てる分を除いています（{grams} g を除き、残るのは約 {kept} g）",
+  "kitchen.nutrition.saltDiscard.rub_rinse": "塩もみの塩は洗い流す分を除いています（{grams} g を除き、残るのは約 {kept} g）",
   "kitchen.nutrition.unresolvedHeading": "名寄せできていない材料",
   "kitchen.nutrition.unresolvedLine": (p) => `${p.name}（${p.amount}）`,
   "kitchen.nutrition.amountUnknown": "分量なし",

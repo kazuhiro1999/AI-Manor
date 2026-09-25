@@ -176,6 +176,28 @@ class OilAbsorption:
 
 
 @dataclass(frozen=True)
+class SaltDiscard:
+    """`lexicon.toml` の `[nutrition.salt_discard]` の写し（ADR-019 §6）。調理の途中で捨てる塩。"""
+
+    salt_names: frozenset[str] = frozenset()
+    water_names: frozenset[str] = frozenset()
+    default_water_g: float = 1000.0
+    boil_cues: tuple[str, ...] = ()
+    drain_cues: tuple[str, ...] = ()
+    ratio_default: float = 0.1
+    ratio_by_group: dict[str, float] = field(default_factory=dict)
+    rub_cues: tuple[str, ...] = ()
+    squeeze_cues: tuple[str, ...] = ()
+    rinse_cues: tuple[str, ...] = ()
+    squeeze_residual: float = 0.10
+    rinse_residual: float = 0.05
+
+    @property
+    def ready(self) -> bool:
+        return bool(self.salt_names)
+
+
+@dataclass(frozen=True)
 class UnitTables:
     """`lexicon.toml` の `[units]`・`[food_normalize]`・`[nutrition.oil_absorption]` の写し。"""
 
@@ -193,6 +215,8 @@ class UnitTables:
     oil: OilAbsorption = field(default_factory=OilAbsorption)
     #: 「野菜の量」に数える食品群（`[nutrition.veg_groups].groups`。ADR-021 D1）。
     veg_groups: frozenset[str] = frozenset()
+    #: 調理の途中で捨てる塩（`[nutrition.salt_discard]`。ADR-019 §6）。
+    salt: SaltDiscard = field(default_factory=SaltDiscard)
 
 
 def _float_map(raw: Any) -> dict[str, float]:
@@ -269,6 +293,45 @@ def load_unit_tables(path: Path | None = None) -> UnitTables:
         not_counted=not_counted,
         oil=_oil_absorption(lex),
         veg_groups=_veg_groups(lex),
+        salt=_salt_discard(lex),
+    )
+
+
+def _salt_discard(lex: Mapping[str, Any]) -> SaltDiscard:
+    """`[nutrition.salt_discard]` を読む（ADR-019 §6）。節が無ければ空（＝補正しない）。"""
+    raw = dict(dict(lex.get("nutrition") or {}).get("salt_discard") or {})  # type: ignore[union-attr]
+    if not raw:
+        return SaltDiscard()
+    boil = dict(raw.get("boil") or {})
+    rub = dict(raw.get("rub") or {})
+
+    def names(key: str) -> frozenset[str]:
+        return frozenset(
+            w for w in (shaping.normalize_food_name(str(x)) for x in (raw.get(key) or [])) if w
+        )
+
+    def words(table: Mapping[str, Any], key: str) -> tuple[str, ...]:
+        return tuple(str(w) for w in (table.get(key) or []) if str(w))
+
+    def num(table: Mapping[str, Any], key: str, default: float) -> float:
+        try:
+            return float(table.get(key, default))
+        except (TypeError, ValueError):
+            return default
+
+    return SaltDiscard(
+        salt_names=names("salt_names"),
+        water_names=names("water_names"),
+        default_water_g=num(raw, "default_water_g", 1000.0),
+        boil_cues=words(boil, "cues"),
+        drain_cues=words(boil, "drain_cues"),
+        ratio_default=num(boil, "ratio_default", 0.1),
+        ratio_by_group=_float_map(boil.get("ratio_by_group")),
+        rub_cues=words(rub, "cues"),
+        squeeze_cues=words(rub, "squeeze_cues"),
+        rinse_cues=words(rub, "rinse_cues"),
+        squeeze_residual=num(rub, "squeeze_residual", 0.10),
+        rinse_residual=num(rub, "rinse_residual", 0.05),
     )
 
 
@@ -844,6 +907,126 @@ def oil_adjustment(
     return out
 
 
+# --- 調理の途中で捨てる塩（純粋関数。ADR-019 §6） -----------------------------------------
+#
+# 材料表の「塩 小さじ1」が茹で湯の塩・塩もみの塩なら、口に入るのはその一部だけ。工程の文から
+# 読み取って**係数**を決める（1.0＝全部数える）。揚げ油の吸収（書かれていない油を足す）の逆向き。
+
+#: `adjustments[]` の種類と、捨て方の型。
+ADJUST_SALT_DISCARD = "salt_discard"
+SALT_BOIL, SALT_RUB_SQUEEZE, SALT_RUB_RINSE = "boil", "rub_squeeze", "rub_rinse"
+
+#: 「塩」の字を含むが塩そのものの話ではない語（工程の文から先に落とす）。
+_SALT_NOT_SALT = ("塩昆布", "塩こんぶ", "塩麹", "塩こうじ", "塩鮭", "塩さば", "塩蔵", "塩分", "塩辛", "塩味")
+
+
+def _step_text(step: Mapping[str, Any]) -> str:
+    return unicodedata.normalize("NFKC", f"{step.get('title') or ''} {step.get('instruction') or ''}")
+
+
+def _mentions_salt(text: str) -> bool:
+    for word in _SALT_NOT_SALT:
+        text = text.replace(word, "")
+    return "塩" in text
+
+
+def _qty_phrases(ing: Mapping[str, Any]) -> list[str]:
+    """材料の分量の書き方（工程の文に「塩小さじ1」と書かれていれば、その塩だと分かる）。"""
+    qty = unicodedata.normalize("NFKC", str(ing.get("qty") or "")).strip()
+    unit = unicodedata.normalize("NFKC", str(ing.get("unit") or "")).strip()
+    if not qty and not unit:
+        return []
+    return [p for p in (f"{unit}{qty}", f"{qty}{unit}") if p]
+
+
+def salt_discards(
+    recipe: Mapping[str, Any],
+    grams_of: Sequence[float | None],
+    groups_of: Sequence[str],
+    tables: UnitTables,
+) -> dict[int, tuple[float, str]]:
+    """材料の番号 → (数える割合, 捨て方の型)。補正しない材料は入れない。**DB も外部も触らない。**
+
+    `grams_of`・`groups_of` は材料の並びと同じ順の「グラム（分からなければ None）」「食品群」。
+
+    - 茹で湯の塩（`boil`）: 工程に茹での語（または「沸いた湯」）と塩があり、その工程か後の工程で
+      湯を捨てる（`drain_cues`。スープの塩は減らさない）。数える割合 =
+      Σ(茹でた食材の g × 移る率) ÷ 湯の g（1.0 が上限）。茹でた食材はその工程の
+      `ingredients_used`（無ければ次の工程の）から塩と湯を除いたもの。
+    - 塩もみ（`rub_*`）: 工程に塩もみの語と塩があり、その工程か次の工程に「絞る」「洗う」がある。
+      洗えば `rinse_residual`、絞るだけなら `squeeze_residual`。
+
+    どの「塩」の行を使ったかは、工程の文に分量（「塩小さじ1」）が書かれていればそれ、無ければ
+    材料表で先に出てくる、まだ割り当てていない塩——「塩もみ用」と「仕上げの塩」が同じ名前で
+    2 行あるとき、先に出る行を下ごしらえの塩とみなす。
+    """
+    rule = tables.salt
+    if not rule.ready:
+        return {}
+    ingredients = [ing for ing in (recipe.get("ingredients") or []) if isinstance(ing, Mapping)]
+    norms = [normalize_name(str(ing.get("name") or ""), tables) for ing in ingredients]
+    raw_names = [shaping.normalize_food_name(str(ing.get("name") or "")) for ing in ingredients]
+    salt_idx = [i for i, n in enumerate(norms) if n in rule.salt_names or raw_names[i] in rule.salt_names]
+    if not salt_idx:
+        return {}
+    water_idx = [i for i, n in enumerate(norms) if n in rule.water_names or raw_names[i] in rule.water_names]
+    steps = [st for st in (recipe.get("steps") or []) if isinstance(st, Mapping)]
+    texts = [_step_text(st) for st in steps]
+
+    out: dict[int, tuple[float, str]] = {}
+    unassigned = list(salt_idx)
+
+    def pick(text: str) -> int | None:
+        for i in unassigned:
+            if any(phrase and f"塩{phrase}" in text for phrase in _qty_phrases(ingredients[i])):
+                return i
+        return unassigned[0] if unassigned else None
+
+    def used_names(k: int) -> list[str]:
+        return [str(x) for x in (steps[k].get("ingredients_used") or [])] if 0 <= k < len(steps) else []
+
+    for k, text in enumerate(texts):
+        if not unassigned or not _mentions_salt(text):
+            continue
+        nxt = texts[k + 1] if k + 1 < len(texts) else ""
+        # 茹での語か「沸いた湯」に塩を入れ、**この工程か後の工程で湯を捨てる**（スープは捨てない）。
+        drained = any(c in later for later in texts[k:] for c in rule.drain_cues)
+        is_boil = drained and (
+            any(c in text for c in rule.boil_cues) or ("湯" in text and "沸" in text)
+        )
+        is_rub = any(c in text for c in rule.rub_cues) and any(
+            c in text or c in nxt for c in (*rule.squeeze_cues, *rule.rinse_cues)
+        )
+        if is_boil:
+            i = pick(text)
+            if i is None:
+                continue
+            water_g = sum(float(grams_of[w] or 0.0) for w in water_idx) or rule.default_water_g
+            boiled = [n for n in used_names(k) + used_names(k + 1)]
+            skip = set(salt_idx) | set(water_idx)
+            foods = [
+                j for j, ing in enumerate(ingredients)
+                if j not in skip and str(ing.get("name") or "") in boiled
+            ]
+            load = sum(
+                float(grams_of[j] or 0.0) * rule.ratio_by_group.get(str(groups_of[j] or ""), rule.ratio_default)
+                for j in foods
+            )
+            out[i] = (min(1.0, load / water_g) if water_g > 0 else 1.0, SALT_BOIL)
+            unassigned.remove(i)
+        elif is_rub:
+            i = pick(text)
+            if i is None:
+                continue
+            rinse = any(c in text or c in nxt for c in rule.rinse_cues)
+            out[i] = (
+                rule.rinse_residual if rinse else rule.squeeze_residual,
+                SALT_RUB_RINSE if rinse else SALT_RUB_SQUEEZE,
+            )
+            unassigned.remove(i)
+    return out
+
+
 # --- 推定（純粋関数。ADR-019 D4） --------------------------------------------------------
 
 
@@ -928,9 +1111,21 @@ def estimate_nutrition(
     oil_counted = False
     main_grams = 0.0
 
-    for ing in recipe.get("ingredients") or []:
-        if not isinstance(ing, Mapping):
-            continue
+    # 調理の途中で捨てる塩（ADR-019 §6）。先に全材料のグラムと食品群を出してから係数を決める
+    # ——茹で塩の割合は「茹でた食材の重さ ÷ 湯の重さ」なので、塩の行だけ見ても決まらない。
+    ing_rows = [ing for ing in (recipe.get("ingredients") or []) if isinstance(ing, Mapping)]
+    pre_grams: list[float | None] = []
+    pre_groups: list[str] = []
+    for ing in ing_rows:
+        pre_norm = normalize_name(str(ing.get("name") or ""), tables)
+        g, why = to_grams(str(ing.get("qty") or ""), str(ing.get("unit") or ""), pre_norm, tables)
+        pre_grams.append(None if why == NOT_COUNTED else g)
+        pre_food = resolve_food(str(ing.get("name") or ""), index, aliases, tables, blends) if pre_norm else None
+        pre_groups.append(str((pre_food or {}).get("food_group") or ""))
+    discards = salt_discards(recipe, pre_grams, pre_groups, tables)
+    discard_removed: dict[str, dict[str, float]] = {}
+
+    for position, ing in enumerate(ing_rows):
         name = str(ing.get("name") or "").strip()
         if not name:
             continue
@@ -984,6 +1179,17 @@ def estimate_nutrition(
         except (TypeError, ValueError):
             refuse = 0.0
         edible = grams * max(0.0, 1.0 - refuse / 100.0)
+        if position in discards:
+            factor, method = discards[position]
+            kept = edible * factor
+            removed = discard_removed.setdefault(method, {"grams": 0.0, "salt_g": 0.0, "kept_g": 0.0})
+            removed["grams"] += edible - kept
+            removed["kept_g"] += kept
+            try:
+                removed["salt_g"] += float(food.get("salt_g") or 0.0) * (edible - kept) / 100.0
+            except (TypeError, ValueError):
+                pass
+            edible = kept
         for key in NUTRIENTS:
             try:
                 per100 = float(food.get(key) or 0.0)
@@ -1023,6 +1229,18 @@ def estimate_nutrition(
             adjustments.append(adjustment)
             for key in NUTRIENTS:
                 totals[key] += float(adjustment.get(key) or 0.0)
+
+    for method, removed in discard_removed.items():
+        # 合計には既に反映済み（係数を掛けた可食部で足した）。ここは画面が内訳を言うためだけ。
+        adjustments.append(
+            {
+                "kind": ADJUST_SALT_DISCARD,
+                "method": method,
+                "grams": round(removed["grams"], 1),
+                "kept_g": round(removed["kept_g"], 1),
+                "salt_g": round(-removed["salt_g"], 1),
+            }
+        )
 
     coverage = (resolved_grams / counted_grams) if counted_grams > 0 else 0.0
     micro = {key: round(micro_totals[key] / servings, 1) for key in MICRO_NUTRIENTS}
