@@ -230,6 +230,22 @@ def test_face_html_referenced_ids_exist() -> None:
     assert not missing, f"face.html が参照するが定義されていない id: {missing}"
 
 
+def test_face_html_shows_loading_silhouette_before_fetch() -> None:
+    """T41: 初回18MB前後の転送のあいだ、無地のままにせず呼吸するシルエットを先に出す。"""
+    from manor.web.face import FACE_STATIC_DIR
+
+    html = (FACE_STATIC_DIR / "face.html").read_text(encoding="utf-8")
+    boot_start = html.index("async function boot()")
+    load_call = html.index("loader.loadAsync(", boot_start)
+    boot_before_load = html[boot_start:load_call]
+    assert "$('fallback').classList.add('on')" in boot_before_load
+
+    vrm_assigned = html.index("vrm = gltf.userData.vrm;", load_call)
+    scene_add = html.index("scene.add(vrm.scene)", vrm_assigned)
+    after_load = html[vrm_assigned:scene_add]
+    assert "$('fallback').classList.remove('on')" in after_load
+
+
 # --- 認証（ADR-008 D2 補足。執事が検分で足した） ---------------------------------------------
 
 

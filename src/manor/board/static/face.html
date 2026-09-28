@@ -161,6 +161,10 @@ async function boot() {
   const loader = new GLTFLoader();
   loader.register((parser) => new VRMLoaderPlugin(parser));
 
+  // T41: 初回は18MB前後の転送が要り、輪郭が出るまで無地の画面になっていた。
+  // 「置かれていない」ときと同じ輪郭（呼吸するシルエット）を先に出し、読み込み中と
+  // わかるようにする（読めなかったときは下の catch / showFallback が文言を上書きする）。
+  $('fallback').classList.add('on');
   note.textContent = '姿を読み込んでいます…';
   let gltf;
   try {
@@ -171,6 +175,9 @@ async function boot() {
   }
   vrm = gltf.userData.vrm;
   if (!vrm) { showFallback('VRM として読めませんでした'); return; }
+
+  $('fallback').classList.remove('on');
+  note.textContent = '';
 
   VRMUtils.removeUnnecessaryVertices(gltf.scene);
   VRMUtils.combineSkeletons(gltf.scene);

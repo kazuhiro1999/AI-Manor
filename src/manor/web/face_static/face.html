@@ -278,6 +278,10 @@ async function boot() {
   const loader = new GLTFLoader();
   loader.register((parser) => new VRMLoaderPlugin(parser));
 
+  // T41: 初回は18MB前後の転送が要り、輪郭が出るまで無地の画面になっていた。
+  // 「置かれていない」ときと同じ輪郭（呼吸するシルエット）を先に出し、読み込み中と
+  // わかるようにする（読めなかったときは下の catch / showFallback が文言を上書きする）。
+  $('fallback').classList.add('on');
   note.textContent = '姿を読み込んでいます…';
   let gltf;
   try {
@@ -299,6 +303,9 @@ async function boot() {
   }
   vrm = gltf.userData.vrm;
   if (!vrm) { showFallback('VRM として読めませんでした'); return; }
+
+  $('fallback').classList.remove('on');
+  note.textContent = '';
 
   VRMUtils.removeUnnecessaryVertices(gltf.scene);
   VRMUtils.combineSkeletons(gltf.scene);
@@ -436,14 +443,44 @@ boot();
     if (!blocked) { input.disabled = busy; send.disabled = busy; }
   }
 
-  /** 待っている間の表示。**7秒は黙って待つには長い**ので、動いていることを見せる */
+  /** 待っている間の表示。**7秒は黙って待つには長い**ので、動いていることを見せる。
+   * T57: 30秒を超えたら「少々お待ちください」を1度だけ声にも出す（何をしているかは言わない）。
+   * T58: 3秒おきに /talk/status を見て、観測（お調べ中・手続き中・まとめ中）が来たら
+   * それで上書きする。**声は出さない**——頻繁に変わるものを声にすると煩い。
+   */
   function waitLine() {
     var p = say('', '…');
-    var n = 0, t0 = Date.now();
+    var n = 0, t0 = Date.now(), askedWait = false, liveText = '', lastPoll = -Infinity;
     waitTimer = setInterval(function () {
-      n = (n + 1) % 4;
-      var sec = Math.floor((Date.now() - t0) / 1000);
-      p.textContent = '…' + '・・・'.slice(0, n) + (sec >= 5 ? '（' + sec + '秒）' : '');
+      var elapsed = Date.now() - t0;
+      var sec = Math.floor(elapsed / 1000);
+      if (elapsed - lastPoll >= 3000) {
+        lastPoll = elapsed;
+        fetch('/api/v1/face/talk/status')
+          .then(function (r) { return r.ok ? r.json() : null; })
+          .then(function (d) { liveText = (d && d.text) || ''; })
+          .catch(function () { /* 観測は無くても会話は止めない */ });
+      }
+      if (sec >= 30 && !askedWait) {
+        askedWait = true;
+        fetch('/api/v1/face/talk/wait', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ agent: agent, play_here: PLAY_HERE })
+        })
+          .then(function (r) { return r.ok ? r.json() : null; })
+          .then(function (d) {
+            if (d && d.text) { p.dataset.waitText = d.text; }
+            if (d) { playVoice(d.audio_id); }
+          })
+          .catch(function () { /* 声は落ちてよい。会話は止めない */ });
+      }
+      var label = liveText || (sec >= 30 ? (p.dataset.waitText || '少々お待ちください') : '');
+      if (label) {
+        p.textContent = label + (sec >= 5 ? '（' + sec + '秒）' : '');
+      } else {
+        n = (n + 1) % 4;
+        p.textContent = '…' + '・・・'.slice(0, n) + (sec >= 5 ? '（' + sec + '秒）' : '');
+      }
       log.scrollTop = log.scrollHeight;
     }, 400);
     return p;
