@@ -684,6 +684,113 @@ def test_test_connection_calls_auth_test(home: Path, monkeypatch: pytest.MonkeyP
     assert result["team"] == "テストの家"
 
 
+# --- 詳細診断（`diagnose()`。T91・v1 diagnose-receive.ps1 の移植） --------------------------
+
+
+def test_diagnose_without_token(home: Path, monkeypatch: pytest.MonkeyPatch, http_guard):
+    monkeypatch.setattr(slack_mod, "bot_token", lambda: None)
+    result = slack_mod.diagnose(home)
+    assert result["ok"] is False
+    assert "bot_token" in result["reason"]
+    assert result["steps"] == []
+
+
+def test_diagnose_without_channel(home: Path, monkeypatch: pytest.MonkeyPatch, http_guard):
+    monkeypatch.setattr(slack_mod, "bot_token", lambda: "xoxb-test-token")
+    result = slack_mod.diagnose(home)
+    assert result["ok"] is False
+    assert "channel" in result["reason"]
+
+
+def test_diagnose_auth_failure_reports_reason(home: Path, monkeypatch: pytest.MonkeyPatch):
+    _write_slack_config(home)
+    monkeypatch.setattr(slack_mod, "bot_token", lambda: "xoxb-test-token")
+
+    def fake_full(method, token, *, params=None, timeout=0):  # noqa: ANN001
+        assert method == "auth.test"
+        return {"ok": False, "error": "invalid_auth"}, {}
+
+    monkeypatch.setattr(slack_mod, "_slack_api_full", fake_full)
+    result = slack_mod.diagnose(home)
+    assert result["ok"] is False
+    assert "invalid_auth" in result["reason"]
+    assert result["steps"][-1] == {"id": "auth", "ok": False, "detail": "invalid_auth"}
+
+
+def test_diagnose_reports_missing_scopes_and_history_hint(home: Path, monkeypatch: pytest.MonkeyPatch):
+    _write_slack_config(home, channel="C123456")
+    monkeypatch.setattr(slack_mod, "bot_token", lambda: "xoxb-test-token")
+
+    def fake_full(method, token, *, params=None, timeout=0):  # noqa: ANN001
+        if method == "auth.test":
+            return {"ok": True, "team": "テストの家", "user": "butler"}, {"x-oauth-scopes": "channels:history, chat:write"}
+        if method == "conversations.info":
+            return {"ok": True, "channel": {"name": "秘密の部屋", "is_private": True, "is_member": False}}, {}
+        if method == "conversations.history":
+            return {"ok": False, "error": "missing_scope", "needed": "groups:history", "provided": "channels:history"}, {}
+        raise AssertionError(f"想定外の method です: {method}")
+
+    monkeypatch.setattr(slack_mod, "_slack_api_full", fake_full)
+    result = slack_mod.diagnose(home)
+    assert result["ok"] is False
+    assert "missing_scope" in result["reason"]
+
+    auth_step = next(s for s in result["steps"] if s["id"] == "auth")
+    assert auth_step["missing_needed"] == ["groups:history"]
+
+    channel_step = next(s for s in result["steps"] if s["id"] == "channel_info")
+    assert channel_step["is_private"] is True
+    assert channel_step["is_member"] is False
+    assert channel_step["required_scope"] == "groups:history"
+
+    history_step = next(s for s in result["steps"] if s["id"] == "history")
+    assert history_step["hint"]
+
+
+def test_diagnose_success_reports_message_count(home: Path, monkeypatch: pytest.MonkeyPatch):
+    _write_slack_config(home, channel="C123456")
+    monkeypatch.setattr(slack_mod, "bot_token", lambda: "xoxb-test-token")
+
+    def fake_full(method, token, *, params=None, timeout=0):  # noqa: ANN001
+        if method == "auth.test":
+            return {"ok": True, "team": "テストの家", "user": "butler"}, {
+                "x-oauth-scopes": "channels:history,groups:history,chat:write"
+            }
+        if method == "conversations.info":
+            return {"ok": True, "channel": {"name": "butler", "is_private": False, "is_member": True}}, {}
+        if method == "conversations.history":
+            return {"ok": True, "messages": [{"ts": "1"}]}, {}
+        raise AssertionError(f"想定外の method です: {method}")
+
+    monkeypatch.setattr(slack_mod, "_slack_api_full", fake_full)
+    result = slack_mod.diagnose(home)
+    assert result["ok"] is True
+    history_step = next(s for s in result["steps"] if s["id"] == "history")
+    assert history_step["count"] == 1
+
+
+def test_extension_check_uses_diagnose_for_a_richer_reason(home: Path, monkeypatch: pytest.MonkeyPatch):
+    """T91: `check()` が `diagnose()` を使い、スコープ不足の当たりが `reason` に出ること。"""
+    from manor.extensions import slack as slack_ext
+
+    _write_slack_config(home, channel="C123456")
+    monkeypatch.setattr(slack_mod, "bot_token", lambda: "xoxb-test-token")
+
+    def fake_full(method, token, *, params=None, timeout=0):  # noqa: ANN001
+        if method == "auth.test":
+            return {"ok": True, "team": "テストの家", "user": "butler"}, {"x-oauth-scopes": "chat:write"}
+        if method == "conversations.info":
+            return {"ok": True, "channel": {"name": "butler", "is_private": False, "is_member": True}}, {}
+        if method == "conversations.history":
+            return {"ok": False, "error": "missing_scope"}, {}
+        raise AssertionError(f"想定外の method です: {method}")
+
+    monkeypatch.setattr(slack_mod, "_slack_api_full", fake_full)
+    result = slack_ext.check(home)
+    assert result["ok"] is False
+    assert "missing_scope" in result["reason"]
+
+
 # --- 拡張マニフェスト（extensions/slack.py。ADR-009 D2） ------------------------------------
 
 

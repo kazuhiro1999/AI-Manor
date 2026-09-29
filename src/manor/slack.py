@@ -171,14 +171,13 @@ def bot_token() -> str | None:
 # --- Slack Web API（urllib のみ。D10） ------------------------------------------------------
 
 
-def _slack_api(
+def _slack_api_full(
     method: str, token: str, *, params: dict[str, object] | None = None, timeout: float = API_TIMEOUT
-) -> dict[str, object]:
-    """Slack Web API を1回呼ぶ。**例外は投げない**——失敗は Slack 自身のエラー形
-    （`{"ok": False, "error": "..."}`）に揃えて返す。`chat.postMessage` は JSON の
-    POST、それ以外（`auth.test` / `conversations.replies`）はクエリ文字列の GET/POST
-    で送る（Slack Web API はどちらの形でも受け付けるが、POST 系は JSON、参照系は
-    クエリのほうが素直なのでそう分けてある）。
+) -> tuple[dict[str, object], dict[str, str]]:
+    """`_slack_api` の全部入り版。**レスポンスヘッダも返す**——`diagnose()` が
+    `x-oauth-scopes`（実際に付与されているスコープ）を読むために要る（T91）。
+    ヘッダのキーは小文字化して返す（大小文字を気にせず引けるように）。
+    それ以外の約束は `_slack_api` と同じ（例外は投げない）。
     """
     url = f"{SLACK_API_BASE}/{method}"
     headers = {"Authorization": f"Bearer {token}"}
@@ -193,24 +192,38 @@ def _slack_api(
             req = urllib.request.Request(full_url, headers=headers, method="POST" if method == "auth.test" else "GET")
         with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310 - Slack の公式 API ドメイン固定
             raw = resp.read()
+            resp_headers = {str(k).lower(): str(v) for k, v in resp.headers.items()}
     except urllib.error.HTTPError as exc:
         try:
             raw = exc.read()
             data = json.loads(raw.decode("utf-8"))
             if isinstance(data, dict):
                 data.setdefault("ok", False)
-                return data
+                return data, {}
         except Exception:  # noqa: BLE001
             pass
-        return {"ok": False, "error": f"http_error_{exc.code}"}
+        return {"ok": False, "error": f"http_error_{exc.code}"}, {}
     except (urllib.error.URLError, OSError, TimeoutError) as exc:
-        return {"ok": False, "error": f"network_error: {exc}"}
+        return {"ok": False, "error": f"network_error: {exc}"}, {}
     try:
         data = json.loads(raw.decode("utf-8"))
     except (ValueError, UnicodeDecodeError) as exc:
-        return {"ok": False, "error": f"bad_response: {exc}"}
+        return {"ok": False, "error": f"bad_response: {exc}"}, {}
     if not isinstance(data, dict):
-        return {"ok": False, "error": "unexpected_response"}
+        return {"ok": False, "error": "unexpected_response"}, {}
+    return data, resp_headers
+
+
+def _slack_api(
+    method: str, token: str, *, params: dict[str, object] | None = None, timeout: float = API_TIMEOUT
+) -> dict[str, object]:
+    """Slack Web API を1回呼ぶ。**例外は投げない**——失敗は Slack 自身のエラー形
+    （`{"ok": False, "error": "..."}`）に揃えて返す。`chat.postMessage` は JSON の
+    POST、それ以外（`auth.test` / `conversations.replies`）はクエリ文字列の GET/POST
+    で送る（Slack Web API はどちらの形でも受け付けるが、POST 系は JSON、参照系は
+    クエリのほうが素直なのでそう分けてある）。
+    """
+    data, _headers = _slack_api_full(method, token, params=params, timeout=timeout)
     return data
 
 
@@ -236,6 +249,140 @@ def test_connection(home: Path | str | None = None) -> dict[str, object]:
         "checked_at": checked_at,
         "team": resp.get("team"),
         "user": resp.get("user"),
+    }
+
+
+#: `conversations.history` に実際に要るスコープ（チャンネルの公開／非公開で使い分ける）。
+_HISTORY_NEEDED_SCOPES: tuple[str, ...] = ("groups:history", "channels:history")
+
+#: `conversations.history` が失敗したときのエラー別の対処ヒント
+#: （v1 `apps/slack-relay/diagnose-receive.ps1` の switch 文の移植。T91）。
+_HISTORY_ERROR_HINTS: dict[str, str] = {
+    "missing_scope": (
+        "必要なスコープが Bot Token 側に付いていないか、再インストール後のトークンに"
+        "差し替えていません。付与済みスコープの一覧を確認してください"
+    ),
+    "not_in_channel": "Slack のそのチャンネルで /invite してこの Bot を招待してください",
+    "channel_not_found": "チャンネル ID が誤っているか、Bot から見えていません",
+}
+
+
+def diagnose(home: Path | str | None = None, *, user_id: str | None = None) -> dict[str, object]:
+    """Slack受信の詳細診断（T91。v1 `apps/slack-relay/diagnose-receive.ps1` の判断を移植）。
+
+    `test_connection` の「認証できるか」だけでなく、①トークン・チャンネルIDの保存
+    ②実際に付与されているスコープ ③チャンネルの種別とBotの在籍 ④
+    `conversations.history` が実際に成功するか、まで順に確かめる。**トークンの中身は
+    返さない**（先頭5文字の種別判定だけ）。例外は投げない。`steps` は途中で失敗しても
+    そこまでの結果を積んで返す。
+    """
+    home_path = Path(home) if home is not None else util.manor_home()
+    checked_at = util.now()
+    steps: list[dict[str, object]] = []
+
+    token = bot_token()
+    if not token:
+        return {
+            "ok": False,
+            "reason": "bot_token が未設定です（manor ext set slack --secret bot_token）",
+            "checked_at": checked_at,
+            "steps": steps,
+        }
+
+    cid = channel_id(home_path, user_id)
+    if not cid:
+        return {
+            "ok": False,
+            "reason": "channel が未設定です（manor ext set slack --field channel）",
+            "checked_at": checked_at,
+            "steps": steps,
+        }
+    format_hint = "" if re.match(r"^[CGD][A-Z0-9]+$", cid) else "⚠ チャンネルIDの形式が怪しいです（C/G で始まる英数字のはず）"
+    steps.append({"id": "channel_saved", "ok": True, "channel": cid, "format_hint": format_hint})
+
+    prefix = token[:5]
+    token_type = "bot" if prefix.startswith("xoxb") else "user" if prefix.startswith("xoxp") else "unknown"
+
+    data, headers = _slack_api_full("auth.test", token, params={})
+    if not data.get("ok"):
+        error = str(data.get("error") or "不明")
+        steps.append({"id": "auth", "ok": False, "detail": error})
+        return {
+            "ok": False,
+            "reason": f"認証に失敗しました: {error}",
+            "checked_at": checked_at,
+            "steps": steps,
+            "token_type": token_type,
+        }
+
+    scopes_raw = headers.get("x-oauth-scopes", "")
+    scopes = sorted(s.strip() for s in scopes_raw.split(",") if s.strip()) if scopes_raw else []
+    missing_needed = [s for s in _HISTORY_NEEDED_SCOPES if s not in scopes]
+    steps.append(
+        {
+            "id": "auth",
+            "ok": True,
+            "team": data.get("team"),
+            "user": data.get("user"),
+            "token_type": token_type,
+            "scopes": scopes,
+            "missing_needed": missing_needed,
+        }
+    )
+
+    info, _info_headers = _slack_api_full("conversations.info", token, params={"channel": cid})
+    if info.get("ok"):
+        ch = info.get("channel") or {}
+        is_private = bool(ch.get("is_private"))
+        is_member = bool(ch.get("is_member"))
+        steps.append(
+            {
+                "id": "channel_info",
+                "ok": True,
+                "name": ch.get("name"),
+                "is_private": is_private,
+                "is_member": is_member,
+                "required_scope": "groups:history" if is_private else "channels:history",
+            }
+        )
+    else:
+        # conversations.info には channels:read / groups:read が要る。未付与なら
+        # 想定内なので、ここでは全体を失敗にしない（v1 と同じ扱い）。
+        steps.append({"id": "channel_info", "ok": False, "detail": str(info.get("error") or "不明")})
+
+    hist, _hist_headers = _slack_api_full("conversations.history", token, params={"channel": cid, "limit": 1})
+    if hist.get("ok"):
+        steps.append({"id": "history", "ok": True, "count": len(hist.get("messages") or [])})
+        return {
+            "ok": True,
+            "reason": "",
+            "checked_at": checked_at,
+            "steps": steps,
+            "token_type": token_type,
+            "scopes": scopes,
+            "team": data.get("team"),
+            "user": data.get("user"),
+        }
+
+    error = str(hist.get("error") or "不明")
+    hint = _HISTORY_ERROR_HINTS.get(error, "SETUP-receive.md 相当の対処表を確認してください")
+    steps.append(
+        {
+            "id": "history",
+            "ok": False,
+            "detail": error,
+            "hint": hint,
+            "needed": hist.get("needed"),
+            "provided": hist.get("provided"),
+        }
+    )
+    return {
+        "ok": False,
+        "reason": f"conversations.history が失敗しました（{error}）: {hint}",
+        "checked_at": checked_at,
+        "steps": steps,
+        "token_type": token_type,
+        "scopes": scopes,
     }
 
 
@@ -2110,8 +2257,58 @@ def _cmd_morning(args: argparse.Namespace) -> int:
     return 0 if result.get("ok") else 1
 
 
+def _print_diagnose_result(result: dict[str, object]) -> None:
+    """`manor slack test --detail` の人向け出力（T91。v1 `diagnose-receive.ps1` 相当）。
+    **トークンの中身は出さない**（`diagnose()` 自体が種別判定だけを返す）。
+    """
+    for step in result.get("steps", []) or []:  # type: ignore[union-attr]
+        step_id = step.get("id")
+        ok = step.get("ok")
+        mark = "OK" if ok else "NG"
+        if step_id == "channel_saved":
+            print(f"[{mark}] チャンネルID: {step.get('channel')}")
+            if step.get("format_hint"):
+                print(f"    {step['format_hint']}")
+        elif step_id == "auth":
+            if ok:
+                print(
+                    f"[{mark}] 認証: team={step.get('team')} bot={step.get('user')}"
+                    f" token種別={step.get('token_type')}"
+                )
+                scopes = step.get("scopes") or []
+                print(f"    付与済みスコープ（{len(scopes)}件）: " + (", ".join(scopes) if scopes else "（取得できず）"))
+                missing = step.get("missing_needed") or []
+                if missing:
+                    print(f"    ⚠ 受信に要るスコープが不足しています: {', '.join(missing)}")
+            else:
+                print(f"[{mark}] 認証: {step.get('detail')}")
+        elif step_id == "channel_info":
+            if ok:
+                kind = "プライベート" if step.get("is_private") else "パブリック"
+                member = "はい" if step.get("is_member") else "いいえ（/invite が必要）"
+                print(f"[{mark}] チャンネル種別: #{step.get('name')}（{kind} → {step.get('required_scope')} が必要）")
+                print(f"    Bot在籍: {member}")
+            else:
+                print(f"[{mark}] チャンネル情報の取得: {step.get('detail')}（channels:read/groups:read 未付与なら想定内）")
+        elif step_id == "history":
+            if ok:
+                print(f"[{mark}] 本番の呼び出し（conversations.history）: {step.get('count')}件取得")
+            else:
+                print(f"[{mark}] 本番の呼び出し（conversations.history）: {step.get('detail')}")
+                print(f"    → {step.get('hint')}")
+    if result.get("reason"):
+        print(f"結論: {result['reason']}")
+
+
 def _cmd_test(args: argparse.Namespace) -> int:
     home = util.manor_home()
+    if getattr(args, "detail", False):
+        result = diagnose(home)
+        if args.json:
+            _print_json(result)
+        else:
+            _print_diagnose_result(result)
+        return 0 if result.get("ok") else 1
     result = test_connection(home)
     if args.json:
         _print_json(result)
@@ -2177,6 +2374,7 @@ def _add_slack_subcommands(sub: "argparse._SubParsersAction", *, needs_db: bool 
 
     t = sub.add_parser("test", help=i18n.t("cli.slack.test.help"))
     t.add_argument("--json", action="store_true")
+    t.add_argument("--detail", action="store_true")
     t.set_defaults(func=_cmd_test, **extra)
 
 

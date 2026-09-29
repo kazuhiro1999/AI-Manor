@@ -82,8 +82,12 @@ def detect(home: Path) -> dict[str, object]:
 
 
 def check(home: Path) -> dict[str, object]:
-    """`auth.test` を叩いて疎通を確かめる（ADR-009 D3）。**外部へ実際に触るので、
-    押されたときだけ呼ばれる**（画面の描画・一覧表示では回さない）。例外は投げない
-    ——`src/manor/slack.py` の `test_connection()` がその約束を守っている。
+    """`auth.test` から `conversations.history` まで一通り確かめる（ADR-009 D3・T91）。
+    **外部へ実際に触るので、押されたときだけ呼ばれる**（画面の描画・一覧表示では回さない）。
+    失敗したときの `reason` は、スコープ不足・招待漏れ等の当たりが付く形にする
+    （v1 `diagnose-receive.ps1` の判断を移植した `diagnose()`）。呼び出し側
+    （`extensions._safe_check`）は `ok`/`reason` しか読まないので、`diagnose()` が
+    追加で返す `steps` 等は無害に無視される。例外は投げない——`diagnose()` がその
+    約束を守っている。
     """
-    return slack_mod.test_connection(home)
+    return slack_mod.diagnose(home)
