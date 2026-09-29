@@ -16,6 +16,16 @@
 
 ---
 
+## 2026-09-30（Slack受信診断の詳細版をv2へ移植。T91）
+
+### 追加: Slack接続の不調時に、原因の当たりが付くようになった
+
+夜勤（板の未着手・T91）: v1 `apps/slack-relay/diagnose-receive.ps1` が持っていた
+「スコープ一覧・チャンネル種別・Bot在籍・`conversations.history` の成否」までの
+詳細診断を、`slack.py` の `diagnose()` として移植。`extensions/slack.py:check()` は
+これに差し替わり、`manor slack test --detail` で人からも直接叩けるようにした。
+従来は `auth.test` の成否しか見ておらず、失敗時に「何が足りないか」が分からなかった。
+
 ## 2026-09-29（姿（VRM）の初回読み込み中、輪郭のシルエットを先に出す。T41）
 
 ### 修正: 姿（VRM）の読み込み中、画面が無地のままだった
