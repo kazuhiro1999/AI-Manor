@@ -82,8 +82,12 @@ def test_c10_silent_when_archive_has_no_target_month(tmp_path: Path, home: Path)
     today_heading = f"## {util.today()}\n\n本文" + "x" * OVER
     changelog = tmp_path / "CHANGELOG.md"
     changelog.write_text(today_heading, encoding="utf-8")
+    growth = tmp_path / "GROWTH.md"
+    growth.write_text("y" * 100, encoding="utf-8")
 
-    results = check_mod.check_c10(home, extra_paths={"CHANGELOG.md": changelog})
+    results = check_mod.check_c10(
+        home, extra_paths={"CHANGELOG.md": changelog, "butler/GROWTH.md": growth}
+    )
     assert results == []
 
 
@@ -92,7 +96,11 @@ def test_c10_fires_when_archive_has_a_target_month(tmp_path: Path, home: Path):
     old_heading = "## 2020-01-01\n\n本文" + "x" * OVER
     changelog = tmp_path / "CHANGELOG.md"
     changelog.write_text(old_heading, encoding="utf-8")
+    growth = tmp_path / "GROWTH.md"
+    growth.write_text("y" * 100, encoding="utf-8")
 
-    results = check_mod.check_c10(home, extra_paths={"CHANGELOG.md": changelog})
+    results = check_mod.check_c10(
+        home, extra_paths={"CHANGELOG.md": changelog, "butler/GROWTH.md": growth}
+    )
     flagged = {item["path"] for item in results}
     assert "CHANGELOG.md" in flagged
