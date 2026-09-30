@@ -70,6 +70,55 @@ def test_changelog_heading_format_keep1_moves_2_months(tmp_path: Path):
         assert f"### 追加: 何か" in dest.read_text(encoding="utf-8")
 
 
+CHANGELOG_ANNOTATED_HEADINGS = """# CHANGELOG
+
+## 2026-07-01（何かその1）
+
+### 追加: 何か1
+
+説明1
+
+## 2026-08-09 その2（何かその2）
+
+### 追加: 何か2
+
+説明2
+
+## 2026-09-01
+
+### 追加: 何か3
+
+説明3
+"""
+
+
+def test_changelog_heading_with_annotation_is_recognized(tmp_path: Path):
+    # T108: 実物のCHANGELOG.mdは「## 2026-07-01（説明）」のように見出しへ注記が付く
+    # ことがほとんどで、日付のみの厳密一致では月がほぼ拾えなかった(2026-10-01実測)。
+    path = tmp_path / "CHANGELOG.md"
+    _write(path, CHANGELOG_ANNOTATED_HEADINGS)
+
+    result = archive_mod.apply(path, keep_months=1, today=TODAY)
+
+    assert result["written"]
+    archived_months = {row["month"] for row in result["archived_months"]}
+    assert archived_months == {"2026-07", "2026-08"}
+
+    text = path.read_text(encoding="utf-8")
+    assert "## 2026-09-01" in text
+    assert "## 2026-07-01（何かその1）" not in text
+    assert "## 2026-08-09 その2（何かその2）" not in text
+
+    dest7 = tmp_path / "docs" / "archive" / "CHANGELOG-2026-07.md"
+    assert "### 追加: 何か1" in dest7.read_text(encoding="utf-8")
+
+
+def test_heading_date_immediately_followed_by_digit_is_not_a_date():
+    # 「## 2026-09-301」のような紛らわしい並びは日付として拾わない((?!\\d)の検算)
+    assert archive_mod._HEADING_DATE_RE.match("## 2026-09-30（説明）")
+    assert not archive_mod._HEADING_DATE_RE.match("## 2026-09-301")
+
+
 def test_dry_run_does_not_write(tmp_path: Path):
     path = tmp_path / "CHANGELOG.md"
     original = CHANGELOG_3M

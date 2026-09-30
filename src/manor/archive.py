@@ -43,7 +43,10 @@ from . import i18n, util
 NAME = "archive"
 LABEL = "アーカイブ"
 
-_HEADING_DATE_RE = re.compile(r"^## (\d{4})-(\d{2})-(\d{2})\s*$")
+#: T108: 日付のみの見出し（`## 2026-09-02`）だけでなく、後ろに注記が付く見出し
+#: （`## 2026-09-30（説明）`・`## 2026-09-09 その2`）も月を拾う。ただし日付の直後に
+#: 別の数字が続く場合（`## 2026-09-301`）は誤検出なので `(?!\d)` で弾く。
+_HEADING_DATE_RE = re.compile(r"^## (\d{4})-(\d{2})-(\d{2})(?!\d)")
 _ANY_HEADING_RE = re.compile(r"^## ")
 _BULLET_DATE_RE = re.compile(r"^- (\d{4})-(\d{2})-(\d{2})\b")
 _TABLE_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
