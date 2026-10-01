@@ -627,7 +627,7 @@ def register(subparsers) -> None:
     p.add_argument("images", nargs="+")
     p.add_argument("--json", action="store_true")
     p.add_argument("--no-render", action="store_true")
-    p.add_argument("--no-claude", action="store_true", help="OCR だけで読む（Claude を呼ばない。T100）")
+    p.add_argument("--no-claude", action="store_true", help=i18n.t("cli.money.receipt.read.no_claude.help"))
     p.set_defaults(func=cmd_receipt_read, is_write=True)
 
     p = receipt_sub.add_parser("quick", help=i18n.t("cli.money.receipt.quick.help"))

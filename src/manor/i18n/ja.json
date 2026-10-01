@@ -242,6 +242,7 @@
   "cli.money.receipt.help": "レシートの読み取り（撮った画像 → 家計簿）",
   "cli.money.receipt.quick.help": "撮影直後の簡易チェック（紙・ぼけ・合計の有無）",
   "cli.money.receipt.read.help": "画像を読んで登録する（検算に落ちたら Claude、分類は辞書→Claude）",
+  "cli.money.receipt.read.no_claude.help": "OCR だけで読む（Claude を呼ばない。T100）",
   "cli.money.receipt.status.help": "OCR・Claude の導入状態と今日の枚数",
   "cli.night.done.help": "今夜の指示を1本「済んだ」と記録する（夜勤の席が叩く）",
   "cli.night.done.note.help": "何をしたか一言",

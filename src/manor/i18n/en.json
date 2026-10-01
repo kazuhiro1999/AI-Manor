@@ -242,6 +242,7 @@
   "cli.money.receipt.help": "Receipt scanning (photo -> household ledger)",
   "cli.money.receipt.quick.help": "Quick check right after shooting (paper, blur, total present)",
   "cli.money.receipt.read.help": "Read image(s) and register (Claude as fallback; classification via dictionary then Claude)",
+  "cli.money.receipt.read.no_claude.help": "Read with OCR only (no Claude call. T100)",
   "cli.money.receipt.status.help": "OCR / Claude availability and today's count",
   "cli.night.done.help": "Record one of tonight's items as done (the night's sitting calls this).",
   "cli.night.done.note.help": "One line on what was done.",
