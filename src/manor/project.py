@@ -87,6 +87,22 @@ def add(
     return project_id
 
 
+def open_tasks_for(conn: sqlite3.Connection, project_id: str) -> list[dict[str, object]]:
+    """`project_id` に紐づく、`done`/`withdrawn` でない task（T85）。
+
+    `project set --status done` を呼ぶ側が、書き換える前にここで未完了 task を
+    数え、警告に使う。`resident`（常駐）は取り下げの判断が要るので `status` を
+    そのまま返し、呼び出し側で見分けさせる。
+    """
+    rows = conn.execute(
+        "SELECT t.id, t.status, n.title FROM task t JOIN node n ON n.id = t.id"
+        " WHERE t.project_id = ? AND t.status NOT IN ('done', 'withdrawn')"
+        " ORDER BY t.id",
+        (project_id,),
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
 def set(
     conn: sqlite3.Connection,
     ref: str,

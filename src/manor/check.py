@@ -28,6 +28,7 @@ CHECK_LABELS: dict[str, str] = {
     "C15": "role='principal' がちょうど1件、role='butler' がちょうど1件（畳んでいないもの）",
     "C16": "外部視点の台帳の取り込みが「頻度」行の周期を超えて空いている（v1 の O1。T30）",
     "C17": "decision が approved/modified なのに decided_by 先の task が todo のまま（T46）",
+    "C18": "project が status=done なのに、紐づく task が done/withdrawn でないまま残っている（T85）",
 }
 
 #: 警告のみの check（C10・C11・C13・C16）。存在しても `manor check` の終了コードは変えない
@@ -351,6 +352,20 @@ def check_c17(conn: sqlite3.Connection) -> list[dict[str, object]]:
     )
 
 
+def check_c18(conn: sqlite3.Connection) -> list[dict[str, object]]:
+    """project が `status=done` なのに、紐づく task が `done`/`withdrawn` でないまま
+    残っている（T85。2026-09-20 実測: P1・P3 を畳んだとき、常駐タスク B27・B44 が
+    放置され警告も出ず、執事が手で取り下げた）。
+    """
+    return _rows(
+        conn,
+        "SELECT DISTINCT t.id, t.project_id, t.status FROM task t"
+        " JOIN project p ON p.id = t.project_id"
+        " WHERE p.status = 'done' AND t.status NOT IN ('done', 'withdrawn')"
+        " ORDER BY t.id",
+    )
+
+
 def run(conn: sqlite3.Connection, home: Path) -> dict[str, list[object]]:
     return {
         "C1": check_c1(conn),
@@ -370,6 +385,7 @@ def run(conn: sqlite3.Connection, home: Path) -> dict[str, list[object]]:
         "C15": check_c15(conn),
         "C16": check_c16(),
         "C17": check_c17(conn),
+        "C18": check_c18(conn),
     }
 
 

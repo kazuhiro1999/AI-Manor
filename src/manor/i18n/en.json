@@ -20,6 +20,7 @@
   "check.label.c15": "role='principal' should be exactly 1 row, and role='butler' exactly 1 row (not archived)",
   "check.label.c16": "The external-perspective ledger has gone past its stated cadence without a new round (v1's O1. T30).",
   "check.label.c17": "A decision is approved/modified but the task it decides is still todo (ruled, but nobody picked it up. T46)",
+  "check.label.c18": "A project is done but some of its tasks are not done/withdrawn (T85)",
   "check.label.c2": "doing untouched for 3 days (v_stale_doing)",
   "check.label.c3": "waiting but status_note is empty",
   "check.label.c4": "section=A but recommendation is empty, or there is no decided_by decision",

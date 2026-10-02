@@ -20,6 +20,7 @@
   "check.label.c15": "role='principal' がちょうど1件、role='butler' がちょうど1件（畳んでいないもの）",
   "check.label.c16": "外部視点の台帳の取り込みが「頻度」行の周期を超えて空いている（v1 の O1。T30）",
   "check.label.c17": "decision が approved/modified なのに decided_by 先の task が todo のまま（裁定は下りたが誰も拾っていない。T46）",
+  "check.label.c18": "project が status=done なのに、紐づく task が done/withdrawn でないまま残っている（T85）",
   "check.label.c2": "3日動いていない doing（v_stale_doing）",
   "check.label.c3": "waiting なのに status_note が空",
   "check.label.c4": "section=A なのに recommendation が空、または decided_by の decision が無い",
