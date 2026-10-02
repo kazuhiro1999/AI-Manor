@@ -133,6 +133,19 @@ NIGHT_LOCKED = "夜のあいだは休ませていただきます。"
 DISABLED_MESSAGE = "通話は現在ご利用いただけません（設定で停止中です）。"
 EMPTY_TEXT_MESSAGE = "うまく聞き取れませんでした。"
 
+#: T57: 返事に30秒以上かかるとき先に出す一言。**何をしているかは言わない**（言えないものを
+#: 言わない。主人の裁定 2026-09-11「30秒とかでも大丈夫」）。
+WAIT_LINE = "少々お待ちください。"
+
+#: T58: 返事を待つあいだ、実際に道具を使っているところを観測して言う（見積もりではない）。
+#: `claude -p --output-format stream-json` が1行ずつ流す `tool_use` イベントから判る分だけ。
+STATUS_READING = "お調べしています"       # Read/Grep/Glob
+STATUS_WORKING = "手続きしています"       # Bash（`manor …`）・その他の道具
+STATUS_SUMMARIZING = "まとめています"     # 道具なしで assistant の text が続く
+
+#: Read/Grep/Glob だけ「調べている」と言う（body の仕様どおり。他の道具は「手続き」扱い）。
+_READ_TOOL_NAMES: frozenset[str] = frozenset({"Read", "Grep", "Glob"})
+
 _HELLO_BY_TOD: dict[str, str] = {
     "morning": "おはようございます。",   # 05:00-10:59
     "day": "こんにちは。",               # 11:00-17:59
@@ -470,6 +483,23 @@ def open_session(
     }
 
 
+def wait_line(
+    home: Path, *, agent: str | None = None, play_here: bool = False,
+) -> dict[str, Any]:
+    """T57: 返事が30秒を超えて来ないとき、小窓が呼ぶ。**決まり文句のみ・LLM は呼ばない**。
+
+    `open_session` と同じ形（`voice.speak_detail` で合成し `audio_id` を返す。
+    `play_here=True` ならサーバでは鳴らさずブラウザ側に鳴らさせる）。
+    """
+    home = Path(home)
+    spoken = voice.speak_detail(home, WAIT_LINE, agent=agent, play=not play_here)
+    return {
+        "text": WAIT_LINE,
+        "spoke": bool(spoken.get("ok")),
+        "audio_id": str(spoken.get("audio_id") or ""),
+    }
+
+
 def close_session(home: Path) -> dict[str, Any]:
     """小窓を閉じた。**自分で起こしたエンジンだけ**片付ける（主人が先に起動していたら触らない）。"""
     global _engine_started_by_us
@@ -482,6 +512,96 @@ def close_session(home: Path) -> dict[str, Any]:
     except Exception:  # noqa: BLE001 - 後片付けの失敗で通話そのものを止めない
         result = {"stopped": False}
     return {"stopped": bool(result.get("stopped", False))}
+
+
+# --- T58: いま何をしているか（観測。声には出さない・小窓が3秒おきに取りに行く） -------------------
+
+#: 手元に持つ「いまの状態」。プロセスに1つ（小窓は同時に1本しか話さない前提。D18「同期で待つ」）。
+#: 呼び出し中だけ値が入り、終われば空へ戻す——**見積もりではなく観測**なので、古い値を残さない。
+_status_lock = threading.Lock()
+_status_text: str = ""
+
+
+def _set_status(text: str) -> None:
+    global _status_text
+    with _status_lock:
+        _status_text = text
+
+
+def current_status() -> str:
+    """いま執事が何をしているか（観測ベース。空文字は「話していない」）。"""
+    with _status_lock:
+        return _status_text
+
+
+def _status_from_event(obj: dict[str, Any]) -> str | None:
+    """stream-json の1行から状態を判る分だけ判定する（判らなければ `None`＝据え置き）。
+
+    `type=="assistant"` の `message.content` を見る: `tool_use` があれば道具の名前で
+    分ける（Read/Grep/Glob→調べ物、それ以外の道具→手続き）。道具なしで `text` があれば
+    「まとめています」。`thinking` だけの断片は道具でも文章でもないので判定しない。
+    """
+    if not isinstance(obj, dict) or obj.get("type") != "assistant":
+        return None
+    message = obj.get("message")
+    content = message.get("content") if isinstance(message, dict) else None
+    if not isinstance(content, list):
+        return None
+    saw_text = False
+    for block in content:
+        if not isinstance(block, dict):
+            continue
+        btype = block.get("type")
+        if btype == "tool_use":
+            name = str(block.get("name") or "")
+            return STATUS_READING if name in _READ_TOOL_NAMES else STATUS_WORKING
+        if btype == "text":
+            saw_text = True
+    return STATUS_SUMMARIZING if saw_text else None
+
+
+def _apply_status_line(raw_line: str) -> None:
+    """stdout の1行を読んで状態を更新する。**読めない・関係ない行は無視**（通話を止めない）。"""
+    line = raw_line.strip()
+    if not line.startswith("{"):
+        return
+    try:
+        obj = json.loads(line)
+    except ValueError:
+        return
+    status = _status_from_event(obj)
+    if status:
+        _set_status(status)
+
+
+def _find_result_event(lines: Sequence[str]) -> dict[str, Any] | None:
+    """stream-json の行の中から `type=="result"` を探す（**最後に見つかったもの**を採る。
+    `--include-partial-messages` は付けていないので通常1件だが、念のため）。
+    """
+    result: dict[str, Any] | None = None
+    for raw in lines:
+        line = raw.strip()
+        if not line.startswith("{"):
+            continue
+        try:
+            obj = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(obj, dict) and obj.get("type") == "result":
+            result = obj
+    return result
+
+
+def _check_result_event(data: dict[str, Any] | None) -> dict[str, Any]:
+    """`result` イベントの中身を検める。**返事が空・エラー・見つからない**は `TalkError`。"""
+    if data is None:
+        raise TalkError("返事を読み取れませんでした")
+    if data.get("is_error"):
+        raise TalkError(str(data.get("result") or "返事を作れませんでした"))
+    reply = str(data.get("result") or "").strip()
+    if not reply:
+        raise TalkError("返事が空でした")
+    return data
 
 
 # --- 文脈は時刻と時間帯だけ（D22。旧 D19 の PERSONA・要対応件数・予定の注入は撤回） --------------
@@ -623,7 +743,8 @@ def build_command(
     return [
         exe,
         "-p",
-        "--output-format", "json",
+        "--output-format", "stream-json",
+        "--verbose",  # stream-json の出力は --verbose が無いと claude 自身が起動を拒む（実測）
         "--model", model,
         "--permission-mode", "manual",
         "--max-turns", str(max_turns),
@@ -668,34 +789,6 @@ def _build_prompt(text: str, history: Sequence[dict[str, str]] | None) -> str:
     lines.append("")
     lines.append(f"主人: {text}")
     return "\n".join(lines)
-
-
-def _try_parse_json(stdout: str) -> dict[str, Any] | None:
-    """失敗経路の stdout を読めるだけ読む。**読めなくても例外にしない**——
-    `diagnose` に None のまま渡せば「読めなかった」と分かる形で返る。"""
-    try:
-        data = json.loads(stdout)
-    except ValueError:
-        return None
-    return data if isinstance(data, dict) else None
-
-
-def _parse_claude_json(stdout: str) -> dict[str, Any]:
-    """`--output-format json` の出力を読む。**返事が空・エラー・JSON でない**は
-    `TalkError`（呼び出し側が「失敗」として扱う。声には出さない）。
-    """
-    try:
-        data = json.loads(stdout)
-    except ValueError as exc:
-        raise TalkError("返事を読み取れませんでした") from exc
-    if not isinstance(data, dict):
-        raise TalkError("返事の形が想定と違います")
-    if data.get("is_error"):
-        raise TalkError(str(data.get("result") or "返事を作れませんでした"))
-    reply = str(data.get("result") or "").strip()
-    if not reply:
-        raise TalkError("返事が空でした")
-    return data
 
 
 def ask(
@@ -772,38 +865,81 @@ def ask(
         )
         _check_argv(cmd)
         prompt_text = _build_prompt(text, history)
+        stdout_lines: list[str] = []
+        stderr_lines: list[str] = []
         try:
-            proc = subprocess.run(
-                cmd,
-                cwd=str(_work_dir()),  # D21: manor のワークスペース（hooks・CLAUDE.md が効く）
-                env=_talk_env(home),
-                input=prompt_text,  # **argv には載せない**（v1 と同じ理由。改行・% の混入対策）
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                timeout=timeout,
-                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-            )
-        except subprocess.TimeoutExpired as exc:
-            raise TalkError(f"{int(timeout)}秒待っても返事がありませんでした") from exc
+            # **プロンプトは一時ファイルから渡す**（`night/runner._run_child` と同じ理由:
+            # Windows の CPython は stdin を呼び出しスレッドで同期的に書くため、パイプに
+            # 直接書くと大きめの入力で固まりうる。ファイル経由なら書き込みは OS 任せになる）。
+            with tempfile.TemporaryDirectory(prefix="manor-talk-") as tmpdir:
+                prompt_path = Path(tmpdir) / "prompt.txt"
+                prompt_path.write_text(prompt_text, encoding="utf-8")
+                with prompt_path.open("r", encoding="utf-8") as stdin_file:
+                    proc = subprocess.Popen(
+                        cmd,
+                        cwd=str(_work_dir()),  # D21: manor のワークスペース（hooks・CLAUDE.md が効く）
+                        env=_talk_env(home),
+                        stdin=stdin_file,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        text=True,
+                        encoding="utf-8",
+                        errors="replace",
+                        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+                    )
+
+                    def _drain_stdout() -> None:
+                        try:
+                            for line in proc.stdout:  # T58: 来た端から状態を更新する
+                                stdout_lines.append(line)
+                                _apply_status_line(line)
+                        except Exception:  # noqa: BLE001 - 観測の失敗で通話そのものを止めない
+                            pass
+
+                    def _drain_stderr() -> None:
+                        try:
+                            for line in proc.stderr:
+                                stderr_lines.append(line)
+                        except Exception:  # noqa: BLE001
+                            pass
+
+                    stdout_thread = threading.Thread(target=_drain_stdout, daemon=True)
+                    stderr_thread = threading.Thread(target=_drain_stderr, daemon=True)
+                    stdout_thread.start()
+                    stderr_thread.start()
+                    try:
+                        proc.wait(timeout=timeout)
+                    except subprocess.TimeoutExpired as exc:
+                        proc.kill()
+                        try:
+                            proc.wait(timeout=15)
+                        except Exception:  # noqa: BLE001
+                            pass
+                        stdout_thread.join(timeout=5)
+                        stderr_thread.join(timeout=5)
+                        _set_status("")
+                        raise TalkError(f"{int(timeout)}秒待っても返事がありませんでした") from exc
+                    stdout_thread.join(timeout=5)
+                    stderr_thread.join(timeout=5)
         except OSError as exc:
+            _set_status("")
             raise TalkError(f"呼び出せませんでした: {exc}") from exc
+        _set_status("")  # T58: 終わったら観測を空へ戻す（次の1往復に持ち越さない）
         if proc.returncode != 0:
             # T56: `--max-turns` に当たると stdout に terminal_reason=max_turns の
             # JSON が出て stderr には何も出ない。stderr の最終行しか見ない造りだと
             # 「終了コード 1」しか主人に届かない（夜勤で直した穴と同じ形）。
-            diag = runlog.diagnose(_try_parse_json(proc.stdout), code=proc.returncode, killed=False)
+            diag = runlog.diagnose(_find_result_event(stdout_lines), code=proc.returncode, killed=False)
             if diag.get("terminal_reason") == "max_turns":
                 raise TalkError(
                     f"ターン上限（{diag.get('num_turns')}）に達しました。もう少し狭い聞き方を"
                     "していただくか、執事の画面でお尋ねください"
                 )
-            tail_lines = (proc.stderr or "").strip().splitlines()
-            tail = tail_lines[-1] if tail_lines else f"終了コード {proc.returncode}"
+            stderr_tail_lines = "".join(stderr_lines).strip().splitlines()
+            tail = stderr_tail_lines[-1] if stderr_tail_lines else f"終了コード {proc.returncode}"
             detail = f"（{diag['subtype']}）" if diag.get("subtype") else ""
             raise TalkError(f"返事を作れませんでした: {tail}{detail}")
-        data = _parse_claude_json(proc.stdout)
+        data = _check_result_event(_find_result_event(stdout_lines))
     except TalkError as exc:
         seconds = round(time.time() - started, 1)
         if conn is not None and run_id is not None:

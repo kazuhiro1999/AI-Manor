@@ -35,6 +35,7 @@ def _passcode_client(home: Path) -> TestClient:
 def _mock_success(monkeypatch: pytest.MonkeyPatch, *, reply: str = "承知いたしました。") -> None:
     fake = json.dumps(
         {
+            "type": "result",
             "is_error": False,
             "result": reply,
             "total_cost_usd": 0.01,
@@ -42,8 +43,9 @@ def _mock_success(monkeypatch: pytest.MonkeyPatch, *, reply: str = "承知いた
             "usage": {"input_tokens": 10, "output_tokens": 5},
         }
     )
-    proc = Mock(returncode=0, stdout=fake, stderr="")
-    monkeypatch.setattr(talk_session.subprocess, "run", Mock(return_value=proc))
+    proc = Mock(returncode=0, stdout=[fake], stderr=[])
+    proc.wait = Mock(return_value=0)
+    monkeypatch.setattr(talk_session.subprocess, "Popen", Mock(return_value=proc))
     monkeypatch.setattr(talk_session.voice, "speak", Mock(return_value=True))
 
 
@@ -106,6 +108,36 @@ def test_post_talk_open_without_a_body_defaults_to_the_butler(
 
     assert client.post("/api/v1/face/talk/open").status_code == 200
     assert seen["agent"] == "butler"
+
+
+def test_post_talk_wait_shape(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """T57: 返事が30秒を超えたとき呼ぶ。決まり文句のみ・LLM は呼ばない。"""
+    monkeypatch.setenv("MANOR_NOW", NOON)
+    monkeypatch.setattr(talk_session.voice, "speak_detail", Mock(return_value={
+        "ok": True, "reason": "", "cached": True, "wav": "x.wav", "audio_id": "c" * 64,
+    }))
+    client = make_client(home)
+    res = client.post("/api/v1/face/talk/wait")
+    assert res.status_code == 200
+    body = res.json()
+    assert body == {"text": talk_session.WAIT_LINE, "spoke": True, "audio_id": "c" * 64}
+
+
+def test_post_talk_wait_passes_agent_and_play_here(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("MANOR_NOW", NOON)
+    seen: dict[str, object] = {}
+
+    def fake_wait_line(home_arg: Path, *, agent: str | None = None, play_here: bool = False) -> dict[str, object]:
+        seen["agent"] = agent
+        seen["play_here"] = play_here
+        return {"text": "少々お待ちください。", "spoke": True, "audio_id": ""}
+
+    monkeypatch.setattr(talk_session, "wait_line", fake_wait_line)
+    client = make_client(home)
+
+    res = client.post("/api/v1/face/talk/wait", json={"agent": "housekeeper", "play_here": True})
+    assert res.status_code == 200
+    assert seen == {"agent": "housekeeper", "play_here": True}
 
 
 def test_post_talk_ask_shape_on_success(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -179,7 +211,7 @@ def test_post_talk_ask_defaults_agent_to_butler_when_omitted(
 
 def test_post_talk_ask_failure_shape(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("MANOR_NOW", NOON)
-    monkeypatch.setattr(talk_session.subprocess, "run", Mock(side_effect=OSError("boom")))
+    monkeypatch.setattr(talk_session.subprocess, "Popen", Mock(side_effect=OSError("boom")))
     speak_mock = Mock(return_value=True)
     monkeypatch.setattr(talk_session.voice, "speak", speak_mock)
     client = make_client(home)
@@ -205,9 +237,28 @@ def test_post_talk_close_shape(home: Path) -> None:
 def test_read_only_blocks_the_three_write_routes_but_not_get(home: Path) -> None:
     client = make_client(home, read_only=True)
     assert client.get("/api/v1/face/talk").status_code == 200
+    assert client.get("/api/v1/face/talk/status").status_code == 200
     assert client.post("/api/v1/face/talk/open").status_code == 403
     assert client.post("/api/v1/face/talk", json={"text": "こんにちは"}).status_code == 403
+    assert client.post("/api/v1/face/talk/wait").status_code == 403
     assert client.post("/api/v1/face/talk/close").status_code == 403
+
+
+def test_get_talk_status_shape(home: Path) -> None:
+    """T58: 話していないときは空文字。"""
+    client = make_client(home)
+    res = client.get("/api/v1/face/talk/status")
+    assert res.status_code == 200
+    assert res.json() == {"text": ""}
+
+
+def test_get_talk_status_reflects_current_status(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from manor import talk_session as talk_session_mod
+
+    monkeypatch.setattr(talk_session_mod, "_status_text", talk_session_mod.STATUS_WORKING)
+    client = make_client(home)
+    res = client.get("/api/v1/face/talk/status")
+    assert res.json() == {"text": talk_session_mod.STATUS_WORKING}
 
 
 # --- 認証: /api/v1/... の一般規則で既にカバーされている ----------------------------------------
@@ -216,8 +267,10 @@ def test_read_only_blocks_the_three_write_routes_but_not_get(home: Path) -> None
 def test_talk_routes_require_auth_on_non_loopback(home: Path) -> None:
     client = _passcode_client(home)
     assert client.get("/api/v1/face/talk").status_code == 401
+    assert client.get("/api/v1/face/talk/status").status_code == 401
     assert client.post("/api/v1/face/talk/open").status_code == 401
     assert client.post("/api/v1/face/talk", json={"text": "こんにちは"}).status_code == 401
+    assert client.post("/api/v1/face/talk/wait").status_code == 401
     assert client.post("/api/v1/face/talk/close").status_code == 401
 
 
@@ -235,6 +288,7 @@ def test_is_guarded_path_covers_all_four_routes() -> None:
     """
     for path in (
         "/api/v1/face/talk",
+        "/api/v1/face/talk/status",
         "/api/v1/face/talk/open",
         "/api/v1/face/talk/close",
     ):

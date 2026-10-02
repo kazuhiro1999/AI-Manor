@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
 from datetime import date
 from pathlib import Path
 from unittest.mock import Mock
@@ -30,10 +31,12 @@ def _fix_clock(monkeypatch: pytest.MonkeyPatch, when: str = NOON) -> None:
     monkeypatch.setenv("MANOR_NOW", when)
 
 
-def _fake_claude_json(*, result: str, cost: float = 0.01, turns: int = 1) -> str:
+def _fake_claude_json(*, result: str, cost: float = 0.01, turns: int = 1, is_error: bool = False) -> str:
+    """stream-json の `type=="result"` 行1本ぶん（実機と同じ形。2026-09-25 実測で確認）。"""
     return json.dumps(
         {
-            "is_error": False,
+            "type": "result",
+            "is_error": is_error,
             "result": result,
             "total_cost_usd": cost,
             "num_turns": turns,
@@ -47,17 +50,33 @@ def _fake_claude_json(*, result: str, cost: float = 0.01, turns: int = 1) -> str
     )
 
 
+def _fake_proc(*, returncode: int = 0, stdout_lines: list[str] | None = None, stderr_lines: list[str] | None = None) -> Mock:
+    """`subprocess.Popen` の代わり。`.stdout`/`.stderr` は行のリスト（`for line in proc.stdout` を模す）。"""
+    proc = Mock(returncode=returncode, stdout=list(stdout_lines or []), stderr=list(stderr_lines or []))
+    proc.wait = Mock(return_value=returncode)
+    return proc
+
+
 def _mock_success(monkeypatch: pytest.MonkeyPatch, *, reply: str = "承知いたしました。") -> Mock:
-    proc = Mock(returncode=0, stdout=_fake_claude_json(result=reply), stderr="")
-    run_mock = Mock(return_value=proc)
-    monkeypatch.setattr(talk_session.subprocess, "run", run_mock)
-    return run_mock
+    proc = _fake_proc(stdout_lines=[_fake_claude_json(result=reply)])
+    popen_mock = Mock(return_value=proc)
+    monkeypatch.setattr(talk_session.subprocess, "Popen", popen_mock)
+    return popen_mock
 
 
 def _mock_failure(monkeypatch: pytest.MonkeyPatch, exc: Exception | None = None) -> Mock:
-    run_mock = Mock(side_effect=exc or OSError("claude が見つかりません"))
-    monkeypatch.setattr(talk_session.subprocess, "run", run_mock)
-    return run_mock
+    """既定は起動そのものの失敗（`Popen()` が例外）。`TimeoutExpired` を渡すと
+    「起動はできたが `wait()` が時間切れ」を模す（`ask()` は `proc.wait(timeout=...)` を見る）。
+    """
+    exc = exc or OSError("claude が見つかりません")
+    if isinstance(exc, subprocess.TimeoutExpired):
+        proc = _fake_proc()
+        proc.wait = Mock(side_effect=exc)
+        popen_mock = Mock(return_value=proc)
+    else:
+        popen_mock = Mock(side_effect=exc)
+    monkeypatch.setattr(talk_session.subprocess, "Popen", popen_mock)
+    return popen_mock
 
 
 def _mute_voice(monkeypatch: pytest.MonkeyPatch) -> Mock:
@@ -152,7 +171,7 @@ def test_refuses_at_limit_without_invoking_claude(home: Path, monkeypatch: pytes
     (home / "config.toml").write_text("[talk]\nlimit = 1\n", encoding="utf-8")
     talk_session.bump_usage(home, date(2026, 9, 4))
     run_mock = Mock()
-    monkeypatch.setattr(talk_session.subprocess, "run", run_mock)
+    monkeypatch.setattr(talk_session.subprocess, "Popen", run_mock)
     speak_mock = _mute_voice(monkeypatch)
 
     result = talk_session.ask(home, "こんにちは")
@@ -169,7 +188,7 @@ def test_refuses_at_limit_without_invoking_claude(home: Path, monkeypatch: pytes
 def test_refuses_during_locked_hours_without_invoking_claude(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     _fix_clock(monkeypatch, NIGHT)
     run_mock = Mock()
-    monkeypatch.setattr(talk_session.subprocess, "run", run_mock)
+    monkeypatch.setattr(talk_session.subprocess, "Popen", run_mock)
     _mute_voice(monkeypatch)
 
     result = talk_session.ask(home, "こんにちは")
@@ -184,7 +203,7 @@ def test_limit_zero_refuses_without_invoking_claude(home: Path, monkeypatch: pyt
     _fix_clock(monkeypatch)
     (home / "config.toml").write_text("[talk]\nlimit = 0\n", encoding="utf-8")
     run_mock = Mock()
-    monkeypatch.setattr(talk_session.subprocess, "run", run_mock)
+    monkeypatch.setattr(talk_session.subprocess, "Popen", run_mock)
     _mute_voice(monkeypatch)
 
     result = talk_session.ask(home, "こんにちは")
@@ -209,10 +228,8 @@ def test_failure_returns_ok_false_and_does_not_speak(home: Path, monkeypatch: py
 
 
 def test_timeout_is_a_failure_and_does_not_speak(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    import subprocess as subprocess_mod
-
     _fix_clock(monkeypatch)
-    _mock_failure(monkeypatch, subprocess_mod.TimeoutExpired(cmd=["claude"], timeout=180))
+    _mock_failure(monkeypatch, subprocess.TimeoutExpired(cmd=["claude"], timeout=180))
     speak_mock = _mute_voice(monkeypatch)
 
     result = talk_session.ask(home, "こんにちは")
@@ -243,8 +260,8 @@ def test_success_speaks_once_and_records_a_run_row(home: Path, conn, monkeypatch
 
 def test_claude_nonzero_exit_is_a_failure_and_records_it(home: Path, conn, monkeypatch: pytest.MonkeyPatch) -> None:
     _fix_clock(monkeypatch)
-    proc = Mock(returncode=1, stdout="", stderr="line1\nboom")
-    monkeypatch.setattr(talk_session.subprocess, "run", Mock(return_value=proc))
+    proc = _fake_proc(returncode=1, stderr_lines=["line1\nboom"])
+    monkeypatch.setattr(talk_session.subprocess, "Popen", Mock(return_value=proc))
     speak_mock = _mute_voice(monkeypatch)
 
     result = talk_session.ask(home, "こんにちは")
@@ -261,9 +278,11 @@ def test_max_turns_says_so_instead_of_just_an_exit_code(home: Path, conn, monkey
     """T56: `--max-turns` に当たると stdout に JSON が出て stderr は空になる。
     それまでは stderr の最終行しか見ておらず「終了コード 1」しか主人に届かなかった。"""
     _fix_clock(monkeypatch)
-    max_turns_json = json.dumps({"is_error": True, "num_turns": 160, "terminal_reason": "max_turns"})
-    proc = Mock(returncode=1, stdout=max_turns_json, stderr="")
-    monkeypatch.setattr(talk_session.subprocess, "run", Mock(return_value=proc))
+    max_turns_json = json.dumps(
+        {"type": "result", "is_error": True, "num_turns": 160, "terminal_reason": "max_turns"}
+    )
+    proc = _fake_proc(returncode=1, stdout_lines=[max_turns_json])
+    monkeypatch.setattr(talk_session.subprocess, "Popen", Mock(return_value=proc))
     speak_mock = _mute_voice(monkeypatch)
 
     result = talk_session.ask(home, "こんにちは")
@@ -279,8 +298,8 @@ def test_max_turns_says_so_instead_of_just_an_exit_code(home: Path, conn, monkey
 def test_stderr_only_failure_still_reads_the_stderr_tail(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """stderr にしか出ない失敗（trust の警告など）は、従来どおり最終行を読む。"""
     _fix_clock(monkeypatch)
-    proc = Mock(returncode=1, stdout="", stderr="line1\nthis workspace has not been trusted")
-    monkeypatch.setattr(talk_session.subprocess, "run", Mock(return_value=proc))
+    proc = _fake_proc(returncode=1, stderr_lines=["line1\nthis workspace has not been trusted"])
+    monkeypatch.setattr(talk_session.subprocess, "Popen", Mock(return_value=proc))
     _mute_voice(monkeypatch)
 
     result = talk_session.ask(home, "こんにちは")
@@ -292,7 +311,7 @@ def test_stderr_only_failure_still_reads_the_stderr_tail(home: Path, monkeypatch
 def test_empty_text_is_refused_without_counting(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     _fix_clock(monkeypatch)
     run_mock = Mock()
-    monkeypatch.setattr(talk_session.subprocess, "run", run_mock)
+    monkeypatch.setattr(talk_session.subprocess, "Popen", run_mock)
     result = talk_session.ask(home, "   ")
     assert result["ok"] is False
     run_mock.assert_not_called()
@@ -482,7 +501,7 @@ def test_ask_fails_gracefully_instead_of_leaking_when_percent_slips_through(
     _fix_clock(monkeypatch)
     monkeypatch.setattr(talk_session, "_now_line", lambda now: "いまは %USERNAME% ごろです。")
     run_mock = Mock()
-    monkeypatch.setattr(talk_session.subprocess, "run", run_mock)
+    monkeypatch.setattr(talk_session.subprocess, "Popen", run_mock)
     speak_mock = _mute_voice(monkeypatch)
 
     result = talk_session.ask(home, "こんにちは")
@@ -538,7 +557,7 @@ def test_open_session_available_returns_greeting_without_calling_claude(
 ) -> None:
     _fix_clock(monkeypatch)
     run_mock = Mock()
-    monkeypatch.setattr(talk_session.subprocess, "run", run_mock)
+    monkeypatch.setattr(talk_session.subprocess, "Popen", run_mock)
     _mute_voice(monkeypatch)
 
     result = talk_session.open_session(home)
@@ -598,6 +617,39 @@ def test_open_session_when_locked_speaks_the_reason(home: Path, monkeypatch: pyt
     speak_mock.assert_called_once_with(home, talk_session.NIGHT_LOCKED, agent=None, play=True)
 
 
+# --- T57: 返事が30秒を超えたときの一言 ----------------------------------------------------
+
+
+def test_wait_line_speaks_a_neutral_phrase(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """何をしているかは言わない——文言は `WAIT_LINE` 一本だけ。"""
+    speak_mock = _mute_voice_detail(monkeypatch)
+
+    result = talk_session.wait_line(home)
+
+    assert result["text"] == talk_session.WAIT_LINE
+    speak_mock.assert_called_once_with(home, talk_session.WAIT_LINE, agent=None, play=True)
+
+
+def test_wait_line_speaks_in_the_agents_voice(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    speak_mock = _mute_voice_detail(monkeypatch)
+
+    talk_session.wait_line(home, agent="housekeeper")
+
+    assert speak_mock.call_args.kwargs["agent"] == "housekeeper"
+
+
+def test_wait_line_with_play_here_does_not_play_on_the_server(
+    home: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """挨拶・返事と同じく、`play_here=True` ならサーバでは鳴らさない（2026-09-07 の型）。"""
+    speak_mock = _mute_voice_detail(monkeypatch)
+
+    result = talk_session.wait_line(home, play_here=True)
+
+    assert speak_mock.call_args.kwargs["play"] is False
+    assert result["audio_id"]
+
+
 def test_close_session_without_starting_engine_does_nothing(home: Path) -> None:
     talk_session._engine_started_by_us = False
     assert talk_session.close_session(home) == {"stopped": False}
@@ -613,6 +665,66 @@ def test_close_session_stops_only_what_it_started(home: Path, monkeypatch: pytes
     assert result == {"stopped": True}
     stop_mock.assert_called_once_with(home)
     assert talk_session._engine_started_by_us is False
+
+
+# --- T58: いま何をしているか（stream-json の tool_use を観測して言う） ---------------------------
+
+
+def _tool_use_line(name: str) -> str:
+    return json.dumps({"type": "assistant", "message": {"content": [{"type": "tool_use", "name": name, "input": {}}]}})
+
+
+def _text_line(text: str) -> str:
+    return json.dumps({"type": "assistant", "message": {"content": [{"type": "text", "text": text}]}})
+
+
+def test_status_observed_from_tool_use_and_text_events_in_order(
+    home: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """偽の claude が stream-json を数行流したとき、状態が観測の順に変わる。
+    終わったら空へ戻す（次の1往復に持ち越さない）——`_set_status` を差し替えて時系列で見る。
+    """
+    _fix_clock(monkeypatch)
+    seen: list[str] = []
+    monkeypatch.setattr(talk_session, "_set_status", lambda text: seen.append(text))
+    lines = [
+        _tool_use_line("Read"),
+        _tool_use_line("Bash"),
+        _text_line("まとめの本文"),
+        _fake_claude_json(result="かしこまりました。"),
+    ]
+    proc = _fake_proc(stdout_lines=lines)
+    monkeypatch.setattr(talk_session.subprocess, "Popen", Mock(return_value=proc))
+    _mute_voice(monkeypatch)
+    _mute_voice_detail(monkeypatch)
+
+    result = talk_session.ask(home, "こんにちは")
+
+    assert result["ok"] is True
+    assert result["reply"] == "かしこまりました。"
+    assert seen == [
+        talk_session.STATUS_READING,
+        talk_session.STATUS_WORKING,
+        talk_session.STATUS_SUMMARIZING,
+        "",
+    ]
+
+
+def test_status_resets_to_empty_after_failure_too(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """失敗の経路でも観測を空へ戻す——古い状態が次の往復に残らない。"""
+    _fix_clock(monkeypatch)
+    talk_session._set_status(talk_session.STATUS_WORKING)
+    _mock_failure(monkeypatch)
+    _mute_voice(monkeypatch)
+
+    talk_session.ask(home, "こんにちは")
+
+    assert talk_session.current_status() == ""
+
+
+def test_current_status_is_empty_when_idle() -> None:
+    talk_session._set_status("")
+    assert talk_session.current_status() == ""
 
 
 # --- D22: 系統プロンプトは時刻と時間帯だけ（旧 D19 の人格・要対応件数・予定は撤回） --------------
@@ -676,7 +788,7 @@ def test_refusal_message_is_also_spoken_with_the_passed_agent(
     """打ち止め・時間外の理由も、窓の担当の声で伝える（同じ小窓なので声も揃える）。"""
     _fix_clock(monkeypatch, NIGHT)
     run_mock = Mock()
-    monkeypatch.setattr(talk_session.subprocess, "run", run_mock)
+    monkeypatch.setattr(talk_session.subprocess, "Popen", run_mock)
     speak_mock = _mute_voice(monkeypatch)
 
     talk_session.ask(home, "こんにちは", agent="chef")
@@ -798,7 +910,7 @@ def test_ask_launches_the_agent_persona_for_non_butler_windows(
 
     talk_session.ask(home, "ゴミの日を教えてください", agent="housekeeper")
 
-    argv = talk_session.subprocess.run.call_args[0][0]
+    argv = talk_session.subprocess.Popen.call_args[0][0]
     assert "--agent" in argv
     assert argv[argv.index("--agent") + 1] == "housekeeper"
 
@@ -814,7 +926,7 @@ def test_ask_leaves_the_butler_as_the_default_persona(
 
     talk_session.ask(home, "状況を教えてください", agent="butler")
 
-    assert "--agent" not in talk_session.subprocess.run.call_args[0][0]
+    assert "--agent" not in talk_session.subprocess.Popen.call_args[0][0]
 
 
 def test_ask_falls_back_to_the_default_persona_for_an_unknown_agent(
@@ -831,4 +943,4 @@ def test_ask_falls_back_to_the_default_persona_for_an_unknown_agent(
     result = talk_session.ask(home, "こんにちは", agent="そんな担当はいません")
 
     assert result["ok"] is True
-    assert "--agent" not in talk_session.subprocess.run.call_args[0][0]
+    assert "--agent" not in talk_session.subprocess.Popen.call_args[0][0]

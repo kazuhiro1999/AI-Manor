@@ -37,6 +37,13 @@ class TalkOpenRequest(BaseModel):
     play_here: bool = False
 
 
+class TalkWaitRequest(BaseModel):
+    """返事待ちが30秒を超えたときの body。`open`・`ask` と同じ形。"""
+
+    agent: str = "butler"
+    play_here: bool = False
+
+
 class TalkAskRequest(BaseModel):
     text: str = Field(..., min_length=1)
     history: list[TalkTurn] = Field(default_factory=list)
@@ -68,6 +75,23 @@ def register(app: FastAPI, ctx: WebContext) -> None:
         agent = (body.agent if body is not None else None) or "butler"
         play_here = bool(body.play_here) if body is not None else False
         return talk_session.open_session(ctx.home, agent=agent, play_here=play_here)
+
+    @app.get("/api/v1/face/talk/status")
+    def talk_status() -> dict[str, object]:
+        """T58: いま執事が何をしているか（観測。読み取り専用）。**声は出さない**——
+        小窓が3秒おきに取りに行き、文字だけ差し替える。返事の最中でなければ空文字。
+        """
+        return {"text": talk_session.current_status()}
+
+    @app.post("/api/v1/face/talk/wait")
+    def talk_wait(body: TalkWaitRequest | None = None) -> dict[str, object]:
+        """T57: 返事が30秒を超えて来ないとき呼ぶ。決まり文句「少々お待ちください」を
+        声に出す（何をしているかは言わない）。`agent`・`play_here` は `open` と同じ意味。
+        """
+        require_writable(ctx)
+        agent = (body.agent if body is not None else None) or "butler"
+        play_here = bool(body.play_here) if body is not None else False
+        return talk_session.wait_line(ctx.home, agent=agent, play_here=play_here)
 
     @app.post("/api/v1/face/talk")
     def talk_ask(body: TalkAskRequest) -> dict[str, object]:
