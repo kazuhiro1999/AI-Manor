@@ -1103,6 +1103,7 @@ export const en: { [K in TranslationKey]: MirrorEntry<K> } = {
   "tasks.timeline.markUndone": "Mark not done",
   "tasks.timeline.markDone": "Mark done",
   "tasks.timeline.looseHeading": "Unscheduled (projects with no dates)",
+  "tasks.timeline.priorityHeading": "Priority (no due date, but wanted sooner)",
   "tasks.timeline.reminderDone": "Marked the reminder done.",
   "tasks.timeline.reminderUpdateFailed": (p) => `Couldn't update the reminder: ${p.reason}`,
   "tasks.projects.heading": "Projects",

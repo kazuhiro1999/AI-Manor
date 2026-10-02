@@ -514,6 +514,27 @@ def get_timeline(conn: sqlite3.Connection, days: int, user_id: str | None = None
             },
         )
 
+    # --- 優先タスク（T83・D24。期限は無いが早くやりたい印を付けたもの） ---
+    # 上の task 帯は due/start/end を持つものだけを見る（「書いていないタスクは出さない」）
+    # ので、期限の無いタスクはこのままだとタイムライン画面のどこにも出ない。`pinned` を
+    # 立てたものだけ、帯とは別に「優先」欄として返す（日付を推測して帯に混ぜない）。
+    priority_sql = (
+        "SELECT t.id, t.project_id, t.status, n.title AS title"
+        " FROM task t JOIN node n ON n.id = t.id"
+        " WHERE t.pinned = 1"
+        " AND t.due IS NULL AND t.start IS NULL AND t.\"end\" IS NULL"
+        f" AND t.status NOT IN ({', '.join('?' for _ in _CLOSED_STATUSES)})"
+    )
+    priority_params: list[object] = list(sorted(_CLOSED_STATUSES))
+    if user_id is not None:
+        priority_sql += " AND t.user_id = ?"
+        priority_params.append(user_id)
+    priority_sql += " ORDER BY t.id"
+    priority_tasks = [
+        {"id": r["id"], "project_id": r["project_id"], "title": r["title"], "status": r["status"]}
+        for r in conn.execute(priority_sql, priority_params).fetchall()
+    ]
+
     # --- secretary_event（予定。secretary が居なければ黙って空） ---
     # ⚠ 2026-09-07: タイムラインは **カレンダーを1行も読んでいなかった**——9/8 の
     # 打ち合わせが画面に出ないと主人からご指摘。節目・期限・課題・控えだけを見ていて、
@@ -595,6 +616,7 @@ def get_timeline(conn: sqlite3.Connection, days: int, user_id: str | None = None
         "horizon_days": days,
         "horizon": horizon.isoformat(),
         "lanes": ordered,
+        "priority_tasks": priority_tasks,
     }
 
 

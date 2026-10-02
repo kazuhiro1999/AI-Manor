@@ -3,7 +3,7 @@ import { Route, Routes } from "react-router-dom";
 import { TabLink } from "../../components/TabLink";
 import { usePolling } from "../../app/polling";
 import { api, ApiError } from "../../app/api";
-import type { Board, Milestone, Project, Timeline, TimelineEvent, TimelineLane } from "../../app/types";
+import type { Board, Milestone, Project, PriorityTask, Timeline, TimelineEvent, TimelineLane } from "../../app/types";
 import { daysLeftClass, daysLeftText, projectLabel } from "./utils";
 import { useToast } from "../../components/Toast";
 import { formatDay, useT, type TranslationKey } from "../../app/i18n";
@@ -200,8 +200,30 @@ function PlanTimeline({ readOnly }: { readOnly: boolean }) {
           </>
         )}
       </div>
+      {/* T83・D24: 期限は無いが `pinned` を立てたタスク。上の帯は due/start/end が
+          無いタスクを出さない約束なので、ここだけ別に見せる（新しい予定は作らない）。 */}
+      <div id="timeline-priority" className="tl-loose">
+        {data.priority_tasks.length > 0 && (
+          <>
+            <div className="status-block-head">{t("tasks.timeline.priorityHeading")}</div>
+            {data.priority_tasks.map((pt: PriorityTask) => (
+              <div className="tl-loose-item" key={pt.id}>
+                {pt.title}
+                {pt.project_id && projectNameById(data.lanes, pt.project_id) && (
+                  <span className="tl-priority-project"> [{projectNameById(data.lanes, pt.project_id)}]</span>
+                )}
+              </div>
+            ))}
+          </>
+        )}
+      </div>
     </section>
   );
+}
+
+function projectNameById(lanes: TimelineLane[], projectId: string): string | null {
+  const lane = lanes.find((ln) => ln.project_id === projectId);
+  return lane ? lane.name : null;
 }
 
 function PlanProjects() {

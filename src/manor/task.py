@@ -320,8 +320,11 @@ def set(
     kind: str | None = None,
     status_note: str | None = None,
     user: str | None = None,
+    pinned: bool | None = None,
 ) -> str:
     """`status_note` は**状態を変えずに、待っている理由だけを書き直す**ための口。
+
+    `pinned`（T83・D24）: 期限は無いが早くやりたいタスクの印。`None`（既定）は変えない。
 
     射影（`render.format_active`）は `waiting` / `hold` のタスクについて `now` ではなく
     `status_note` を出す。ところが `status_note` を書けるのは `status()` だけで、
@@ -386,6 +389,8 @@ def set(
         fields["status_note"] = status_note
     if user is not None:
         fields["user_id"] = user
+    if pinned is not None:
+        fields["pinned"] = 1 if pinned else 0
     if fields:
         sets = ", ".join(f"{k} = ?" for k in fields)
         conn.execute(f"UPDATE task SET {sets} WHERE id = ?", (*fields.values(), task_id))
@@ -569,6 +574,7 @@ def show(conn: sqlite3.Connection, task_id: str) -> dict[str, object]:
     row = _row(conn, task_id)
     node = graph.get_node(conn, task_id)
     out = dict(row)
+    out["pinned"] = bool(row["pinned"])
     out["title"] = node["title"] if node else ""
     out["body"] = node["body"] if node else ""
     out["created_at"] = node["created_at"] if node else ""

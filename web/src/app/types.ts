@@ -158,11 +158,19 @@ export interface TimelineLane {
   scheduled: boolean;
 }
 
+export interface PriorityTask {
+  id: string;
+  project_id: string | null;
+  title: string;
+  status: string;
+}
+
 export interface Timeline {
   today: string;
   horizon_days: number;
   horizon: string;
   lanes: TimelineLane[];
+  priority_tasks: PriorityTask[];
 }
 
 export interface Handoff {

@@ -191,6 +191,43 @@ def test_timeline_keeps_unscheduled_project_as_lane(conn, home: Path):
     assert lane["scheduled"] is False
 
 
+def test_timeline_lists_pinned_task_without_due_date(conn, home: Path):
+    """T83・D24: 期限は無いが `pinned` を立てたタスクは帯には出ず、`priority_tasks` に出る。"""
+    tid = task_mod.add(conn, "早くやりたいがいつでもいいタスク")
+    task_mod.set(conn, tid, pinned=True)
+    conn.commit()
+
+    client = make_client(home)
+    body = client.get("/api/timeline").json()
+
+    assert tid in {t["id"] for t in body["priority_tasks"]}
+    refs = {e["ref"] for ln in body["lanes"] for e in ln["events"]}
+    assert tid not in refs
+
+
+def test_timeline_omits_unpinned_task_without_due_date(conn, home: Path):
+    task_mod.add(conn, "期限も優先印も無いタスク")
+    conn.commit()
+
+    client = make_client(home)
+    body = client.get("/api/timeline").json()
+
+    assert body["priority_tasks"] == []
+
+
+def test_timeline_omits_finished_pinned_task(conn, home: Path):
+    tid = task_mod.add(conn, "終わった優先タスク")
+    task_mod.set(conn, tid, pinned=True)
+    task_mod.status(conn, tid, "doing")
+    task_mod.status(conn, tid, "done", note="")
+    conn.commit()
+
+    client = make_client(home)
+    body = client.get("/api/timeline").json()
+
+    assert tid not in {t["id"] for t in body["priority_tasks"]}
+
+
 # --- log -------------------------------------------------------------------------------
 
 

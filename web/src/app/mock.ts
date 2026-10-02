@@ -1405,7 +1405,7 @@ function computeTimeline(days: number): Timeline {
         ]
       : [],
   }));
-  return { today: TODAY, horizon_days: days, horizon: daysFromToday(days), lanes };
+  return { today: TODAY, horizon_days: days, horizon: daysFromToday(days), lanes, priority_tasks: [] };
 }
 
 function computeLog(): LogData {

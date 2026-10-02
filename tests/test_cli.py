@@ -81,6 +81,30 @@ def test_task_status_invalid_vocab_is_exit_2(home_path: Path, capsys):
     assert code == 2
 
 
+def test_task_set_pinned_and_unpin(home_path: Path, capsys):
+    """T83・D24: `--pinned`/`--unpin` は排他で、`task show` に反映される。"""
+    cli.main(["init"])
+    capsys.readouterr()
+    cli.main(["task", "add", "早くやりたい件", "--json"])
+    tid = json.loads(capsys.readouterr().out)["id"]
+    capsys.readouterr()
+
+    assert cli.main(["task", "set", tid, "--pinned", "--json"]) == 0
+    capsys.readouterr()
+    cli.main(["task", "show", tid, "--json"])
+    show_out = json.loads(capsys.readouterr().out)
+    assert show_out["pinned"] is True
+
+    assert cli.main(["task", "set", tid, "--unpin", "--json"]) == 0
+    capsys.readouterr()
+    cli.main(["task", "show", tid, "--json"])
+    show_out = json.loads(capsys.readouterr().out)
+    assert show_out["pinned"] is False
+
+    with pytest.raises(SystemExit):
+        cli.main(["task", "set", tid, "--pinned", "--unpin"])
+
+
 def test_task_set_status_is_rejected_not_aliased_to_status_note(home_path: Path, capsys):
     """`task set` に `--status` は無い（状態変更は `task status` の担当）。既定の argparse は
     未知の長い引数を唯一の接頭辞候補（`--status-note`）へ黙って解釈するため、直さないと

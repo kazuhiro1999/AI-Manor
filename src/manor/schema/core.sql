@@ -54,7 +54,11 @@ CREATE TABLE IF NOT EXISTS task (
   source      TEXT NOT NULL DEFAULT '',
   -- ADR-014 D2: 「誰の件か」（`owner`＝誰が動かすか、とは別軸）。既定 `master`。
   -- 決め方・一回きりの埋め方は `src/manor/user.py` の `resolve_default`/`backfill_user_ids`。
-  user_id     TEXT NOT NULL DEFAULT 'master'
+  user_id     TEXT NOT NULL DEFAULT 'master',
+  -- T83・D24（2026-09-23）: 期限は無いが早くやりたいタスクの印。タイムラインは
+  -- due/start/end の無いタスクを出さない約束（「書いていないタスクは出さない」）ので、
+  -- ここで別に「優先」と印を付けたものだけをタイムライン下の別欄に出す。
+  pinned      INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS task_status ON task(status, section);
 

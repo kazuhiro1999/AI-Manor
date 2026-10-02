@@ -153,6 +153,7 @@ def cmd_task_add(conn, home, args) -> object:
 
 def cmd_task_set(conn, home, args) -> object:
     _warn_long_fields(title=args.title, goal=args.goal, now=args.now, next=args.next)
+    pinned = True if args.pinned else (False if args.unpin else None)
     task_id = task_mod.set(
         conn,
         args.id,
@@ -169,6 +170,7 @@ def cmd_task_set(conn, home, args) -> object:
         kind=args.kind,
         status_note=args.status_note,
         user=args.user,
+        pinned=pinned,
     )
     if args.json:
         return {"id": task_id}
@@ -918,6 +920,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--risk")
     p.add_argument("--kind", help=i18n.t("cli.task.set.kind.help"))
     p.add_argument("--user", help=i18n.t("cli.task.set.user.help"))
+    pin_group = p.add_mutually_exclusive_group()
+    pin_group.add_argument("--pinned", action="store_true", help=i18n.t("cli.task.set.pinned.help"))
+    pin_group.add_argument("--unpin", action="store_true", help=i18n.t("cli.task.set.unpin.help"))
     p.add_argument("--json", action="store_true")
     p.add_argument("--no-render", action="store_true")
     p.set_defaults(func=cmd_task_set, is_write=True)

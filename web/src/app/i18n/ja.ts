@@ -1105,6 +1105,7 @@ export const ja = {
   "tasks.timeline.markUndone": "未済に戻す",
   "tasks.timeline.markDone": "済にする",
   "tasks.timeline.looseHeading": "随時（予定の無いプロジェクト）",
+  "tasks.timeline.priorityHeading": "優先（期限は無いが早くやりたいもの）",
   "tasks.timeline.reminderDone": "控えを済にしました。",
   "tasks.timeline.reminderUpdateFailed": (p) => `控えを更新できませんでした: ${p.reason}`,
   "tasks.projects.heading": "プロジェクト俯瞰",

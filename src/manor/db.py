@@ -295,6 +295,8 @@ def migrate_core(home: Path) -> None:
         _add_column_if_missing(conn, "task", "kind", "TEXT NOT NULL DEFAULT ''")
         # T37（2026-09-10）: 起票の出所（意見箱等）を持たせる列。
         _add_column_if_missing(conn, "task", "source", "TEXT NOT NULL DEFAULT ''")
+        # T83・D24（2026-09-23）: 期限の無いタスクの「優先」印。既存 DB は全部 0＝無印から始まる。
+        _add_column_if_missing(conn, "task", "pinned", "INTEGER NOT NULL DEFAULT 0")
         # 済んだ節目（2026-09-05）。既存 DB は全部 NULL＝「まだ」から始まる。
         _add_column_if_missing(conn, "milestone", "done_at", "TEXT")
         # 予定をプロジェクトへ結ぶ列（2026-09-07）。**秘書の表だが、ここで足してよい**
@@ -414,6 +416,9 @@ def init(home: Path, *, seed_chef_food: bool = False) -> list[str]:
         # `user.backfill_user_ids()` が読みに行き `sqlite3.OperationalError` になる穴が
         # あった（`tests/test_db_migration.py` の `_make_old_task_db` で実測）。
         _add_column_if_missing(conn, "task", "source", "TEXT NOT NULL DEFAULT ''")
+        # T83・D24（2026-09-23）: 既存 DB の task に「優先」印の列を冪等に足す（新規 DB は
+        # core.sql の CREATE TABLE が最初から持つ）。
+        _add_column_if_missing(conn, "task", "pinned", "INTEGER NOT NULL DEFAULT 0")
 
         # ADR-014 D2: 既存 DB の project/task に「誰の件か」を冪等に足す（新規 DB は
         # core.sql の CREATE TABLE が最初から持つ）。**列を足すのは
