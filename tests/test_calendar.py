@@ -489,3 +489,107 @@ def test_sync_keeps_project_link_when_an_event_moves(home, conn):
     assert len(rows) == 1
     assert str(rows[0]["start"]).startswith("2026-09-08")
     assert rows[0]["project_id"] == pid
+
+
+# --- T92: 期間内に予定が無ければ次の1件を覗く（v1 `-NextWhenEmpty -LookAhead` 相当） ------------
+
+
+def _insert_manual_event(conn, *, start: str, title: str, place: str = "") -> None:
+    conn.execute(
+        'INSERT INTO secretary_event (start, "end", title, place, note, source, external_id, created_at)'
+        " VALUES (?, NULL, ?, ?, '', 'manual', NULL, ?)",
+        (start, title, place, util.now()),
+    )
+    conn.commit()
+
+
+def test_next_event_after_finds_the_nearest_one_within_look_ahead(home: Path, conn) -> None:
+    _insert_manual_event(conn, start="2026-09-20T10:00:00", title="遠い予定")
+    _insert_manual_event(conn, start="2026-09-15T09:00:00", title="近い予定", place="自宅")
+
+    nxt = calendar_mod.next_event_after(home, after="2026-09-12", look_ahead_days=30)
+
+    assert nxt is not None
+    assert nxt["title"] == "近い予定"
+    assert nxt["place"] == "自宅"
+
+
+def test_next_event_after_ignores_events_within_the_original_window(home: Path, conn) -> None:
+    """`after` の日を含めない——元の期間内の予定を「次回」として二重に出さない。"""
+    _insert_manual_event(conn, start="2026-09-12T10:00:00", title="期間内の予定")
+
+    nxt = calendar_mod.next_event_after(home, after="2026-09-12", look_ahead_days=30)
+
+    assert nxt is None
+
+
+def test_next_event_after_respects_look_ahead_window(home: Path, conn) -> None:
+    _insert_manual_event(conn, start="2026-10-20T10:00:00", title="ずっと先の予定")
+
+    assert calendar_mod.next_event_after(home, after="2026-09-12", look_ahead_days=30) is None
+    far = calendar_mod.next_event_after(home, after="2026-09-12", look_ahead_days=60)
+    assert far is not None and far["title"] == "ずっと先の予定"
+
+
+def test_next_event_after_raises_without_secretary_table_like_list_events(home_path: Path) -> None:
+    """`manor init` 前（`secretary_event` が無い home）は `list_events` と同じく `ManorError`
+    （`_require_secretary` 経由。CLI 側は `test_cli_calendar_list_empty_home_reports_error` と
+    同じく code=2 として拾う）。"""
+    home_path.mkdir(parents=True, exist_ok=True)
+    with pytest.raises(ManorError):
+        calendar_mod.next_event_after(home_path, after="2026-09-12")
+
+
+def test_cli_calendar_list_next_when_empty_shows_the_next_event(
+    home: Path, conn, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from manor import cli as cli_mod
+
+    _fix_clock(monkeypatch)
+    _insert_manual_event(conn, start="2026-09-20T10:00:00", title="打ち合わせ", place="会議室")
+
+    rc = cli_mod.main(["calendar", "list", "--days", "7", "--next-when-empty"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "打ち合わせ" in out
+    assert "会議室" in out
+
+
+def test_cli_calendar_list_next_when_empty_says_so_when_none_within_look_ahead(
+    home: Path, conn, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from manor import cli as cli_mod
+
+    _fix_clock(monkeypatch)
+    rc = cli_mod.main(["calendar", "list", "--days", "7", "--next-when-empty", "--look-ahead", "5"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "5" in out
+
+
+def test_cli_calendar_list_without_next_when_empty_stays_silent(
+    home: Path, conn, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """既定（フラグ無し）は今までどおり——次回の予定を勝手に覗かない。"""
+    from manor import cli as cli_mod
+
+    _fix_clock(monkeypatch)
+    _insert_manual_event(conn, start="2026-09-20T10:00:00", title="打ち合わせ")
+
+    rc = cli_mod.main(["calendar", "list", "--days", "7"])
+    assert rc == 0
+    assert "打ち合わせ" not in capsys.readouterr().out
+
+
+def test_cli_calendar_list_json_ignores_next_when_empty(
+    home: Path, conn, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`--json` は人間向けの「次回を覗く」表示をしない（v1 と同じく機械読みの形を変えない）。"""
+    from manor import cli as cli_mod
+
+    _fix_clock(monkeypatch)
+    _insert_manual_event(conn, start="2026-09-20T10:00:00", title="打ち合わせ")
+
+    rc = cli_mod.main(["calendar", "list", "--days", "7", "--next-when-empty", "--json"])
+    assert rc == 0
+    assert json.loads(capsys.readouterr().out) == []

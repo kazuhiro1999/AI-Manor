@@ -7,6 +7,8 @@
   "archive.cli.row_line": "  {month} -> {dest}（{count}件）",
   "archive.cli.written": "書き換えました。",
   "calendar.list.line": "{start} {title}{place}（source={source} id={id}）",
+  "calendar.list.next": "次の予定は {start} {title}{place}",
+  "calendar.list.next_none": "先の {days} 日にも予定はありません",
   "calendar.sync.done": "同期しました（追加 {added} / 更新 {updated} / 削除 {removed}）",
   "calendar.sync.failed": "同期できませんでした: {reason}",
   "check.label.c1": "ブロッカーが片付いたのに waiting/hold のまま（v_blocked_ready）",

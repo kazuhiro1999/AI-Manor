@@ -7,6 +7,8 @@
   "archive.cli.row_line": "  {month} -> {dest} ({count} items)",
   "archive.cli.written": "Rewritten.",
   "calendar.list.line": "{start} {title}{place} (source={source} id={id})",
+  "calendar.list.next": "Next event: {start} {title}{place}",
+  "calendar.list.next_none": "No events in the next {days} days either.",
   "calendar.sync.done": "Synced (added {added} / updated {updated} / removed {removed}).",
   "calendar.sync.failed": "Could not sync: {reason}",
   "check.label.c1": "Still waiting/hold even though the blocker is resolved (v_blocked_ready)",

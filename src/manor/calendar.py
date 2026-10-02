@@ -324,6 +324,27 @@ def list_events(home: Path | str, *, days: int = 7) -> list[dict[str, object]]:
     return rows
 
 
+def next_event_after(home: Path | str, *, after: str, look_ahead_days: int = 30) -> dict[str, object] | None:
+    """`after`（ISO日付。この日は含まない）より後・`look_ahead_days` 日以内で最も近い1件。
+    無ければ `None`。T92: v1 `get-events.ps1 -NextWhenEmpty -LookAhead` と同じ考え方
+    ——指定期間に予定が無いとき、次回の1件だけを覗いて「予定なし」の埋もれを防ぐ。
+    """
+    home = Path(home)
+    conn = db.connect(home)
+    try:
+        _require_secretary(conn)
+        start_after = (date.fromisoformat(after) + timedelta(days=1)).isoformat()
+        end = (date.fromisoformat(after) + timedelta(days=max(look_ahead_days, 0) + 1)).isoformat()
+        row = conn.execute(
+            'SELECT id, start, "end", title, place, note, source FROM secretary_event'
+            " WHERE substr(start, 1, 10) BETWEEN ? AND ? ORDER BY start LIMIT 1",
+            (start_after, end),
+        ).fetchone()
+    finally:
+        conn.close()
+    return dict(row) if row else None
+
+
 # --- CLI（`manor calendar sync|list`） ------------------------------------------------------
 
 
@@ -360,6 +381,17 @@ def _cmd_list(args: argparse.Namespace) -> int:
         return 0
     if not rows:
         print(i18n.t("common.none"))
+        # T92: `--next-when-empty` のときだけ、期間内に予定が無ければ次の1件を覗く
+        # （v1 の `-NextWhenEmpty` と同じく、`--json` では行わない——**人間向けの表示だけ**の機能）。
+        if getattr(args, "next_when_empty", False):
+            today = util.today()
+            end = (date.fromisoformat(today) + timedelta(days=max(args.days, 0))).isoformat()
+            nxt = next_event_after(home, after=end, look_ahead_days=args.look_ahead)
+            if nxt:
+                place = f" @{nxt['place']}" if nxt.get("place") else ""
+                print(i18n.t("calendar.list.next", start=nxt["start"], title=nxt["title"], place=place))
+            else:
+                print(i18n.t("calendar.list.next_none", days=args.look_ahead))
         return 0
     for r in rows:
         place = f" @{r['place']}" if r.get("place") else ""
@@ -381,6 +413,8 @@ def register(subparsers: "argparse._SubParsersAction") -> None:
     s = sub.add_parser("list", help=i18n.t("cli.calendar.list.help"))
     s.add_argument("--days", type=int, default=7)
     s.add_argument("--json", action="store_true")
+    s.add_argument("--next-when-empty", action="store_true", dest="next_when_empty")
+    s.add_argument("--look-ahead", type=int, default=30, dest="look_ahead")
     s.set_defaults(func=_cmd_list, needs_db=False)
 
 
