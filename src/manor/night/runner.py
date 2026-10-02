@@ -1609,6 +1609,26 @@ def build_uninstall_command(*, task_name: str = DEFAULT_TASK_NAME) -> str:
     return f'crontab -l | grep -v "{task_name}" | crontab -   # launchd は unload の上 plist を rm'
 
 
+def build_wake_command(*, task_name: str = DEFAULT_TASK_NAME) -> str:
+    """`schtasks /Create` には WakeToRun を立てる引数が無い（T59③）。登録後に
+    PowerShell の ScheduledTasks モジュールで立て直す。Windows 以外は呼ばない（空文字）。
+
+    ⚠ **`build_install_command` の戻り値へは混ぜない。** 混ぜると
+    `test_install_command_reaches_schtasks_as_one_argument`（schtasks を
+    スタブに差し替えて実際に cmd.exe へ通す試験）が、この PowerShell も
+    そのまま実行してしまい、実機の `manor-night` タスクを試験のたびに書き換える。
+    `install()` が `execute=True` で schtasks 登録に成功したときだけ、別の
+    subprocess として呼ぶ。
+    """
+    if not sys.platform.startswith("win"):
+        return ""
+    return (
+        "powershell -NoProfile -Command "
+        f"\"$t = Get-ScheduledTask -TaskName '{task_name}'; "
+        "$t.Settings.WakeToRun = $true; Set-ScheduledTask -InputObject $t | Out-Null\""
+    )
+
+
 def install(
     *,
     at: str = "01:00",
@@ -1636,6 +1656,18 @@ def install(
             stdout=proc.stdout,
             stderr=proc.stderr,
         )
+        # schtasks 自体が /F で無条件に上書きするため WakeToRun は毎回落ちる（既定 off）。
+        # 登録が成功したときだけ、続けて立て直す（T59③）。
+        if result["ok"]:
+            wake_cmd = build_wake_command(task_name=task_name)
+            if wake_cmd:
+                wake_proc = subprocess.run(
+                    wake_cmd, shell=True, capture_output=True, text=True, timeout=30  # noqa: S602
+                )
+                result["wake_command"] = wake_cmd
+                result["wake_ok"] = wake_proc.returncode == 0
+                if wake_proc.returncode != 0:
+                    result["wake_stderr"] = wake_proc.stderr
     return result
 
 

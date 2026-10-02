@@ -171,3 +171,60 @@ def test_dry_run_still_exits_zero(
     from manor import cli
 
     assert cli.main(argv) == 0
+
+
+# --- 4. WakeToRun（T59③） -----------------------------------------------------------
+
+
+def test_build_wake_command_names_the_task(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`schtasks` に WakeToRun を立てる引数は無い。PowerShell の ScheduledTasks で立て直す側を検分する。"""
+    monkeypatch.setattr(runner.sys, "platform", "win32")
+    cmd = runner.build_wake_command(task_name="manor-night")
+    assert "WakeToRun" in cmd
+    assert "manor-night" in cmd
+
+
+def test_build_wake_command_empty_off_windows(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(runner.sys, "platform", "linux")
+    assert runner.build_wake_command(task_name="manor-night") == ""
+
+
+def test_build_install_command_does_not_carry_the_wake_step(monkeypatch: pytest.MonkeyPatch) -> None:
+    """WakeToRun は `build_install_command` の文字列には混ぜない——混ぜると、schtasks を
+    スタブに差し替えて実行する試験が、この PowerShell も実機へ本当に通してしまう。"""
+    monkeypatch.setattr(runner.sys, "platform", "win32")
+    cmd = runner.build_install_command(at="02:00")
+    assert "WakeToRun" not in cmd
+
+
+def test_install_sets_wake_to_run_after_successful_registration(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(runner.sys, "platform", "win32")
+    calls: list[str] = []
+
+    def _fake_run(cmd, **kwargs):  # noqa: ANN001, ANN003
+        calls.append(cmd)
+        return subprocess.CompletedProcess(cmd, returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(runner.subprocess, "run", _fake_run)
+    result = runner.install(at="02:00", execute=True)
+
+    assert result["ok"] is True
+    assert result["wake_ok"] is True
+    assert len(calls) == 2
+    assert "WakeToRun" in calls[1]
+
+
+def test_install_skips_wake_to_run_when_registration_failed(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(runner.sys, "platform", "win32")
+    calls: list[str] = []
+
+    def _fake_run(cmd, **kwargs):  # noqa: ANN001, ANN003
+        calls.append(cmd)
+        return subprocess.CompletedProcess(cmd, returncode=1, stdout="", stderr="ERROR: 無効な引数です")
+
+    monkeypatch.setattr(runner.subprocess, "run", _fake_run)
+    result = runner.install(at="02:00", execute=True)
+
+    assert result["ok"] is False
+    assert "wake_ok" not in result
+    assert len(calls) == 1  # schtasks が失敗したら WakeToRun 側は呼ばない
