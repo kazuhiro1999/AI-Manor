@@ -11,6 +11,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -68,20 +69,26 @@ def test_runs_empty_table_is_available_true_with_no_rows(home: Path) -> None:
     assert stats == {"available": True, "by_kind": [], "total_cost_usd": 0.0}
 
 
+def _days_ago(days: int, at: str) -> str:
+    """`days` 日前の `at`（HH:MM:SS）。期間の既定（直近30日）は SQLite の `datetime('now')`
+    基準で `MANOR_NOW` が効かないので、固定日付だと月日が経つと窓から外れる（2026-10-02 実測）。"""
+    return f"{(datetime.now() - timedelta(days=days)).date().isoformat()}T{at}"
+
+
 def test_runs_list_and_stats_with_rows(conn, home: Path) -> None:
     _insert_run(
-        conn, kind="behavior", ref="S6", started_at="2026-09-01T00:00:00",
-        ended_at="2026-09-01T00:01:40", cost_usd=0.12, exit_reason="done",
+        conn, kind="behavior", ref="S6", started_at=_days_ago(2, "00:00:00"),
+        ended_at=_days_ago(2, "00:01:40"), cost_usd=0.12, exit_reason="done",
         input_tokens=1000, output_tokens=200,
     )
     _insert_run(
-        conn, kind="behavior", ref="S7", started_at="2026-09-01T01:00:00",
-        ended_at="2026-09-01T01:02:00", cost_usd=0.20, exit_reason="failed",
+        conn, kind="behavior", ref="S7", started_at=_days_ago(2, "01:00:00"),
+        ended_at=_days_ago(2, "01:02:00"), cost_usd=0.20, exit_reason="failed",
         input_tokens=1500, output_tokens=100,
     )
     _insert_run(
-        conn, kind="night", ref="2026-09-01", started_at="2026-09-01T22:00:00",
-        ended_at="2026-09-01T22:10:00", cost_usd=0.55, exit_reason="done",
+        conn, kind="night", ref="2026-09-01", started_at=_days_ago(2, "22:00:00"),
+        ended_at=_days_ago(2, "22:10:00"), cost_usd=0.55, exit_reason="done",
         input_tokens=5000, output_tokens=800,
     )
     conn.commit()
