@@ -209,6 +209,45 @@ def test_post_talk_ask_defaults_agent_to_butler_when_omitted(
     assert seen["agent"] == "butler"
 
 
+def test_post_talk_ask_passes_voice_false_to_talk_session_as_speak(
+    home: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """T98: body の `voice` は `talk_session.ask` の `speak` へそのまま渡る。"""
+    monkeypatch.setenv("MANOR_NOW", NOON)
+    _mock_success(monkeypatch)
+    seen: dict[str, object] = {}
+    real_ask = talk_session.ask
+
+    def spy(home, text, history=None, *, speak=True, **kw):  # noqa: ANN001
+        seen["speak"] = speak
+        return real_ask(home, text, history, speak=speak, **kw)
+
+    monkeypatch.setattr(talk_session, "ask", spy)
+    client = make_client(home)
+    res = client.post("/api/v1/face/talk", json={"text": "在庫を確認して", "voice": False})
+    assert res.status_code == 200
+    assert seen["speak"] is False
+
+
+def test_post_talk_ask_defaults_voice_to_true_when_omitted(
+    home: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("MANOR_NOW", NOON)
+    _mock_success(monkeypatch)
+    seen: dict[str, object] = {}
+    real_ask = talk_session.ask
+
+    def spy(home, text, history=None, *, speak=True, **kw):  # noqa: ANN001
+        seen["speak"] = speak
+        return real_ask(home, text, history, speak=speak, **kw)
+
+    monkeypatch.setattr(talk_session, "ask", spy)
+    client = make_client(home)
+    res = client.post("/api/v1/face/talk", json={"text": "こんにちは"})  # voice 省略
+    assert res.status_code == 200
+    assert seen["speak"] is True
+
+
 def test_post_talk_ask_failure_shape(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("MANOR_NOW", NOON)
     monkeypatch.setattr(talk_session.subprocess, "Popen", Mock(side_effect=OSError("boom")))

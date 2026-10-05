@@ -55,6 +55,9 @@ class TalkAskRequest(BaseModel):
     #: 話しているとき、`voice._play` はサーバ機で鳴らすので手元では無音だった。
     #: 既定は `False`＝従来どおり（古い窓・CLI を壊さない）。
     play_here: bool = False
+    #: T98: 音声合成を行うか。`False` ならテキストだけ即返す（合成を待たない）。
+    #: 既定は `True`＝従来どおり（黙っていたら壊れない）。
+    voice: bool = True
 
 
 def register(app: FastAPI, ctx: WebContext) -> None:
@@ -101,7 +104,8 @@ def register(app: FastAPI, ctx: WebContext) -> None:
         require_writable(ctx)
         history = [t.model_dump() for t in body.history]
         return talk_session.ask(
-            ctx.home, body.text, history, agent=body.agent, play_here=body.play_here
+            ctx.home, body.text, history, agent=body.agent, play_here=body.play_here,
+            speak=body.voice,
         )
 
     @app.get("/api/v1/face/voice/{audio_id}.wav")

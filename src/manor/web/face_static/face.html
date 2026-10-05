@@ -101,6 +101,7 @@
   /* 残り回数（ADR-008 D17: 隠さない）。unavailable のときはここが唯一の説明になる */
   .talk-status { font-size: 10px; color: var(--dim); margin-bottom: 5px; }
   .talk-status.blocked { color: var(--alert); }
+  .talk-voice { display: flex; align-items: center; gap: 4px; font-size: 10px; color: var(--dim); margin-bottom: 5px; cursor: pointer; }
   .log { max-height: 128px; overflow-y: auto; font-size: 11px; line-height: 1.55; }
   .log p { margin: 0 0 5px; white-space: pre-wrap; word-break: break-word; }
   .log .you { color: var(--dim); }
@@ -161,6 +162,7 @@
 
 <div class="talk" id="talk" hidden>
   <div class="talk-status" id="talkStatus"></div>
+  <label class="talk-voice"><input id="talkVoice" type="checkbox" checked> 声で返す</label>
   <div class="log" id="talkLog" aria-live="polite"></div>
   <div class="row" id="talkRow">
     <input id="talkInput" type="text" maxlength="600" autocomplete="off"
@@ -409,6 +411,13 @@ boot();
   var btn = $('call'), callStatusEl = $('callStatus');
   var panel = $('talk'), statusLine = $('talkStatus'), log = $('talkLog'), row = $('talkRow');
   var input = $('talkInput'), send = $('talkSend');
+  // T98: 声で返すか。既定は true（従来どおり）。チェックを外すとテキストだけ即返す
+  // （音声合成の完了を待たない）。窓を閉じたら忘れる（D17と同じ扱い。保存しない）。
+  var talkVoice = $('talkVoice');
+  var VOICE_ON = true;
+  if (talkVoice) {
+    talkVoice.addEventListener('change', function () { VOICE_ON = !!talkVoice.checked; });
+  }
   // ADR-008 D3 / ADR-011 D11: このブロックは module script（姿）とは別スコープなので、
   // 担当を自分でも query string（?agent=）から採る。既定は butler。
   var agent = new URLSearchParams(location.search).get('agent') || 'butler';
@@ -552,7 +561,7 @@ boot();
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       // ADR-011 D11: 返事は窓の担当の声で話す。`agent` はページ冒頭で query string から
       // 採っている（?agent=。既定は butler）ので、そのまま乗せるだけでよい。
-      body: JSON.stringify({ text: text, history: sendHistory, agent: agent, play_here: PLAY_HERE })
+      body: JSON.stringify({ text: text, history: sendHistory, agent: agent, play_here: PLAY_HERE, voice: VOICE_ON })
     })
       .then(function (r) { return r.ok ? r.json() : Promise.reject('HTTP ' + r.status); })
       .then(function (d) {

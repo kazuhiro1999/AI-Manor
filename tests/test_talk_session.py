@@ -782,6 +782,33 @@ def test_ask_without_agent_passes_none_through(home: Path, monkeypatch: pytest.M
     speak_mock.assert_called_once_with(home, "かしこまりました。", agent=None, play=True)
 
 
+def test_ask_with_speak_false_skips_synthesis_and_returns_empty_audio_id(
+    home: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """T98: `speak=False` はテキストだけで良い場面向け——合成を待たず即返す。"""
+    _fix_clock(monkeypatch)
+    _mock_success(monkeypatch, reply="かしこまりました。")
+    _mute_voice(monkeypatch)
+    speak_mock = _mute_voice_detail(monkeypatch)
+
+    result = talk_session.ask(home, "在庫を確認して", speak=False)
+
+    speak_mock.assert_not_called()
+    assert result["audio_id"] == ""
+
+
+def test_ask_speak_defaults_to_true(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """`speak` を省略すると従来どおり合成する（黙っていたら壊れない）。"""
+    _fix_clock(monkeypatch)
+    _mock_success(monkeypatch, reply="かしこまりました。")
+    _mute_voice(monkeypatch)
+    speak_mock = _mute_voice_detail(monkeypatch)
+
+    talk_session.ask(home, "在庫を確認して")
+
+    speak_mock.assert_called_once()
+
+
 def test_refusal_message_is_also_spoken_with_the_passed_agent(
     home: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

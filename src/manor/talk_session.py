@@ -801,6 +801,7 @@ def ask(
     claude_bin: str | None = None,
     timeout: float = DEFAULT_TIMEOUT_SEC,
     play_here: bool = False,
+    speak: bool = True,
 ) -> dict[str, Any]:
     """1往復。**同期で待つ**（D18）。manor のワークスペースで起こす（D21）——`manor …`
     コマンド（`Bash(manor:*)` 等）と `mcp__*`・`Read`/`Glob`/`Grep` を事前承認する
@@ -971,7 +972,9 @@ def ask(
     # スピーカーからは出さず、鍵（`audio_id`）だけ返す（2026-09-07・主人のご指摘
     # 「スマホから話すと声が聞こえない」——`_play` はサーバ機で鳴らすので、
     # 手元では無音だった。小窓をサーバ機に開いてしまうのと同じ形）。
-    spoken = voice.speak_detail(home, reply, agent=agent, play=not play_here)
+    # T98: `speak=False` はテキストだけで良い場面向け。合成（エンジン起動待ち込みで
+    # 数十秒かかることがある）を丸ごと飛ばして即返す。
+    spoken = voice.speak_detail(home, reply, agent=agent, play=not play_here) if speak else {}
     return {
         "ok": True, "reply": reply, "seconds": seconds,
         "remaining": remaining, "used": used, "limit": limit,
