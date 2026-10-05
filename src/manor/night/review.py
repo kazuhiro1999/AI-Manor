@@ -15,10 +15,12 @@
 from __future__ import annotations
 
 import sqlite3
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
 from .. import decision as decision_mod
+from .. import graph
 from .. import i18n
 from .. import task as task_mod
 from . import runner
@@ -30,6 +32,43 @@ STUCK_NIGHTS = 3
 #: 伺いの題名。**同じ題名の open decision があれば積まない**（毎朝1件ずつ増えるのを防ぐ）。
 STUCK_TITLE_KEY = "night.review.stuck.title"
 
+#: 夜勤が積んだ伺いの印（`decision.asked_by`）。runner が子プロセスへ `MANOR_ACTOR` で渡す。
+NIGHT_ACTOR = "night"
+
+#: 夜勤の伺いは、この日数だけ返事が無ければ「見送り」にして取り下げる（主人 2026-10-06
+#: 「意味があるか分からない伺い・関心の無い伺いに思考を割かれるのが苦」）。**無回答は
+#: 「関心が無い」の意味**として扱う。主人や昼の執事が積んだ伺いには触れない。
+NIGHT_DECISION_TTL_DAYS = 3
+
+
+def expire_night_decisions(
+    conn: sqlite3.Connection, *, now: datetime | None = None, record: bool = True
+) -> list[str]:
+    """返事の無いまま `NIGHT_DECISION_TTL_DAYS` 日経った夜勤の伺いを見送りにする。
+
+    紐づくタスクは `hold` へ下げる（`todo` のままだと、翌晩の夜勤がまた拾って積み直す）。
+    `record=False` なら数えるだけ。
+    """
+    cutoff = ((now or datetime.now()) - timedelta(days=NIGHT_DECISION_TTL_DAYS)).isoformat(
+        timespec="seconds"
+    )
+    rows = conn.execute(
+        "SELECT id FROM decision WHERE status = 'open' AND asked_by = ? AND asked_at <= ? ORDER BY id",
+        (NIGHT_ACTOR, cutoff),
+    ).fetchall()
+    expired = [str(r["id"]) for r in rows]
+    if not record:
+        return expired
+    for did in expired:
+        task_ids = [str(e["src"]) for e in graph.edges_to(conn, did, rel="decided_by")]
+        decision_mod.rule(conn, did, "rejected", ruling=i18n.t("decision.actor.timeout"), actor="timeout")
+        for tid in task_ids:
+            row = conn.execute("SELECT status FROM task WHERE id = ?", (tid,)).fetchone()
+            if row is not None and str(row["status"]) in {"todo", "doing", "waiting"}:
+                task_mod.status(conn, tid, "hold", note=i18n.t("decision.actor.timeout"), actor="butler")
+    conn.commit()
+    return expired
+
 
 def run(
     conn: sqlite3.Connection, home: Path, *, date: str | None = None, record: bool = True
@@ -37,6 +76,7 @@ def run(
     """点検して、必要なら伺いを立てる。`record=False` なら数えるだけで書かない。"""
     result = runner.review(home, date=date, record=record)
     result["asked"] = []
+    result["expired"] = expire_night_decisions(conn, record=record)
     if not result["stuck"] or not record:
         return result
 
@@ -79,7 +119,8 @@ def run(
         background=i18n.t("night.review.stuck.background", items=stuck_lines),
         risk="low",
         evidence=evidence,
-        asked_by="butler",
+        # 夜勤の運転の話なので、夜勤の伺いと同じく3日で取り下がる側に置く
+        asked_by=NIGHT_ACTOR,
     )
     result["asked"] = [decision_id]
     return result

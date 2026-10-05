@@ -45,6 +45,10 @@
 - **可逆なら、仮定を明記して進める**
 - **不可逆・外部送信・認証・課金に関わるなら、やらずに `manor decision ask` へ積む**
   （`--recommend` に執事の推奨、`--background` に背景を書く。次のタスクへ進む）
+- **執事自身の仕組みのことは伺わない。** 自分で決めて進め、報告に1行。何を伺ってよいかは
+  `tasks.md`「伺いは、主人が決めることだけ」が正。夜勤の伺いは3日返事が無ければ機械が見送りにする
+
+**始めたものは、その席のうちに畳む。** `doing` のまま・未コミットのまま終えない（`tasks.md` の約束）。
 
 ## 書き込みは manor の CLI 経由
 
@@ -61,9 +65,10 @@ DB への書き込みは必ず `manor task add` / `manor task status` / `manor t
 | `home/night/reports/<日付>.md` | **作業報告**（新規作成可・タスクごと。下の節を参照） |
 | `home/LOG.md` | 末尾ではなく先頭側へ1行追記（新しいものが上） |
 | `src/` `tests/` | コード・試験（`--allowed-tools` が許す範囲で） |
+| `butler/`（`POLICY.md` を除く） `.claude/agents/` `.claude/rules/` `.claude/skills/` `CHANGELOG.md` | 執事自身の規則・担当の定義・振り返り（2026-10-06 主人のご許可。以前は書けず、昼へ申し送ったまま残り続けていた） |
 
-**触らない**: `CLAUDE.md` ／ `butler/` ／ `.claude/` ／ `home/USER.md` ／
-`home/projections/**`（射影） ／ `home/manor.db`（`manor` CLI 経由以外で触らない）
+**触らない**: `CLAUDE.md` ／ `butler/POLICY.md`（夜勤の権限そのもの） ／ `.claude/settings*.json` ／
+`.claude/hooks/` ／ `home/USER.md` ／ `home/projections/**`（射影） ／ `home/manor.db`（`manor` CLI 経由以外で触らない）
 
 ## git
 

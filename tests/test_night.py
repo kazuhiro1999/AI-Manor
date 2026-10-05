@@ -809,6 +809,8 @@ def test_run_while_paused_still_writes_last_run(home_path: Path, tmp_path: Path)
 
 
 def test_run_launches_again_the_day_after_until(home_path: Path, tmp_path: Path):
+    # T96: 全体試験のときだけ落ちていた。`--now` を過去に偽装すると打ち切りが実時刻で
+    # 測られて下限1秒になり、負荷で子の起動が遅れた回だけ殺されていた（runner._run_sitting）
     _write_tasks(home_path)
     runner.pause(home_path, until="2026-09-14", reason="x")
     marker = tmp_path / "launched.txt"

@@ -13,6 +13,7 @@ from __future__ import annotations
 import argparse
 import importlib
 import json
+import os
 import sqlite3
 import sys
 from pathlib import Path
@@ -379,7 +380,9 @@ def cmd_decision_ask(conn, home, args) -> object:
         background=args.background,
         risk=args.risk,
         evidence=args.evidence,
-        asked_by=args.actor or "cli",
+        # 夜勤の子プロセスには runner が `MANOR_ACTOR=night` を渡す。朝の点検が
+        # 「夜勤の伺い」だけを3日で見送りにするための印（主人 2026-10-06）。
+        asked_by=args.actor or os.environ.get("MANOR_ACTOR") or "cli",
     )
     if args.json:
         return {"id": decision_id}
@@ -452,7 +455,7 @@ def format_actor(actor: object, *, unrecorded_key: str = "decision.actor.unrecor
 
 
 #: 訳語を持つ出所。これ以外は生の文字列をそのまま出す。
-_KNOWN_ACTORS: frozenset[str] = frozenset({"web", "cli", "butler", "slack"})
+_KNOWN_ACTORS: frozenset[str] = frozenset({"web", "cli", "butler", "slack", "night", "timeout"})
 
 
 def cmd_decision_show(conn, home, args) -> object:

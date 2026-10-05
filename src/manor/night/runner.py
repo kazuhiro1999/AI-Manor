@@ -69,7 +69,7 @@ DEFAULT_DEADLINE = "06:30"
 DEFAULT_MIN_MINUTES = 20
 DEFAULT_GRACE_MINUTES = 15
 DEFAULT_LOCK_MAX_MIN = 180
-DEFAULT_MODEL = "sonnet"
+DEFAULT_MODEL = "claude-sonnet-5-5"
 #: 1回の `claude -p` に許すターン数（主人の裁定 D15・2026-09-11 に 80 → 200）。
 #:
 #: **80 では一覧の最後まで届かなかった。** 2026-09-10・09-11 と2晩続けて打ち切られ、
@@ -853,6 +853,7 @@ def _run_sitting(
     grace_minutes: int,
     model: str,
     ref: str,
+    now_offset: timedelta = timedelta(0),
 ) -> dict[str, Any]:
     """**一席** — `claude -p` を1回だけ動かし、終わり方を種別に畳んで返す。
 
@@ -867,10 +868,16 @@ def _run_sitting(
     env = dict(os.environ)
     env["MANOR_HOME"] = str(home)
     env["MANOR_HOOKS"] = "off"
+    # 夜勤が積んだ伺いの印（`manor decision ask` の asked_by）。朝の点検が3日で取り下げる
+    env["MANOR_ACTOR"] = "night"
 
     run_conn, run_id = _runlog_start(home, ref=ref, model=model)
+    # 打ち切りも `_conduct` の残り時間と同じ時計で測る（`now_offset` = `--now` の偽装と
+    # 実時刻の差。本番では 0）。以前は実時刻で測っていたため、`--now` を過去に偽装すると
+    # 締切がとうに過ぎた扱いになり、子は下限の1秒で殺されていた——全体試験の負荷で
+    # 子の起動が1秒を超えた晩だけ落ちる試験（T96）の正体がこれだった。
     timeout_seconds = max(
-        (deadline_at - datetime.now()).total_seconds() + grace_minutes * 60, 1.0
+        (deadline_at - (datetime.now() - now_offset)).total_seconds() + grace_minutes * 60, 1.0
     )
     child = _run_child(argv, cwd=repo_root, env=env, prompt=prompt, timeout_seconds=timeout_seconds)
 
@@ -1036,6 +1043,7 @@ def _conduct(
             # （＝報告と同じ「今日」）とは、深夜をまたぐ晩だけ食い違う——ここで揃えると
             # 既存の記録の読み方が変わるので、変えない。
             ref=deadline_at.strftime("%Y-%m-%d"),
+            now_offset=now_offset,
         )
         out["exit_code"] = sitting["code"]
         out["killed"] = sitting["killed"]
@@ -1144,6 +1152,11 @@ def _run_impl(
 
         template_path = prompt_template_path()
         body = template_path.read_text(encoding="utf-8") if template_path.is_file() else ""
+        leftover = own_leftovers(home, repo_root)
+        if leftover:
+            result["leftover"] = leftover
+            log.write("INFO", f"前夜の自分の未コミットが {len(leftover)} 件あります。先頭に差し込みます")
+            body = build_leftover_block(leftover) + body
 
         remain = int((deadline_at - now_at).total_seconds() // 60)
         result["remain_minutes"] = remain
@@ -1201,6 +1214,67 @@ def _run_impl(
 #: `git status --porcelain` の行のうち、これで始まるパスだけを「コードの変更」と数える
 #: （`home/` や `docs/` の変更は歯止めの対象外——歯止めが守るのは①層のテスト・コミット）。
 _GATE_CODE_PREFIXES = ("src/", "tests/")
+
+
+def _porcelain_path(line: str) -> str:
+    return line[3:].strip().strip('"')
+
+
+def own_leftovers(home: Path, repo_root: Path) -> list[str]:
+    """前夜の夜勤が残した未コミットのうち、**その後だれも触っていない**ファイル。
+
+    2026-10-03〜05 の3晩、夜勤は実装を終えたのにコミットせずに席を終え、翌晩の夜勤は
+    歯止め（「席の初めの差分は誰かの作業中かもしれないので触らない」）どおり素通りした。
+    差分は溜まり続け、主人の画面には毎朝「再起動してください」が出た。
+    **自分の残りかどうかを、自己申告ではなく前夜の `last-run.json` の記録で決める**——
+    前夜の終わりの `gate.uncommitted` にあり、いまも未コミットで、更新時刻が前夜の終わり
+    以前（昼に主人や執事が触っていない）なら、それは夜勤自身の残りである。
+    """
+    prev = _read_last_run(home) or {}
+    gate = prev.get("gate") if isinstance(prev.get("gate"), dict) else None
+    ended = prev.get("ended_at")
+    if not gate or not ended:
+        return []
+    try:
+        ended_ts = datetime.fromisoformat(str(ended)).timestamp()
+    except ValueError:
+        return []
+    prev_paths = {
+        _porcelain_path(line)
+        for line in gate.get("uncommitted") or []
+        if _porcelain_path(line).startswith(_GATE_CODE_PREFIXES)
+    }
+    if not prev_paths:
+        return []
+    try:
+        status = subprocess.run(
+            ["git", "status", "--porcelain"],
+            cwd=repo_root, capture_output=True, text=True, timeout=30, check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return []
+    now_paths = {_porcelain_path(line) for line in status.stdout.splitlines() if line.strip()}
+    leftover: list[str] = []
+    for path in sorted(prev_paths & now_paths):
+        try:
+            mtime = (repo_root / path).stat().st_mtime
+        except OSError:
+            continue
+        if mtime <= ended_ts + 60:
+            leftover.append(path)
+    return leftover
+
+
+def build_leftover_block(paths: list[str]) -> str:
+    """指示の先頭に差し込む「前夜のあなたの残り」。"""
+    lines = "\n".join(f"- `{p}`" for p in paths)
+    return (
+        "## 前夜のあなたの残り（機械が前夜の記録から確かめました）\n\n"
+        "次のファイルは**前夜の夜勤（あなた自身）**が未コミットのまま残し、その後だれも触っていません。"
+        "主人や昼の執事の作業中のものではありません。**N1 として最初に畳んでください**"
+        "（関係する試験を通す→タスクごとにコミット→タスクの状態を正す。前夜の作業報告に何の件かが書いてあります）。\n\n"
+        f"{lines}\n\n---\n\n"
+    )
 
 
 def check_gate(repo_root: Path, *, log: NightLog | None = None) -> dict[str, Any]:
@@ -1897,6 +1971,10 @@ def pending_items(home: Path, date: str) -> dict[str, Any]:
             continue
         states += 1
         state = sm.group(1)
+        # 「完了（…保留ではない）」のように、完了と書いた行の中の語で誤って拾わない
+        # （2026-10-05 の朝、N1 が「片付かなかった件」に出た）
+        if state.startswith("完了"):
+            continue
         if any(w in state for w in _PENDING_WORDS):
             pending.append({"heading": heading, "state": state})
     return {
@@ -2002,4 +2080,7 @@ def format_review(result: dict[str, Any]) -> str:
         lines.append(f"  3晩以上そのまま: {', '.join(stuck)}")
     for did in list(result.get("asked") or []):
         lines.append(f"  {did} として主人にお伺いを立てました")
+    expired = list(result.get("expired") or [])
+    if expired:
+        lines.append(f"  返事の無かった夜勤の伺いを見送りにしました: {', '.join(expired)}")
     return "\n".join(lines)
