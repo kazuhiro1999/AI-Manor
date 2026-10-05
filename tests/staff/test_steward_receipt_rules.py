@@ -98,6 +98,26 @@ def test_parse_absorbs_price_misreads() -> None:
     assert review == "ok"
 
 
+def test_price_column_digits_without_yen_do_not_extend_the_header() -> None:
+    """`¥` を読み落として数字だけになった価格（価格列の右端に揃う）を、レジ番号のようなヘッダの数字と
+    取り違えない。取り違えるとヘッダが連鎖して、その行より上の明細が丸ごと範囲の外に出る。"""
+    boxes = synthetic_receipt()
+    for b in boxes:
+        if b["text"] == "¥400外":
+            b["text"] = "1400"
+    raw = rp.parse_boxes(boxes)
+    d, _checks, _review = _finish(raw)
+    assert [i["name"] for i in d["items"]][:2] == ["ギュウニュウ 1L", "ショクパン 6マイ"]
+    assert [i["amount"] for i in d["items"]][:2] == [300, 1400]
+
+
+def test_header_numbers_left_of_the_price_column_still_count_as_header() -> None:
+    raw = rp.parse_boxes(synthetic_receipt())
+    d, _checks, _review = _finish(raw)
+    assert d["receipt_no"] == "000123"
+    assert len(d["items"]) == 5
+
+
 def test_parse_rotated_90_degrees() -> None:
     """横向きの写真（箱が 90° 回っている）でも座標を戻して同じ結果になる。"""
     raw = rp.parse_boxes(synthetic_receipt(angle_deg=-90))

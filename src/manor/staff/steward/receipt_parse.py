@@ -481,7 +481,10 @@ def parse_boxes(boxes: list[dict[str, Any]]) -> dict[str, Any]:
             continue
         if (
             _DATE_RE.search(t) or _REG_RE.search(t) or _RECEIPT_NO_RE.search(t) or _TEL_RE.search(t)
-            or re.fullmatch(r"\d{1,2}:\d{2}", t) or re.fullmatch(r"[R#]?\d{4,8}", t)
+            or re.fullmatch(r"\d{1,2}:\d{2}", t)
+            # 価格列の右端に揃った数字だけの箱は、¥ を読み落とした価格（ヘッダの番号ではない）。
+            # ヘッダ扱いすると header_end が連鎖して明細の先頭が丸ごと範囲の外に出る
+            or (re.fullmatch(r"[R#]?\d{4,8}", t) and not (t.isdigit() and b["x1"] >= x_right - 0.5 * h_med))
             or _REGISTER_RE.search(t) or _HEADER_NO_RE.search(t)
             or any(w in t for w in ("精算機", "責任者", "担当", "お会計券", "会計券", "登録番号", "No.",
                                     "伝票", "テーブル", "卓", "人数", "領収", "領収証", "領収書"))
