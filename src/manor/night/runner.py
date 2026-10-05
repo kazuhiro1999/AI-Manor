@@ -44,6 +44,7 @@ import tempfile
 import sys
 import time
 from datetime import datetime, timedelta
+from datetime import time as dt_time
 from pathlib import Path
 from typing import Any
 
@@ -1724,7 +1725,28 @@ def report(home: Path, date: str | None = None) -> dict[str, Any]:
     return {"found": False, "date": None, "text": text, "available": available}
 
 
-def health(home: Path, *, within_hours: float = 24.0) -> dict[str, Any]:
+def _briefing_sent_today(home: Path, *, now: datetime) -> bool | None:
+    """T59②: 今日ぶんの朝のブリーフィング（まとめの通）が `slack_message` にあるか。
+
+    判定は `_catch_up_missed_briefing`（slack.py・T59①）と同じ——`decision_id IS NULL`
+    の行（＝まとめの通）の `sent_at` が今日にあるか。**07:30 より前は None**（まだ
+    「出なかった」と言えないため、health からは何も言わない）。
+    """
+    if now.time() < dt_time(7, 30):
+        return None
+    today = now.date().isoformat()
+    conn = db.connect(home)
+    try:
+        row = conn.execute(
+            "SELECT 1 FROM slack_message WHERE decision_id IS NULL AND substr(sent_at, 1, 10) = ? LIMIT 1",
+            (today,),
+        ).fetchone()
+    finally:
+        conn.close()
+    return row is not None
+
+
+def health(home: Path, *, within_hours: float = 24.0, now: datetime | None = None) -> dict[str, Any]:
     """昨夜ちゃんと走ったかを1つの答えにする（2026-09-08 新設）。
 
     ⚠ **材料は最初からありました**——`last_run` は `status()` が返しており、その docstring は
@@ -1742,8 +1764,12 @@ def health(home: Path, *, within_hours: float = 24.0) -> dict[str, Any]:
     根拠のない閾値は誤検出を生みます（B99「誤検出を出す検査は入れない」）。
     **再燃条件**: 「正常なのに短く終わった晩」と「落ちて短く終わった晩」が
     `last_run` の他の欄で見分けられないと分かったとき。
+
+    `now` は試験が時刻に左右されないための注入口（省略時は実時刻）。T59②の
+    ブリーフィング判定もこれで判定する。
     """
     home = Path(home)
+    now = now or datetime.now()
     info = _read_last_run(home)
     reasons: list[str] = []
 
@@ -1757,7 +1783,7 @@ def health(home: Path, *, within_hours: float = 24.0) -> dict[str, Any]:
 
     started = str(info.get("started_at") or "")
     try:
-        age_h = (datetime.now() - datetime.fromisoformat(started)).total_seconds() / 3600
+        age_h = (now - datetime.fromisoformat(started)).total_seconds() / 3600
     except ValueError:
         age_h = None
     if age_h is None:
@@ -1825,6 +1851,11 @@ def health(home: Path, *, within_hours: float = 24.0) -> dict[str, Any]:
         tests = gate.get("tests")
         if isinstance(tests, dict) and tests.get("exit_code") not in (None, 0):
             reasons.append("夜勤の終わりに試験が赤でした")
+
+    # T59②: 今日の朝のブリーフィングが出たか（記録用。①の自動復旧が本体で、こちらは
+    # それでも飛んだ朝に気づけるようにするだけ）。
+    if _briefing_sent_today(home, now=now) is False:
+        reasons.append("今日の朝のブリーフィングがまだ出ていません")
 
     return {"ok": not reasons, "reasons": reasons, "last_run": info}
 

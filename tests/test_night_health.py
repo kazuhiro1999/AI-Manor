@@ -42,7 +42,7 @@ def test_health_notices_a_disabled_registration(home_path: Path, monkeypatch) ->
     _write_last_run(home_path, started_at=f"{today}T02:00:00")
     _write_report(home_path, today)
 
-    reasons = " / ".join(runner.health(home_path)["reasons"])
+    reasons = " / ".join(runner.health(home_path, now=datetime.fromisoformat(f"{today}T06:00:00"))["reasons"])
     assert "無効" in reasons
 
 
@@ -73,7 +73,7 @@ def test_health_is_quiet_when_the_night_went_well(home_path: Path) -> None:
     _write_last_run(home_path, started_at=f"{today}T02:00:00")
     _write_report(home_path, today)
 
-    result = runner.health(home_path)
+    result = runner.health(home_path, now=datetime.fromisoformat(f"{today}T06:00:00"))
     assert result["ok"] is True
     assert result["reasons"] == []
 
@@ -125,7 +125,7 @@ def test_health_stays_quiet_about_the_number_of_sittings(home_path: Path) -> Non
     )
     _write_report(home_path, today)
 
-    assert runner.health(home_path)["ok"] is True
+    assert runner.health(home_path, now=datetime.fromisoformat(f"{today}T06:00:00"))["ok"] is True
 
 
 def test_health_notices_that_nothing_got_done(home_path: Path) -> None:
@@ -191,7 +191,48 @@ def test_health_stays_quiet_when_the_gate_is_clean(home_path: Path) -> None:
     )
     _write_report(home_path, today)
 
-    assert runner.health(home_path)["ok"] is True
+    assert runner.health(home_path, now=datetime.fromisoformat(f"{today}T06:00:00"))["ok"] is True
+
+
+def test_health_notices_a_missing_briefing_after_0730(home_path: Path) -> None:
+    """T59②: 夜勤は正常に走ったのに、朝のブリーフィングだけ飛んだら気づけること。"""
+    assert cli.main(["init"]) == 0
+    today = datetime.now().date().isoformat()
+    _write_last_run(home_path, started_at=f"{today}T02:00:00")
+    _write_report(home_path, today)
+
+    result = runner.health(home_path, now=datetime.fromisoformat(f"{today}T08:00:00"))
+    assert result["ok"] is False
+    assert any("ブリーフィング" in r for r in result["reasons"])
+
+
+def test_health_stays_quiet_about_briefing_before_0730(home_path: Path) -> None:
+    """07:30 より前は「まだ出なかった」と言えないので黙る。"""
+    assert cli.main(["init"]) == 0
+    today = datetime.now().date().isoformat()
+    _write_last_run(home_path, started_at=f"{today}T02:00:00")
+    _write_report(home_path, today)
+
+    result = runner.health(home_path, now=datetime.fromisoformat(f"{today}T07:00:00"))
+    assert result["ok"] is True
+
+
+def test_health_stays_quiet_when_briefing_already_sent(home_path: Path) -> None:
+    """ブリーフィングが出ていれば、07:30 を過ぎていても黙る。"""
+    assert cli.main(["init"]) == 0
+    today = datetime.now().date().isoformat()
+    _write_last_run(home_path, started_at=f"{today}T02:00:00")
+    _write_report(home_path, today)
+    conn = db.connect(home_path)
+    conn.execute(
+        "INSERT INTO slack_message (decision_id, channel, ts, sent_at) VALUES (NULL, 'C1', '1.1', ?)",
+        (f"{today}T07:30:05",),
+    )
+    conn.commit()
+    conn.close()
+
+    result = runner.health(home_path, now=datetime.fromisoformat(f"{today}T08:00:00"))
+    assert result["ok"] is True
 
 
 def test_brief_carries_the_night_health(home_path: Path) -> None:
