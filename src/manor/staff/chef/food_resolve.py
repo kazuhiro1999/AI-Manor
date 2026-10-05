@@ -70,7 +70,7 @@ def load_settings(path: Path | None = None) -> dict[str, Any]:
     raw = dict(dict(dict(lex.get("nutrition") or {}).get("claude_resolve") or {}))  # type: ignore[union-attr]
     return {
         "auto": bool(raw.get("auto", True)),
-        "model": str(raw.get("model") or "sonnet"),
+        "model": str(raw.get("model") or "claude-sonnet-5-5"),
         "timeout_sec": float(raw.get("timeout_sec", 300)),
         "max_turns": int(raw.get("max_turns", 12)),
         "max_items": int(raw.get("max_items", 20)),

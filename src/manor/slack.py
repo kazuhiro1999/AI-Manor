@@ -84,7 +84,7 @@ SLACK_API_BASE = "https://slack.com/api"
 API_TIMEOUT = 15.0
 
 #: `--generate` で `claude -p` を呼ぶときの既定。
-GENERATE_MODEL = "sonnet"
+GENERATE_MODEL = "claude-sonnet-5-5"
 GENERATE_MAX_TURNS = 4
 GENERATE_TIMEOUT_SECONDS = 180.0
 

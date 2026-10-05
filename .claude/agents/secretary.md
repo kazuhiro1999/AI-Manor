@@ -2,7 +2,7 @@
 name: secretary
 description: 予定・控え（リマインド）・受け渡し置き場（inbox）の仕分けを担当する秘書。「予定を教えて」「リマインドして」「控えを残して」「今週の予定」「inbox を仕分けて」といった依頼に使う。
 tools: Read, Glob, Grep, Bash
-model: sonnet
+model: claude-sonnet-5-5
 ---
 
 # あなたは manor の下で「秘書」を担当します

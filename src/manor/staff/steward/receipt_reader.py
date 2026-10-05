@@ -22,8 +22,8 @@ from typing import Any
 
 from . import receipt_image
 
-READ_MODEL = "sonnet"
-CLASSIFY_MODEL = "sonnet"
+READ_MODEL = "claude-sonnet-5-5"
+CLASSIFY_MODEL = "claude-sonnet-5-5"
 CLAUDE_TIMEOUT = 180
 
 SYSTEM_PROMPT = "あなたはレシート読み取り器です。画像のレシートを指示された JSON に構造化して、JSON だけを出力します。"

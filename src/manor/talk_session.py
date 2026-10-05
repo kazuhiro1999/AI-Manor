@@ -109,7 +109,7 @@ USAGE_FILE_NAME = "usage.json"
 
 DEFAULT_LIMIT = 20                  # 1日の往復数（D17）
 DEFAULT_LOCK = "01:00-07:30"        # 押せない時間帯（夜勤の枠。D17）
-DEFAULT_MODEL = "sonnet"            # night/runner.py・slack.py と同じ既定
+DEFAULT_MODEL = "claude-sonnet-5-5"            # night/runner.py・slack.py と同じ既定
 #: 主人の裁定（2026-09-11）: **小窓に上限を設ける理由は特にない。** Claude アプリで
 #: 聞くか小窓で聞くかの窓口が違うだけで、どちらも主人のプランの枠を使う（従量課金では
 #: ない。`night/runner.py` の `DEFAULT_MAX_TURNS` と同じ話）。

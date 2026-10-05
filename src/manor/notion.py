@@ -100,7 +100,7 @@ API_TIMEOUT = 15.0
 
 #: `--generate` で `claude -p` を呼ぶときの既定（slack.py と同じ値を独立して持つ。
 #: このファイルの担当外である slack.py を変更しないため、定数として複製してある）。
-GENERATE_MODEL = "sonnet"
+GENERATE_MODEL = "claude-sonnet-5-5"
 GENERATE_MAX_TURNS = 4
 GENERATE_TIMEOUT_SECONDS = 180.0
 

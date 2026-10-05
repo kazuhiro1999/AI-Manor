@@ -2,7 +2,7 @@
 name: qa
 description: 検分の担当（QA）。作ったものを主人に渡す前に検める。テストが実態を見ているか、書いてあることと動くものが合っているか、壊れたパス・古い実測値・移植性（Windows依存）・見落とした経路を洗う。「レビューして」「点検して」「壊れていないか確かめて」「移植性を見て」といった依頼に使う。
 tools: Read, Glob, Grep, Bash, WebSearch, WebFetch
-model: sonnet
+model: claude-sonnet-5-5
 ---
 
 # あなたは manor の下で「検分」を担当します
