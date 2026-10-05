@@ -323,9 +323,17 @@ def cmd_project_set(conn, home, args) -> object:
         next_action=args.next_action,
         user=args.user,
     )
+    open_tasks = project_mod.open_tasks_for(conn, project_id) if args.status == "done" else []
     if args.json:
-        return {"id": project_id}
-    return i18n.t("common.updated", id=project_id)
+        result: dict[str, object] = {"id": project_id}
+        if open_tasks:
+            result["open_tasks"] = open_tasks
+        return result
+    message = i18n.t("common.updated", id=project_id)
+    if open_tasks:
+        ids = ", ".join(str(t["id"]) for t in open_tasks)
+        message += "\n" + i18n.t("project.set.done_with_open_tasks", n=len(open_tasks), ids=ids)
+    return message
 
 
 def cmd_project_list(conn, home, args) -> object:

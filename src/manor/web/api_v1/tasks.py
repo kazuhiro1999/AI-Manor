@@ -261,8 +261,12 @@ def register(app: FastAPI, ctx: WebContext) -> None:
             except ManorError as exc:
                 conn.rollback()
                 raise manor_error_to_http(exc)
+            open_tasks = project_mod.open_tasks_for(conn, project_id) if body.status == "done" else []
             commit_and_render(conn, ctx)
-            return {"id": project_id}
+            result: dict[str, object] = {"id": project_id}
+            if open_tasks:
+                result["open_tasks"] = open_tasks
+            return result
 
     @app.post("/api/v1/tasks/note")
     def note_add(body: NoteAddRequest) -> dict[str, object]:

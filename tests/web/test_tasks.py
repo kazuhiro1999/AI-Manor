@@ -224,6 +224,30 @@ def test_project_set_updates_fields_by_code(conn, home: Path) -> None:
     assert node["title"] == "介護計画2"
 
 
+def test_project_set_done_reports_open_tasks(conn, home: Path) -> None:
+    """T85①: `status=done` にしたとき、未完了 task が残っていれば応答に乗せる。"""
+    project_id = project_mod.add(conn, "kaji", "家事計画")
+    task_id = task_mod.add(conn, "残った家事", project=project_id)
+    conn.commit()
+    client = make_web_client(home)
+    res = client.post("/api/v1/tasks/project/kaji", json={"status": "done"})
+    assert res.status_code == 200
+    open_tasks = res.json()["open_tasks"]
+    assert [t["id"] for t in open_tasks] == [task_id]
+
+
+def test_project_set_done_silent_when_tasks_closed(conn, home: Path) -> None:
+    project_id = project_mod.add(conn, "kaji2", "家事計画2")
+    task_id = task_mod.add(conn, "済んだ家事", project=project_id)
+    task_mod.status(conn, task_id, "doing")
+    task_mod.status(conn, task_id, "done")
+    conn.commit()
+    client = make_web_client(home)
+    res = client.post("/api/v1/tasks/project/kaji2", json={"status": "done"})
+    assert res.status_code == 200
+    assert "open_tasks" not in res.json()
+
+
 def test_project_set_does_not_accept_code_field(conn, home: Path) -> None:
     """D1: 変更の口に `code` が無い——渡しても pydantic が黙って捨てる（余剰フィールドは
     無視、`code` 自体を書き換える経路が無いことの検算）。"""

@@ -5,9 +5,11 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from manor import check as check_mod
+from manor import cli
 from manor import project as project_mod
 from manor import task as task_mod
 
@@ -57,3 +59,26 @@ def test_open_tasks_for_lists_only_unclosed(conn) -> None:
 
     assert [r["id"] for r in rows] == [open_id]
     assert rows[0]["title"] == "未完了"
+
+
+def test_cli_project_set_done_warns_about_open_tasks(conn, home: Path, capsys) -> None:
+    """T85①: `manor project set --status done` が、未完了 task を列挙して警告する。"""
+    project_id = project_mod.add(conn, "PZ5", "CLIで畳むプロジェクト")
+    task_id = task_mod.add(conn, "残ったタスク", project=project_id)
+    conn.commit()
+
+    assert cli.main(["project", "set", "PZ5", "--status", "done", "--json"]) == 0
+    out = json.loads(capsys.readouterr().out)
+    assert [t["id"] for t in out["open_tasks"]] == [task_id]
+
+
+def test_cli_project_set_done_silent_when_tasks_closed(conn, home: Path, capsys) -> None:
+    project_id = project_mod.add(conn, "PZ6", "CLIで畳むプロジェクト2")
+    task_id = task_mod.add(conn, "済んだタスク", project=project_id)
+    task_mod.status(conn, task_id, "doing")
+    task_mod.status(conn, task_id, "done")
+    conn.commit()
+
+    assert cli.main(["project", "set", "PZ6", "--status", "done", "--json"]) == 0
+    out = json.loads(capsys.readouterr().out)
+    assert "open_tasks" not in out
