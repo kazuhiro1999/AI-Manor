@@ -506,6 +506,35 @@ def cmd_receipt_discard(conn: sqlite3.Connection, home, args) -> object:
     return i18n.t("money.receipt.discarded", id=args.id)
 
 
+def cmd_receipt_replay(conn: sqlite3.Connection, home, args) -> object:
+    from . import receipt_replay  # noqa: PLC0415
+
+    ids = [int(args.detail)] if args.detail else None
+    rows = receipt_replay.replay(conn, Path(home), ids=ids, include_ok=args.all, detail=bool(args.detail))
+    if getattr(args, "json", False):
+        return rows
+    if not rows:
+        return i18n.t("money.receipt.replay.none")
+    yes, no = i18n.t("common.yes"), i18n.t("common.no")
+    lines: list[str] = []
+    for r in rows:
+        if r.get("error"):
+            lines.append(i18n.t("money.receipt.replay.error", id=r["id"], review=r["review"], error=r["error"]))
+            continue
+        lines.append(i18n.t(
+            "money.receipt.replay.line", id=r["id"], review=r["review"], total=yes if r["total_match"] else no,
+            reg=r["registered_lines"], rep=r["replayed_lines"], matched=r["amounts_matched"], missing=r["amounts_missing"], extra=r["amounts_extra"],
+        ))
+        if args.detail:
+            lines.append(i18n.t("money.receipt.replay.detail_head", store=r["store"] or "-", reg=r["registered_total"], rep=r["replayed_total"]))
+            for side, rows_ in (("registered", r["only_registered"]), ("replayed", r["only_replayed"])):
+                for it in rows_:
+                    lines.append(i18n.t(f"money.receipt.replay.only_{side}", name=it.get("name") or "-", amount=it.get("amount") if it.get("amount") is not None else "-"))
+            if r["checks_failed"]:
+                lines.append(i18n.t("money.receipt.checks_failed", keys=", ".join(r["checks_failed"])))
+    return "\n".join(lines)
+
+
 def cmd_receipt_status(conn: sqlite3.Connection, home, args) -> object:
     from . import receipt_image, receipt_ocr, receipt_reader, receipts  # noqa: PLC0415
 
@@ -657,6 +686,12 @@ def register(subparsers) -> None:
     p.add_argument("--json", action="store_true")
     p.add_argument("--no-render", action="store_true")
     p.set_defaults(func=cmd_receipt_discard, is_write=True)
+
+    p = receipt_sub.add_parser("replay", help=i18n.t("cli.money.receipt.replay.help"))
+    p.add_argument("--detail", metavar="ID", help=i18n.t("cli.money.receipt.replay.detail.help"))
+    p.add_argument("--all", action="store_true", help=i18n.t("cli.money.receipt.replay.all.help"))
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(func=cmd_receipt_replay, is_write=False)
 
     p = receipt_sub.add_parser("status", help=i18n.t("cli.money.receipt.status.help"))
     p.add_argument("--json", action="store_true")
