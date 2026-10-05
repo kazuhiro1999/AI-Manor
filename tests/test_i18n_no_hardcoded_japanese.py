@@ -387,7 +387,7 @@ LINE_ALLOWLIST: set[tuple[str, str]] = {
     ('staff/chef/recipe_shaping.py', '    "切る", "切り", "切っ", "刻む", "刻み", "刻ん", "混ぜる", "混ぜ", "溶く", "溶き",'), ('staff/chef/recipe_shaping.py', '    "洗う", "洗い", "むく", "むき", "戻す", "戻し", "解凍", "下ごしらえ",'),
     ('staff/chef/recipe_shaping.py', '    {"id": "prep", "title": "下ごしらえ"},'), ('staff/chef/recipe_shaping.py', '    {"id": "cook", "title": "調理"},'),
     ('staff/chef/recipe_shaping.py', '    {"id": "finish", "title": "仕上げ"},'), ('staff/chef/recipe_shaping.py', '    return result or [{"id": "cook", "title": "調理"}]'),
-    ('staff/chef/recipe_shaping.py', '_QTY_PHRASE_WORDS: tuple[str, ...] = ("適量", "少々", "ひとつまみ", "ふたつまみ", "お好みで")'), ('staff/chef/recipe_shaping.py', '    "kg", "ml", "cc", "cm", "㎝", "g", "個", "枚", "本", "切れ", "束", "株", "房",'),
+    ('staff/chef/recipe_shaping.py', '    "適量", "適宜", "少々", "ひとつまみ", "ふたつまみ", "お好みの量", "好みの量", "お好みで",'), ('staff/chef/recipe_shaping.py', '    "kg", "ml", "cc", "cm", "㎝", "g", "個", "枚", "本", "切れ", "束", "株", "房",'),
     ('staff/chef/recipe_shaping.py', '    "丁", "片", "袋", "缶", "合", "杯", "滴",'), ('staff/chef/recipe_shaping.py', '_NUM_PART = r"[\\d０-９]+(?:[./][\\d０-９]+)?(?:と[\\d０-９]+(?:[./][\\d０-９]+)?)?"'),
     ('staff/chef/recipe_shaping.py', '    r"(?P<each>各\\s*)?"'), ('staff/chef/recipe_shaping.py', '    rf"|{_NUM_PART}\\s*(?:{\'|\'.join(_QTY_COUNTER_UNITS)})(?:分)?"'),
     ('staff/chef/recipe_shaping.py', '    for word in ("大さじ", "小さじ", "カップ"):'), ('staff/chef/recipe_shaping.py', '    each = amount.startswith("各")'),

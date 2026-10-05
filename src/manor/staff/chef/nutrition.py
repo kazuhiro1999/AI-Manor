@@ -501,6 +501,17 @@ def _leading_unit(unit: str, tables: UnitTables) -> str:
     return ""
 
 
+def _split_phrase_in_name(ing: Mapping[str, Any]) -> Mapping[str, Any]:
+    """名前の末尾に量の語（「好みの量」「適量」）が付いたまま保存された行を、名前と単位に分け直す。
+    量も単位も空のときだけ。取り込み側（`parse_ingredient_line`）が分けられなかった昔の行の救済。"""
+    if str(ing.get("qty") or "").strip() or str(ing.get("unit") or "").strip():
+        return ing
+    parsed = shaping.parse_ingredient_line(str(ing.get("name") or ""))
+    if len(parsed) == 1 and parsed[0]["unit"] and not parsed[0]["qty"]:
+        return {**ing, "name": parsed[0]["name"], "unit": parsed[0]["unit"]}
+    return ing
+
+
 def to_grams(
     qty: str, unit: str, normalized: str, tables: UnitTables
 ) -> tuple[float | None, str]:
@@ -1113,7 +1124,7 @@ def estimate_nutrition(
 
     # 調理の途中で捨てる塩（ADR-019 §6）。先に全材料のグラムと食品群を出してから係数を決める
     # ——茹で塩の割合は「茹でた食材の重さ ÷ 湯の重さ」なので、塩の行だけ見ても決まらない。
-    ing_rows = [ing for ing in (recipe.get("ingredients") or []) if isinstance(ing, Mapping)]
+    ing_rows = [_split_phrase_in_name(ing) for ing in (recipe.get("ingredients") or []) if isinstance(ing, Mapping)]
     pre_grams: list[float | None] = []
     pre_groups: list[str] = []
     for ing in ing_rows:

@@ -69,6 +69,10 @@ from manor.staff.chef import recipe_shaping as shaping
         ("A 醤油 大さじ1", [{"name": "醤油", "qty": "1", "unit": "大さじ", "group": "A"}]),
         # 「お好みで」は末尾に付く（材料名の後ろ）。
         ("パクチー お好みで", [{"name": "パクチー", "qty": "", "unit": "お好みで", "group": ""}]),
+        # 「好みの量」「適宜」も量の語（名前に残さない。「お」付きも1語として切る）。
+        ("ごま 好みの量", [{"name": "ごま", "qty": "", "unit": "好みの量", "group": ""}]),
+        ("ごま お好みの量", [{"name": "ごま", "qty": "", "unit": "お好みの量", "group": ""}]),
+        ("パセリ 適宜", [{"name": "パセリ", "qty": "", "unit": "適宜", "group": ""}]),
         # 認識できない行は今より悪くしない——全文を name に、qty は空文字のまま。
         ("隠し味", [{"name": "隠し味", "qty": "", "unit": "", "group": ""}]),
         # 空行は材料を生まない（呼び出し側は for line in lines for ing in parse_ingredient_line(line) で展開する）。

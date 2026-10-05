@@ -42,6 +42,8 @@ def _default_cli_language(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv("MANOR_CLAUDE_RESOLVE", "off")
     # ADR-023: レシピ帳の一覧を開いたときに本物の YouTube API で同期しない。
     monkeypatch.setenv("MANOR_YOUTUBE_SYNC", "off")
+    # 夜勤の子プロセスは `MANOR_ACTOR=night` を持つ。起票者の既定値を検算する試験が拾わないよう外す。
+    monkeypatch.delenv("MANOR_ACTOR", raising=False)
     i18n_mod.set_language("ja")
     yield
     i18n_mod.reset_cache()

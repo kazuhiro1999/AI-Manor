@@ -569,3 +569,33 @@ def test_括弧の中の重さと先頭の単位を読む(tables: nutrition.Unit
     assert nutrition.to_grams("10", "gほどをすりおろして", "しょうが", tables)[0] == pytest.approx(10.0)
     # 括弧が無ければ枚の目安重量
     assert nutrition.to_grams("1", "枚", "鶏もも肉", tables)[0] == pytest.approx(250.0)
+
+
+# --- 名前に付いたままの量の語・添え書き（夜勤 N3②）。合成の材料名だけ ----------------------
+
+
+def test_normalize_drops_amount_phrase_and_trailing_nado(tables: nutrition.UnitTables) -> None:
+    assert nutrition.normalize_name("ごま 好みの量", tables) == "ごま"
+    assert nutrition.normalize_name("ごま お好みの量", tables) == "ごま"
+    assert nutrition.normalize_name("豚肉の小間切れなど", tables) == "豚こま"
+
+
+def test_phrase_left_in_the_name_is_split_off_and_not_counted(index: nutrition.FoodIndex, tables: nutrition.UnitTables) -> None:
+    """名前の末尾に「好みの量」が付いたまま（量・単位が空）の行は「適量」と同じく数えない。
+    `no_amount`（換算できない＝分母だけに数える）で未解決に残さない。"""
+    recipe = _recipe(
+        [
+            {"name": "豚ひき肉", "qty": "100", "unit": "g"},
+            {"name": "豚ひき肉 好みの量", "qty": "", "unit": ""},
+            {"name": "水 適宜", "qty": "", "unit": ""},
+        ],
+        servings=1,
+    )
+    est = nutrition.estimate_nutrition(recipe, index, {}, tables)
+    assert est.unresolved == []
+    assert est.coverage == pytest.approx(1.0)
+
+
+def test_name_without_a_phrase_and_without_amount_stays_unresolved(index: nutrition.FoodIndex, tables: nutrition.UnitTables) -> None:
+    est = nutrition.estimate_nutrition(_recipe([{"name": "豚ひき肉", "qty": "", "unit": ""}], servings=1), index, {}, tables)
+    assert [u["reason"] for u in est.unresolved] == [nutrition.REASON_NO_AMOUNT]
