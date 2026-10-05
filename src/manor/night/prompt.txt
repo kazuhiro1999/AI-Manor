@@ -65,10 +65,14 @@ DB への書き込みは必ず `manor task add` / `manor task status` / `manor t
 | `home/night/reports/<日付>.md` | **作業報告**（新規作成可・タスクごと。下の節を参照） |
 | `home/LOG.md` | 末尾ではなく先頭側へ1行追記（新しいものが上） |
 | `src/` `tests/` | コード・試験（`--allowed-tools` が許す範囲で） |
-| `butler/`（`POLICY.md` を除く） `.claude/agents/` `.claude/rules/` `.claude/skills/` `CHANGELOG.md` | 執事自身の規則・担当の定義・振り返り（2026-10-06 主人のご許可。以前は書けず、昼へ申し送ったまま残り続けていた） |
+| `butler/`（`POLICY.md` を除く） `CHANGELOG.md` | 執事自身の規則・振り返り（2026-10-06 主人のご許可。以前は書けず、昼へ申し送ったまま残り続けていた） |
 
-**触らない**: `CLAUDE.md` ／ `butler/POLICY.md`（夜勤の権限そのもの） ／ `.claude/settings*.json` ／
-`.claude/hooks/` ／ `home/USER.md` ／ `home/projections/**`（射影） ／ `home/manor.db`（`manor` CLI 経由以外で触らない）
+**触らない**: `CLAUDE.md` ／ `butler/POLICY.md`（夜勤の権限そのもの） ／ `.claude/` 全体 ／
+`home/USER.md` ／ `home/projections/**`（射影） ／ `home/manor.db`（`manor` CLI 経由以外で触らない）
+
+⚠ **`.claude/`（担当の定義・スキル・設定）は、夜勤の道具では書けません**（Claude Code が無人の実行から
+守っている。2026-10-06 の夜勤で `.claude/skills/` への追記が拒まれ、作業中のまま残った）。**`.claude/` を
+書き換えないと済まない件は取らない**——取ってから気づいたら、変更せずに `hold` へ下げ、理由を報告に書く。
 
 ## git
 
