@@ -382,19 +382,22 @@ def read_image(
             except Exception as exc:  # noqa: BLE001
                 attempts.append({"method": "prepare", "error": f"{type(exc).__name__}: {exc}"})
                 prepared = {"image": img, "fallback": None, "steps": [], "paper": {}}
-            res = receipt_ocr.run(prepared["image"], model=str(cfg.get("ocr_model") or "full"), device=str(cfg.get("ocr_device") or "auto"))
+            ocr_kw = {"model": str(cfg.get("ocr_model") or "full"), "device": str(cfg.get("ocr_device") or "auto")}
+            res = receipt_ocr.run(prepared["image"], **ocr_kw)
             if res["ok"]:
+                res["boxes"], refined = receipt_ocr.refine_garbled_boxes(prepared["image"], res["boxes"], **ocr_kw)
                 ocr_text = receipt_ocr.boxes_text(res["boxes"])
                 raw = receipt_parse.parse_boxes(res["boxes"])
                 raw["parse"]["steps"] = prepared["steps"]
-                raw["parse"]["ocr"] = {"model": res["model"], "device": res["device"], "elapsed": res["elapsed"]}
+                raw["parse"]["ocr"] = {"model": res["model"], "device": res["device"], "elapsed": res["elapsed"], "refined": refined}
                 review = consider(raw, "ocr")
                 if review != "ok" and prepared.get("fallback") is not None:
-                    res2 = receipt_ocr.run(prepared["fallback"], model=str(cfg.get("ocr_model") or "full"), device=str(cfg.get("ocr_device") or "auto"))
+                    res2 = receipt_ocr.run(prepared["fallback"], **ocr_kw)
                     if res2["ok"]:
+                        res2["boxes"], refined2 = receipt_ocr.refine_garbled_boxes(prepared["fallback"], res2["boxes"], **ocr_kw)
                         raw2 = receipt_parse.parse_boxes(res2["boxes"])
                         raw2["parse"]["steps"] = ["fallback"]
-                        raw2["parse"]["ocr"] = {"model": res2["model"], "device": res2["device"], "elapsed": res2["elapsed"]}
+                        raw2["parse"]["ocr"] = {"model": res2["model"], "device": res2["device"], "elapsed": res2["elapsed"], "refined": refined2}
                         consider(raw2, "ocr")
             else:
                 attempts.append({"method": "ocr", "error": res["reason"]})
