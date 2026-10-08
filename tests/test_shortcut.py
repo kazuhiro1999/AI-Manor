@@ -19,6 +19,17 @@ from manor import profile as profile_mod
 from manor import shortcut as shortcut_mod
 
 
+@pytest.fixture(autouse=True)
+def _patient_powershell(monkeypatch: pytest.MonkeyPatch) -> None:
+    """全体試験は並列（xdist）で重く、実物の PowerShell が本番の待ち（20秒）を超えて落ちる。待ちだけ延ばす。"""
+    real_run = shortcut_mod.winps.run
+
+    def patient_run(script: str, *, timeout: int):
+        return real_run(script, timeout=max(timeout, 120))
+
+    monkeypatch.setattr(shortcut_mod.winps, "run", patient_run)
+
+
 @pytest.fixture
 def isolated_dirs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Path, Path]:
     """`MANOR_SHORTCUT_DIR` / `MANOR_DESKTOP_DIR` を一時ディレクトリへ向ける。"""
