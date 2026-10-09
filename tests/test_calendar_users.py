@@ -7,10 +7,12 @@ from __future__ import annotations
 
 import urllib.request
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import pytest
 
 from manor import calendar as calendar_mod
+from manor import ics as ics_mod
 from manor import secrets as secrets_mod
 from manor import user as user_mod
 from manor.web import config as web_config
@@ -22,6 +24,8 @@ MEMBER_URL = "https://example.com/private/member.ics"
 def _fix_clock(monkeypatch: pytest.MonkeyPatch, date_: str = "2026-09-05") -> None:
     monkeypatch.setenv("MANOR_TODAY", date_)
     monkeypatch.setenv("MANOR_NOW", f"{date_}T09:00:00")
+    # 予定は Asia/Tokyo で書いてあるので、PC のローカル時刻も東京に固定する（CI は UTC で動く）
+    monkeypatch.setattr(ics_mod, "_resolve_local_tz", lambda tz: tz or ZoneInfo("Asia/Tokyo"))
 
 
 def _ics_bytes(events: list[tuple[str, str, str]]) -> bytes:

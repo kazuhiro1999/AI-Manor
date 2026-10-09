@@ -8,6 +8,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import sys
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -121,7 +122,7 @@ def _project(conn, code: str = "p9") -> str:
 
 
 def test_ingest_folds_activity_and_report(conn, monkeypatch) -> None:
-    monkeypatch.setenv("MANOR_NOW", "2026-10-09T12:10:00")
+    monkeypatch.setenv("MANOR_NOW", "2026-10-09T12:10:00+09:00")
     events = [
         _ev("session_start", "2026-10-09T12:00:00+09:00"),
         _ev("prompt", "2026-10-09T12:01:00+09:00"),
@@ -135,12 +136,12 @@ def test_ingest_folds_activity_and_report(conn, monkeypatch) -> None:
     assert rows[0]["activity"] == "working" and rows[0]["progress"] == 40 and rows[0]["title"] == "評価の統合"
     store.ingest(conn, [_ev("stop", "2026-10-09T12:06:00+09:00")])
     assert store.list_sessions(conn)[0]["activity"] == "waiting"  # 主人の確認が要るものが無い
-    monkeypatch.setenv("MANOR_NOW", "2026-10-09T13:00:00")
+    monkeypatch.setenv("MANOR_NOW", "2026-10-09T13:00:00+09:00")
     assert store.list_sessions(conn)[0]["activity"] == "idle"
 
 
 def test_review_comes_first_then_waiting_after_ack(conn, monkeypatch) -> None:
-    monkeypatch.setenv("MANOR_NOW", "2026-10-09T12:10:00")
+    monkeypatch.setenv("MANOR_NOW", "2026-10-09T12:10:00+09:00")
     store.ingest(conn, [
         _ev("prompt", "2026-10-09T12:09:00+09:00", sid="a"),
         _ev("progress", "2026-10-09T11:00:00+09:00", sid="b",
@@ -160,7 +161,7 @@ def test_review_comes_first_then_waiting_after_ack(conn, monkeypatch) -> None:
 
 
 def test_link_directory_and_task_reflection(conn, monkeypatch) -> None:
-    monkeypatch.setenv("MANOR_NOW", "2026-10-09T12:10:00")
+    monkeypatch.setenv("MANOR_NOW", "2026-10-09T12:10:00+09:00")
     pid = _project(conn)
     tid = task_mod.add(conn, "onnx を統合", project=pid)
     store.link(conn, "https://github.com/O/R.git", pid)
@@ -182,7 +183,7 @@ def test_link_directory_and_task_reflection(conn, monkeypatch) -> None:
 
 
 def test_unlinked_repo_is_listed_for_asking(conn, monkeypatch) -> None:
-    monkeypatch.setenv("MANOR_NOW", "2026-10-09T12:10:00")
+    monkeypatch.setenv("MANOR_NOW", "2026-10-09T12:10:00+09:00")
     store.ingest(conn, [_ev("prompt", "2026-10-09T12:09:00+09:00")])
     lines = store.format_active(conn)
     assert any("未紐づけのリポジトリ: github.com/o/r" in line for line in lines)
@@ -321,7 +322,7 @@ def test_headless_runs_are_not_reported(monkeypatch, capsys) -> None:
 
 
 def test_ack_marks_human_next_done_until_it_changes(conn, monkeypatch) -> None:
-    monkeypatch.setenv("MANOR_NOW", "2026-10-09T12:10:00")
+    monkeypatch.setenv("MANOR_NOW", "2026-10-09T12:10:00+09:00")
     store.ingest(conn, [_ev("progress", "2026-10-09T12:05:00+09:00",
                             report={"title": "a", "phase": "implemented", "human_next": "Drive を掃除"})])
     assert store.ack(conn, "s1") == "Drive を掃除"
@@ -361,7 +362,7 @@ def test_hooks_return_without_waiting_for_relay(monkeypatch, tmp_path) -> None:
 
 
 def test_hold_parks_review_until_unheld_or_new_human_next(conn, monkeypatch) -> None:
-    monkeypatch.setenv("MANOR_NOW", "2026-10-09T12:10:00")
+    monkeypatch.setenv("MANOR_NOW", "2026-10-09T12:10:00+09:00")
     store.ingest(conn, [
         _ev("progress", "2026-10-09T12:00:00+09:00", report={"title": "a", "phase": "implemented",
                                                             "human_next": "方針を判断"}),
@@ -371,7 +372,7 @@ def test_hold_parks_review_until_unheld_or_new_human_next(conn, monkeypatch) -> 
     assert store.ack(conn, "s1", kind="hold") == "方針を判断"
     row = store.list_sessions(conn)[0]
     assert (row["activity"], row["held"], row["human_next_done"]) == ("hold", True, False)
-    monkeypatch.setenv("MANOR_NOW", "2026-10-09T18:00:00")
+    monkeypatch.setenv("MANOR_NOW", "2026-10-09T18:00:00+09:00")
     assert store.list_sessions(conn)[0]["activity"] == "hold"  # 時間が経っても保留のまま
     assert store.unhold(conn, "s1") == 1
     assert store.list_sessions(conn)[0]["activity"] == "review"
@@ -388,17 +389,17 @@ def test_same_ack_is_told_once() -> None:
 
 
 def test_close_until_next_prompt(conn, monkeypatch) -> None:
-    monkeypatch.setenv("MANOR_NOW", "2026-10-09T12:10:00")
+    monkeypatch.setenv("MANOR_NOW", "2026-10-09T12:10:00+09:00")
     store.ingest(conn, [_ev("prompt", "2026-10-09T12:00:00+09:00"), _ev("stop", "2026-10-09T12:05:00+09:00")])
     assert store.list_sessions(conn)[0]["activity"] == "waiting"
     assert store.close(conn, "s1") and not store.close(conn, "nope")
     row = store.list_sessions(conn)[0]
     assert (row["activity"], row["closed"]) == ("closed", True)
     assert store.format_active(conn) == []  # 起動時の射影には出さない
-    monkeypatch.setenv("MANOR_NOW", "2026-10-20T12:00:00")
+    monkeypatch.setenv("MANOR_NOW", "2026-10-20T12:00:00+09:00")
     assert store.list_sessions(conn) == []  # 7日を過ぎたら「古いものも出す」でだけ
     assert store.list_sessions(conn, include_ended=True)[0]["activity"] == "closed"
-    monkeypatch.setenv("MANOR_NOW", "2026-10-21T09:00:30")
+    monkeypatch.setenv("MANOR_NOW", "2026-10-21T09:00:30+09:00")
     store.ingest(conn, [_ev("prompt", "2026-10-21T09:00:00+09:00")])  # 続きを話しかけたら自然に戻る
     assert store.list_sessions(conn)[0]["activity"] == "working"
     store.ingest(conn, [_ev("stop", "2026-10-21T09:00:20+09:00")])
@@ -406,7 +407,7 @@ def test_close_until_next_prompt(conn, monkeypatch) -> None:
 
 
 def test_reopen_restores_previous_state(conn, monkeypatch) -> None:
-    monkeypatch.setenv("MANOR_NOW", "2026-10-09T12:10:00")
+    monkeypatch.setenv("MANOR_NOW", "2026-10-09T12:10:00+09:00")
     store.ingest(conn, [_ev("progress", "2026-10-09T12:00:00+09:00", report={"human_next": "確認"}),
                         _ev("stop", "2026-10-09T12:01:00+09:00")])
     store.close(conn, "s1")
@@ -414,6 +415,7 @@ def test_reopen_restores_previous_state(conn, monkeypatch) -> None:
     assert store.list_sessions(conn)[0]["activity"] == "review"
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows の起動フラグの試験（他の OS では WindowsPath を作れない）")
 def test_spawn_flush_never_opens_a_console(monkeypatch) -> None:
     seen = {}
     monkeypatch.setattr(mr.os, "name", "nt")
