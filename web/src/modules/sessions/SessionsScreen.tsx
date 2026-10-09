@@ -100,7 +100,7 @@ export function SessionCard({ s }: { s: RemoteSession }) {
       <div className="session-link">
         {s.linked ? (
           <>
-            <span>{s.project_id}{s.project_title ? ` ${s.project_title}` : ""}</span>
+            <span>{[s.project_id, s.project_title].filter(Boolean).join(" ")}</span>
             {s.task_id && (
               <span className="session-task">
                 {" › "}

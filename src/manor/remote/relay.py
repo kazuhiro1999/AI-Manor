@@ -74,11 +74,21 @@ def call(payload: dict[str, Any], *, timeout: float = 20.0) -> dict[str, Any]:
     body = json.dumps({**payload, "token": token}, ensure_ascii=False).encode("utf-8")
     req = urllib.request.Request(url, data=body, method="POST",
                                  headers={"Content-Type": "text/plain;charset=utf-8"})
-    try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310 - 宛先は設定の固定値
-            raw = resp.read().decode("utf-8", errors="replace")
-    except (urllib.error.URLError, OSError) as exc:
-        raise RelayError(f"中継に届きません: {exc}") from exc
+    raw = ""
+    for attempt in range(2):
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310 - 宛先は設定の固定値
+                raw = resp.read().decode("utf-8", errors="replace")
+            break
+        except urllib.error.HTTPError as exc:
+            # GAS は結果の置き場（302 の先）が時々 404 になる（2026-10-09 実測。許可の直後に多発）。
+            # どの op もやり直して安全（events は event_id で重複を捨て、他は上書き）なので1回だけ。
+            if attempt == 0 and (exc.code == 404 or exc.code >= 500):
+                time.sleep(2)
+                continue
+            raise RelayError(f"中継に届きません: {exc}") from exc
+        except (urllib.error.URLError, OSError) as exc:
+            raise RelayError(f"中継に届きません: {exc}") from exc
     try:
         out = json.loads(raw)
     except ValueError as exc:

@@ -195,7 +195,24 @@
 | ③ | `/api/v1/sessions` と Web の頁 | pytest（取り込みの間引き10秒）・vitest・i18n parity が緑。`npm run build` が通る |
 | ④ | 主人の手: GAS を貼って公開・各PCに導入 | 主人の操作。執事は手順を1枚にまとめて渡す |
 
-## 12. 残す課題
+## 12. 実装で決めた細部（2026-10-09 即日実装）
+
+- GAS のファイルは `Code.js`（clasp 3 の拡張子）。`Config.js`（管理鍵の sha256 と送る側の道具の本文）は
+  manor が `home/remote/gas/` に生成し、`manor remote gas deploy` が push → 公開（2回目以降は同じ URL を更新）。
+- PCの鍵は **sha256**（pbkdf2 ではない）。32 バイトの乱数なので総当たりの心配が無く、GAS 側で軽く照合できる。
+  鍵の正は中継の `machines` シート。manor の `remote_machine` は一覧と失効の記録だけ。PCの鍵で来たイベントの
+  `machine` は、名乗りではなく鍵の持ち主の名で上書きする。
+- 禁止語の確認は **manor から中継へ送る紐づけ表にだけ**掛ける。禁止語の一覧を他のPCへ配ると、一覧そのものが
+  中継に載ってしまうため。他のPCから送る内容は、主人の裁定（用語が載ってよい）で扱う。
+- 他のPCへの導入: `manor remote machine add <PC名>` が PowerShell／sh の1行を出す。道具の本文は中継から
+  `op=client`（POST）で受け取り、`install` が `~/.manor-report/` と `~/.claude/settings.json` の hooks を書く
+  （元の settings は `.bak-manor-report` に控える。何度流しても同じ結果）。
+- 活動の状態: 開いただけのセッション（`session_start` の後に主人の発言が無い）は「作業中」ではなく「あなたの番」。
+- 1つのリポジトリが複数のプロジェクトに当たる場合（manor 自身 → x1〜x6）は、申告が無ければ候補を並べて出す。
+- GAS は結果の置き場（302 の先）が時々 404 になる（許可の直後に多発・実測）。manor 側は1回だけやり直す
+  （どの op もやり直して安全）。送る側は手元に溜めて次の合図で送る。
+
+## 13. 残す課題
 
 - manor から各セッションへの伝言（逆向き。remote-control がオフでも指示が届く）。`directory` と同じ経路で
   セッション宛ての行を置き、送る側が UserPromptSubmit で受け取って注入する形を想定。v1 には入れない。

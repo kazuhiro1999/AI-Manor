@@ -231,7 +231,8 @@ def activity(row: dict[str, Any], now: datetime | None = None) -> str:
     last = _parse(row.get("last_event_at"))
     if last is None or now - last > timedelta(minutes=IDLE_MINUTES):
         return "idle"
-    return "working" if row.get("last_kind") in ("prompt", "session_start") else "your_turn"
+    # 開いただけのセッション（session_start の後に主人の発言が無い）は「作業中」ではない。
+    return "working" if row.get("last_kind") == "prompt" else "your_turn"
 
 
 def list_sessions(conn: sqlite3.Connection, *, include_ended: bool = False,
@@ -257,6 +258,10 @@ def list_sessions(conn: sqlite3.Connection, *, include_ended: bool = False,
         candidates = linked.get(row.get("repo_key") or "", [])
         if not project_id and len(candidates) == 1:
             project_id = candidates[0]
+        project_title = titles.get(project_id or "")
+        if not project_id and len(candidates) > 1:
+            # 1つのリポジトリが複数のプロジェクトに当たる（manor 自身など）。申告が無ければ候補を並べる。
+            project_title = "・".join(c.lower() for c in candidates)
         task_title = None
         if row.get("task_id"):
             t = conn.execute("SELECT title FROM node WHERE id=?", (row["task_id"],)).fetchone()
@@ -276,8 +281,8 @@ def list_sessions(conn: sqlite3.Connection, *, include_ended: bool = False,
             "human_next": row.get("human_next") or "",
             "note": row.get("note") or "",
             "project_id": project_id,
-            "project_title": titles.get(project_id or ""),
-            "linked": bool(project_id),
+            "project_title": project_title,
+            "linked": bool(project_id or candidates),
             "task_id": row.get("task_id"),
             "task_title": task_title,
             "repo_key": row.get("repo_key"),
@@ -330,7 +335,7 @@ def format_active(conn: sqlite3.Connection) -> list[str]:
             continue
         label = {"your_turn": "あなたの番", "working": "作業中", "idle": "休止"}[s["activity"]]
         head = s["title"] or f"{s['repo_name']}（報告待ち）"
-        where = s["task_id"] or s["project_id"] or "未紐づけ"
+        where = s["task_id"] or s["project_id"] or (s["project_title"] if s["linked"] else "未紐づけ")
         phase = s["phase_label"] or "—"
         pct = "" if s["progress"] is None else f" {s['progress']}%"
         nxt = f"｜主人の次: {s['human_next']}" if s["human_next"] else ""
