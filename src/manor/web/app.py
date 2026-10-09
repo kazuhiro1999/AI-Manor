@@ -289,6 +289,7 @@ def create_app(
     from .api_v1 import night as api_night
     from .api_v1 import receipts as api_receipts
     from .api_v1 import rules, runs as api_runs, secretary
+    from .api_v1 import sessions as api_sessions
     from .api_v1 import settings as api_settings
     from .api_v1 import setup as api_setup
     from .api_v1 import task_kinds as api_task_kinds
@@ -299,6 +300,7 @@ def create_app(
     api_auth.register(app, ctx)
     api_dashboard.register(app, ctx)  # ADR-011 D2（総括ダッシュボード。読み取り専用）
     api_agents.register(app, ctx)  # ADR-011 D3（担当の一覧。読み取り専用）
+    api_sessions.register(app, ctx)  # ADR-025 §10（他のPCを含むセッションの一覧）
     tasks.register(app, ctx)
     api_ideas.register(app, ctx)
     kitchen.register(app, ctx)

@@ -335,3 +335,54 @@ CREATE TABLE IF NOT EXISTS web_device_pairing (
   consumed_at      TEXT                       -- 端末が鍵を受け取った時刻（二度目は expired）
 );
 CREATE INDEX IF NOT EXISTS web_device_pairing_code ON web_device_pairing(code);
+
+-- ADR-025（他のPCのセッションと進捗を同期する）。中継（GAS）から `manor remote pull` で取り込む。
+-- `remote_event` は届いたイベントの生の記録（event_id で重複を捨てる）。`remote_session` はそれを
+-- セッションごとに畳み直した最新の姿（ダッシュボードと `manor active` が読む）。
+-- `remote_repo_link` はリポジトリ（git の remote を正規化した鍵、無ければ `dir:<フォルダ名>`）→ プロジェクト。
+-- `remote_machine` は鍵を配ったPC（ハッシュは中継が持つ。ここは一覧と失効の記録だけ）。
+CREATE TABLE IF NOT EXISTS remote_event (
+  event_id    TEXT PRIMARY KEY,
+  seq         INTEGER,                    -- 中継の連番（取り込みのカーソル）
+  kind        TEXT NOT NULL,              -- session_start / prompt / stop / progress / session_end
+  at          TEXT NOT NULL,              -- 送る側の時刻（ISO8601・時差つき）
+  machine     TEXT NOT NULL DEFAULT '',
+  session_id  TEXT NOT NULL,
+  payload     TEXT NOT NULL,              -- イベントの JSON 全文
+  received_at TEXT NOT NULL               -- manor が取り込んだ時刻
+);
+CREATE INDEX IF NOT EXISTS remote_event_session ON remote_event(session_id, at);
+
+CREATE TABLE IF NOT EXISTS remote_session (
+  session_id     TEXT PRIMARY KEY,
+  machine        TEXT NOT NULL DEFAULT '',
+  cwd            TEXT NOT NULL DEFAULT '',
+  repo_key       TEXT,
+  repo_remote    TEXT,
+  branch         TEXT,
+  project_id     TEXT,                    -- 報告の申告、無ければ remote_repo_link から
+  task_id        TEXT,
+  title          TEXT NOT NULL DEFAULT '',
+  phase          TEXT NOT NULL DEFAULT '',
+  progress       INTEGER,
+  human_next     TEXT NOT NULL DEFAULT '',
+  note           TEXT NOT NULL DEFAULT '',
+  last_kind      TEXT NOT NULL DEFAULT '',-- 活動の状態の材料（progress 以外の最後の合図）
+  started_at     TEXT,
+  last_event_at  TEXT,
+  last_report_at TEXT,
+  ended_at       TEXT
+);
+
+CREATE TABLE IF NOT EXISTS remote_repo_link (
+  repo_key   TEXT NOT NULL,
+  project_id TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  PRIMARY KEY (repo_key, project_id)
+);
+
+CREATE TABLE IF NOT EXISTS remote_machine (
+  name       TEXT PRIMARY KEY,
+  created_at TEXT NOT NULL,
+  revoked_at TEXT
+);

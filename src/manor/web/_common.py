@@ -150,6 +150,8 @@ def ns(**kwargs: object) -> SimpleNamespace:
 #: ——設定画面の「モジュールの並び」節が引き続き meta.modules を表示に使うため）。
 MODULE_DEFS: tuple[dict[str, object], ...] = (
     {"id": "dashboard", "title": "ダッシュボード", "icon": "🏠", "order": 1, "table": None},
+    # ADR-025 §10（他のPCを含む Claude Code のセッションの一覧）。主人が作業中に横で開いておく画面。
+    {"id": "sessions", "title": "セッション", "icon": "🖥", "order": 1.5, "table": None},
     {"id": "agents", "title": "担当", "icon": "🧑‍🤝‍🧑", "order": 2, "table": None},
     {"id": "tasks", "title": "タスク", "icon": "📋", "order": 3, "table": None},
     # ADR-010 系「意見箱」（夜勤 N6・主人のご要望 2026-09-08）。tasks の次に置く。

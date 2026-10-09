@@ -576,6 +576,11 @@ def cmd_agent_sync(conn, home, args) -> object:
 
 
 def cmd_active(conn, home, args) -> object:
+    from .remote import relay as remote_relay
+
+    if remote_relay.configured():
+        conn.commit()
+        remote_relay.try_pull(home)
     if args.json:
         return render_mod.active_data(conn)
     return render_mod.active_text(conn)
@@ -1328,6 +1333,9 @@ def build_parser() -> argparse.ArgumentParser:
     from . import notion as notion_mod
 
     notion_mod.register(subparsers)  # ADR-009 5c（Notion 日記）
+    from .remote import cli as remote_cli
+
+    remote_cli.register(subparsers)  # ADR-025（他のPCのセッション同期）
     from . import calendar as calendar_mod
 
     calendar_mod.register(subparsers)  # ADR-012 5d（ICS カレンダーの取り込み。読み取り専用）

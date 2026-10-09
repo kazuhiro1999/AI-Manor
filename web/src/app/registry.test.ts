@@ -44,11 +44,12 @@ describe("registry", () => {
     expect(settings.hideFromNav).toBe(true);
   });
 
-  it("dashboard がサイドバー先頭、agents が2番目（ADR-011 D1 の並び）", () => {
+  it("dashboard がサイドバー先頭、次にセッション（ADR-025）、agents（ADR-011 D1 の並び）", () => {
     const withoutHidden = registry.filter((m) => !m.hideFromNav).sort((a, b) => a.order - b.order);
     expect(withoutHidden[0].id).toBe("dashboard");
-    expect(withoutHidden[1].id).toBe("agents");
-    expect(withoutHidden[2].id).toBe("tasks");
+    expect(withoutHidden[1].id).toBe("sessions");
+    expect(withoutHidden[2].id).toBe("agents");
+    expect(withoutHidden[3].id).toBe("tasks");
   });
 
   it("tasks モジュールの badge は board.counts.pending を返す", () => {

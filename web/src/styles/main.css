@@ -706,3 +706,66 @@ table.grid td.col-wide, table.grid th.col-wide { min-width: 220px; }
 .breakdown-vlabel { font-size: 9px; color: var(--text-faint); text-align: center; margin-top: 3px; white-space: nowrap; }
 .breakdown-vlabel.is-weekend { opacity: 0.5; }
 .breakdown-vamount { font-size: 10px; color: var(--text-dim); text-align: center; margin-top: 1px; white-space: nowrap; }
+
+/* ===== セッション（ADR-025 §10）: 1枚1セッションのグリッド ===== */
+.sessions-toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 4px 0 14px; }
+.sessions-toolbar .chip { cursor: pointer; }
+.sessions-toolbar .chip.active { border-color: var(--accent); color: var(--accent); }
+.sessions-spacer { flex: 1; }
+.sessions-yourturn { color: var(--warn); font-weight: 600; font-size: 13px; }
+.sessions-ended { font-size: 12px; color: var(--text-dim); display: inline-flex; gap: 4px; align-items: center; }
+.sessions-grid {
+  display: grid; gap: 14px;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 300px), 1fr));
+}
+.session-card {
+  background: var(--bg-panel); border: 1px solid var(--border); border-radius: var(--radius);
+  padding: 14px 16px 12px; display: flex; flex-direction: column; gap: 8px; min-width: 0;
+  box-shadow: var(--shadow); border-left: 4px solid var(--border);
+}
+.session-card.act-your_turn { border-left-color: var(--warn); }
+.session-card.act-working { border-left-color: var(--ok); }
+.session-card.act-idle, .session-card.act-ended { opacity: 0.72; }
+.session-top { display: flex; align-items: center; gap: 8px; font-size: 12px; }
+.session-machine {
+  background: var(--bg-panel-2); border: 1px solid var(--border); border-radius: 999px;
+  padding: 1px 9px; font-weight: 600; color: var(--text);
+}
+.session-activity { display: inline-flex; align-items: center; gap: 5px; color: var(--text-dim); }
+.session-activity.act-your_turn { color: var(--warn); font-weight: 600; }
+.session-activity.act-working { color: var(--ok); }
+.session-dot { width: 8px; height: 8px; border-radius: 50%; background: currentColor; display: inline-block; }
+.session-activity.act-working .session-dot { animation: session-pulse 1.4s ease-in-out infinite; }
+@keyframes session-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.25; } }
+.session-ago { margin-left: auto; color: var(--text-faint); }
+.session-title { margin: 2px 0 0; font-size: 16px; line-height: 1.35; overflow-wrap: anywhere; }
+.session-link { font-size: 12px; color: var(--text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.session-unlinked { color: var(--text-faint); font-style: italic; }
+.session-doing { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.session-phase {
+  flex: 0 0 auto; font-size: 12px; font-weight: 600; padding: 2px 8px; border-radius: 6px;
+  background: var(--bg-panel-2); border: 1px solid var(--border);
+}
+.session-phase.phase-investigating, .session-phase.phase-designing { color: var(--info); border-color: var(--info); }
+.session-phase.phase-implementing, .session-phase.phase-fixing { color: var(--accent); border-color: var(--accent); }
+.session-phase.phase-implemented, .session-phase.phase-testing { color: var(--ok); border-color: var(--ok); }
+.session-phase.phase-done { color: var(--ok); background: var(--ok-bg); border-color: var(--ok); }
+.session-phase.phase-blocked { color: var(--danger); background: var(--danger-bg); border-color: var(--danger); }
+.session-note { font-size: 12px; color: var(--text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.session-progress {
+  position: relative; height: 18px; border-radius: 9px; background: var(--bg-panel-2);
+  border: 1px solid var(--border); overflow: hidden;
+}
+.session-bar { height: 100%; background: var(--accent); transition: width 0.4s ease; }
+.phase-implemented .session-bar, .phase-testing .session-bar, .phase-done .session-bar { background: var(--ok); }
+.phase-blocked .session-bar { background: var(--danger); }
+.session-pct { position: absolute; right: 8px; top: 0; line-height: 16px; font-size: 11px; font-weight: 600; color: var(--text); }
+.session-next { display: flex; gap: 8px; font-size: 13px; align-items: baseline; }
+.session-next-label { flex: 0 0 auto; font-size: 11px; color: var(--text-faint); }
+.session-next.has-next { color: var(--text); font-weight: 600; }
+.act-your_turn .session-next.has-next {
+  background: var(--warn-bg); color: var(--warn); border-radius: 6px; padding: 4px 8px; margin: 0 -4px;
+}
+.session-foot { font-size: 11px; color: var(--text-faint); }
+.session-waiting { font-size: 12px; color: var(--text-faint); padding: 6px 0; }
+.panel-note.is-warn { color: var(--warn); }

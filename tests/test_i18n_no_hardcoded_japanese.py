@@ -78,6 +78,19 @@ ALLOWLIST: set[str] = {
     # （receipt_reader.py の読み取りの指示と同じ扱い）と、DB に残す記録の語。画面の文言は
     # Web が `settings.food.*` で訳す。
     "staff/chef/food_resolve.py",
+    # [エージェント向け]+[単体配布] remote/client/manor_report.py（ADR-025）: 他のPCに1本で置く
+    # 送信の道具。manor を入れないPCで動くので i18n を import できない。日本語は、セッションの
+    # Claude に注入する報告の作法と、段階の語彙（ダッシュボードの GAS 側の表示と共有）。
+    "remote/client/manor_report.py",
+    # [データ]+[エージェント向け] remote/store.py・remote/relay.py（ADR-025）: タスクの「現在地」に
+    # 書く記録の文（DB に残る実データ）と、起動時の射影に載せる執事向けの行。画面は Web が
+    # `sessions.*` で訳す。
+    "remote/store.py",
+    "remote/relay.py",
+    # [執事の道具・未移行] remote/cli.py（ADR-025・2026-10-09）: `manor remote ...` の結果行。
+    # 主人のご要望で即日入れたため i18n を後回しにした。夜勤（T119）で `cli.remote.*` へ移し、
+    # この行を消す。
+    "remote/cli.py",
     # [データ]+[検証] staff/chef/youtube.py: レシピの見出し・量の語彙（「材料」「作り方」「大さじ」…）を
     # 正規表現に持つ（recipe_shaping と同じ扱い）。extensions/youtube.py は他の拡張のマニフェストと同じ [共有]。
     "staff/chef/youtube.py",

@@ -255,7 +255,27 @@ def format_active(data: dict[str, object], *, width: int = 88, night_pause: dict
 
 
 def active_text(conn: sqlite3.Connection) -> str:
-    return format_active(active_data(conn), night_pause=_night_pause())
+    text = format_active(active_data(conn), night_pause=_night_pause())
+    remote = _remote_lines(conn)
+    return f"{text}\n\n{remote}" if remote else text
+
+
+def _remote_lines(conn: sqlite3.Connection) -> str:
+    """ADR-025 §7.2: 他のPCのセッション（取り込み済みの手元の表から。ここでは中継を叩かない）。"""
+    try:
+        from .remote import store as remote_store
+
+        lines = remote_store.format_active(conn)
+        done = remote_store.done_reports(conn)
+    except sqlite3.Error:
+        return ""
+    if not lines and not done:
+        return ""
+    out = [f"■ 他のPCのセッション: {sum(1 for x in lines if not x.lstrip().startswith('⚠'))}件"]
+    out += lines
+    for d in done:
+        out.append(f"  ✔ {d['machine']} が {d['task_id']} を完了と報告——検分して閉じる")
+    return "\n".join(out)
 
 
 def _night_pause() -> dict[str, object] | None:

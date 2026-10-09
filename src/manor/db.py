@@ -42,6 +42,8 @@ CORE_TABLES: frozenset[str] = frozenset(
         # ない——Web の認証の持ち物なので core の表として数える（C9 の検査が
         # 「知らない表」と言わないように、ここへ明示的に加える）。
         "web_device", "web_device_pairing",
+        # ADR-025（他のPCのセッション同期）: 同上。中継から取り込む core の表。
+        "remote_event", "remote_session", "remote_repo_link", "remote_machine",
     }
 )
 

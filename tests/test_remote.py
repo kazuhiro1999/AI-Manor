@@ -1,0 +1,291 @@
+"""ADR-025（他のPCのセッション同期）。送る側の道具・取り込み・紐づけ・偽の中継での往復。
+
+実物の GAS には触れない。`_FakeRelay` が Code.js と同じ op を最小限まねる。
+"""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import threading
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+
+import pytest
+
+from manor import secrets as secrets_mod
+from manor import task as task_mod
+from manor.remote import relay, store
+from manor.remote.client import manor_report as mr
+
+
+# --- 送る側の道具 ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("url", [
+    "https://github.com/Owner/Repo.git",
+    "git@github.com:Owner/Repo.git",
+    "ssh://git@github.com:22/Owner/Repo",
+    "https://user@github.com/owner/repo/",
+])
+def test_normalize_remote_folds_spellings(url: str) -> None:
+    assert mr.normalize_remote(url) == "github.com/owner/repo"
+
+
+def test_repo_key_falls_back_to_folder() -> None:
+    assert mr.repo_key(None, "C:/work/Dance-Eval") == "dir:dance-eval"
+    assert mr.normalize_remote("C:/local/path") is None
+
+
+def _args(**kw) -> argparse.Namespace:
+    base = dict(title=None, phase=None, progress=None, human_next=None, project=None, task=None, note=None)
+    base.update(kw)
+    return argparse.Namespace(**base)
+
+
+def test_build_report_defaults_progress_from_phase_and_keeps_previous() -> None:
+    first = mr.build_report(_args(title="x" * 60, phase="implementing", human_next="実機で確認"), None)
+    assert first["progress"] == 50
+    assert len(first["title"]) == mr.TITLE_MAX
+    second = mr.build_report(_args(progress=62), first)
+    assert second["phase"] == "implementing" and second["progress"] == 62
+    assert second["title"] == first["title"] and second["human_next"] == "実機で確認"
+    third = mr.build_report(_args(phase="testing"), second)
+    assert third["progress"] == 85  # 段階が変わり、数字の申告が無ければ既定値
+
+
+def _transcript(tmp_path: Path, tools: list[dict], reported: bool = False) -> str:
+    lines = [
+        {"type": "user", "message": {"content": "前の依頼"}},
+        {"type": "assistant", "message": {"content": [{"type": "tool_use", "name": "Edit", "input": {}}]}},
+        {"type": "user", "message": {"content": "今の依頼"}},
+    ]
+    for t in tools:
+        lines.append({"type": "assistant", "message": {"content": [{"type": "tool_use", **t}]}})
+        lines.append({"type": "user", "message": {"content": [{"type": "tool_result", "content": "ok"}]}})
+    if reported:
+        lines.append({"type": "assistant", "message": {"content": [{"type": "tool_use", "name": "Bash",
+                      "input": {"command": "py manor_report.py progress --title a"}}]}})
+    path = tmp_path / "t.jsonl"
+    path.write_text("\n".join(json.dumps(x, ensure_ascii=False) for x in lines), encoding="utf-8")
+    return str(path)
+
+
+def test_stop_nudges_only_after_work_without_report(tmp_path: Path) -> None:
+    talk = mr.analyze_turn(_transcript(tmp_path, [{"name": "Read", "input": {}}]))
+    assert talk["tools"] == 1 and not mr.should_nudge(talk, {})
+    edit = mr.analyze_turn(_transcript(tmp_path, [{"name": "Write", "input": {}}]))
+    assert edit["edited"] and mr.should_nudge(edit, {})
+    many = mr.analyze_turn(_transcript(tmp_path, [{"name": "Bash", "input": {}}] * 5))
+    assert mr.should_nudge(many, {})
+    done = mr.analyze_turn(_transcript(tmp_path, [{"name": "Write", "input": {}}], reported=True))
+    assert not mr.should_nudge(done, {})
+    # 手元の状態で「このターンの後に報告した」と分かれば止めない
+    assert not mr.should_nudge(edit, {"prompt_at": "2026-10-09T10:00:00+09:00",
+                                      "progress_at": "2026-10-09T10:05:00+09:00"})
+
+
+def test_merge_hooks_is_idempotent_and_keeps_others() -> None:
+    cfg = {"command": '"py" "/x/manor_report.py"'}
+    settings = {"hooks": {"Stop": [{"hooks": [{"type": "command", "command": "other"}]}]}}
+    mr.merge_hooks(settings, cfg)
+    mr.merge_hooks(settings, cfg)
+    stop = settings["hooks"]["Stop"]
+    assert [h["command"] for g in stop for h in g["hooks"]] == ["other", '"py" "/x/manor_report.py" hook Stop']
+    assert set(settings["hooks"]) == {"Stop", "SessionStart", "UserPromptSubmit", "SessionEnd"}
+
+
+def test_injection_names_session_and_tasks() -> None:
+    cfg = {"machine": "LAB", "command": "py r.py"}
+    entry = {"projects": [{"id": "P4", "name": "XR"}], "tasks": [{"id": "T80", "title": "onnx", "status": "todo"}]}
+    text = mr.injection_text(cfg, "sess-1", {"remote": "github.com/o/r"}, entry)
+    assert "sess-1" in text and "T80" in text and "py r.py progress --session sess-1" in text
+    assert "まだどのプロジェクトにも" in mr.injection_text(cfg, "s", {"remote": "github.com/o/r"}, None)
+
+
+# --- 取り込み ------------------------------------------------------------------------------
+
+
+def _ev(kind: str, at: str, sid: str = "s1", report: dict | None = None, eid: str | None = None) -> dict:
+    return {"v": 1, "event_id": eid or f"{sid}-{kind}-{at}", "kind": kind, "at": at, "machine": "LAB",
+            "session_id": sid, "cwd": "C:/w/r", "repo": {"remote": "github.com/o/r", "branch": "main",
+                                                          "key": "github.com/o/r"}, "report": report}
+
+
+def _project(conn, code: str = "p9") -> str:
+    from manor import project as project_mod
+
+    project_mod.add(conn, code, "検証用")
+    return conn.execute("SELECT id FROM project WHERE code=?", (code,)).fetchone()["id"]
+
+
+def test_ingest_folds_activity_and_report(conn, monkeypatch) -> None:
+    monkeypatch.setenv("MANOR_NOW", "2026-10-09T12:10:00")
+    events = [
+        _ev("session_start", "2026-10-09T12:00:00+09:00"),
+        _ev("prompt", "2026-10-09T12:01:00+09:00"),
+        _ev("progress", "2026-10-09T12:05:00+09:00", report={"title": "評価の統合", "phase": "implementing",
+                                                            "progress": 40, "human_next": "", "note": "途中"}),
+    ]
+    out = store.ingest(conn, events)
+    assert out["accepted"] == 3
+    assert store.ingest(conn, events)["accepted"] == 0  # 重複は捨てる
+    rows = store.list_sessions(conn)
+    assert rows[0]["activity"] == "working" and rows[0]["progress"] == 40 and rows[0]["title"] == "評価の統合"
+    store.ingest(conn, [_ev("stop", "2026-10-09T12:06:00+09:00")])
+    assert store.list_sessions(conn)[0]["activity"] == "your_turn"
+    monkeypatch.setenv("MANOR_NOW", "2026-10-09T13:00:00")
+    assert store.list_sessions(conn)[0]["activity"] == "idle"
+
+
+def test_ordering_puts_your_turn_first(conn, monkeypatch) -> None:
+    monkeypatch.setenv("MANOR_NOW", "2026-10-09T12:10:00")
+    store.ingest(conn, [_ev("prompt", "2026-10-09T12:09:00+09:00", sid="a"),
+                        _ev("stop", "2026-10-09T12:00:00+09:00", sid="b")])
+    assert [r["session_id"] for r in store.list_sessions(conn)] == ["b", "a"]
+
+
+def test_link_directory_and_task_reflection(conn, monkeypatch) -> None:
+    monkeypatch.setenv("MANOR_NOW", "2026-10-09T12:10:00")
+    pid = _project(conn)
+    tid = task_mod.add(conn, "onnx を統合", project=pid)
+    store.link(conn, "https://github.com/O/R.git", pid)
+    entry = store.build_directory(conn)["github.com/o/r"]
+    assert entry["projects"][0]["id"] == pid and entry["tasks"][0]["id"] == tid
+
+    out = store.ingest(conn, [_ev("progress", "2026-10-09T12:05:00+09:00",
+                                  report={"title": "統合", "phase": "implemented", "progress": 75,
+                                          "human_next": "実機で確認", "task": tid.lower()})])
+    assert out["phase_changes"] == [("s1", tid, "", "implemented")]
+    assert relay.reflect_tasks(conn, out["phase_changes"]) == [tid]
+    now = conn.execute("SELECT now FROM task WHERE id=?", (tid,)).fetchone()["now"]
+    assert "[LAB] 統合：実装済（75%）" in now and "実機で確認" in now
+    row = store.list_sessions(conn)[0]
+    assert row["project_id"] == pid and row["linked"] and row["task_title"] == "onnx を統合"
+    # 同じ段階の数字だけの変化では書かない
+    again = store.ingest(conn, [_ev("progress", "2026-10-09T12:07:00+09:00", report={"progress": 80})])
+    assert again["phase_changes"] == []
+
+
+def test_unlinked_repo_is_listed_for_asking(conn, monkeypatch) -> None:
+    monkeypatch.setenv("MANOR_NOW", "2026-10-09T12:10:00")
+    store.ingest(conn, [_ev("prompt", "2026-10-09T12:09:00+09:00")])
+    lines = store.format_active(conn)
+    assert any("未紐づけのリポジトリ: github.com/o/r" in line for line in lines)
+
+
+# --- 偽の中継で往復 ------------------------------------------------------------------------
+
+
+class _FakeRelay:
+    def __init__(self, admin: str, machine_token: str) -> None:
+        self.admin = hashlib.sha256(admin.encode()).hexdigest()
+        self.machines = {hashlib.sha256(machine_token.encode()).hexdigest(): "LAB"}
+        self.events: list[dict] = []
+        self.directory: dict = {}
+        self.down = False
+
+    def handle(self, req: dict) -> dict:
+        tok = hashlib.sha256(str(req.get("token", "")).encode()).hexdigest()
+        admin = tok == self.admin
+        machine = self.machines.get(tok)
+        if not admin and not machine:
+            return {"ok": False, "error": "forbidden"}
+        op = req.get("op")
+        if op == "ping":
+            return {"ok": True, "machine": machine}
+        if op == "events":
+            seen = {e["event_id"] for e in self.events}
+            n = 0
+            for e in req.get("events", []):
+                if e["event_id"] in seen:
+                    continue
+                e = dict(e, machine=machine or e.get("machine"), seq=len(self.events) + 1)
+                self.events.append(e)
+                seen.add(e["event_id"])
+                n += 1
+            out = {"ok": True, "accepted": n}
+            if req.get("directory_key"):
+                out["directory"] = self.directory.get(req["directory_key"])
+            return out
+        if not admin:
+            return {"ok": False, "error": "forbidden"}
+        if op == "pull":
+            since = int(req.get("since", 0))
+            evs = [e for e in self.events if e["seq"] > since][: int(req.get("limit", 500))]
+            last = evs[-1]["seq"] if evs else since
+            return {"ok": True, "events": evs, "last_seq": last, "more": last < len(self.events)}
+        if op == "set_directory":
+            self.directory = req.get("entries", {})
+            return {"ok": True}
+        return {"ok": False, "error": "unknown_op"}
+
+
+@pytest.fixture
+def fake_relay(monkeypatch, tmp_path):
+    fake = _FakeRelay("ADMIN", "MTOKEN")
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_POST(self):  # noqa: N802
+            if fake.down:
+                self.send_response(503)
+                self.end_headers()
+                return
+            body = json.loads(self.rfile.read(int(self.headers["Content-Length"])).decode("utf-8"))
+            data = json.dumps(fake.handle(body)).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(data)
+
+        def log_message(self, *a):  # noqa: D401
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    url = f"http://127.0.0.1:{server.server_address[1]}/exec"
+    monkeypatch.setenv("MANOR_REPORT_HOME", str(tmp_path / "client"))
+    monkeypatch.setenv("MANOR_REPORT_ENDPOINT", url)
+    monkeypatch.setenv("MANOR_REPORT_TOKEN", "MTOKEN")
+    monkeypatch.setenv("MANOR_REPORT_MACHINE", "名乗りの名")
+    yield fake, url
+    server.shutdown()
+
+
+def test_round_trip_through_fake_relay(conn, home, fake_relay, monkeypatch, capsys, tmp_path) -> None:
+    fake, url = fake_relay
+    secrets_mod.set("remote", "endpoint", url)
+    secrets_mod.set("remote", "admin_token", "ADMIN")
+    monkeypatch.setattr("manor.slack.scan_for_leak_terms", lambda text: {"ok": True})
+    pid = _project(conn)
+    store.link(conn, "github.com/o/r", pid)
+    relay.push_directory_if_changed(conn, home)
+    assert "github.com/o/r" in fake.directory
+
+    # SessionStart: 紐づけ表を受け取り、文脈に入れる
+    monkeypatch.setattr(mr, "git_info", lambda cwd: {"remote": "github.com/o/r", "branch": "main",
+                                                     "key": "github.com/o/r"})
+    hook_in = json.dumps({"session_id": "S-1", "cwd": str(tmp_path)})
+    assert mr.run_hook("SessionStart", hook_in) == 0
+    injected = json.loads(capsys.readouterr().out)["hookSpecificOutput"]["additionalContext"]
+    assert "S-1" in injected and pid in injected
+
+    # 中継が落ちている間は手元に溜まり、次の合図で一緒に届く
+    fake.down = True
+    mr.run_hook("UserPromptSubmit", hook_in)
+    assert len(mr._read_outbox()) == 1
+    fake.down = False
+    rc = mr.cmd_progress(argparse.Namespace(session="S-1", title="統合", phase="testing", progress=None,
+                                            human_next="ビルド", project=None, task=None, note=None))
+    assert rc == 0 and mr._read_outbox() == []
+    assert [e["kind"] for e in fake.events] == ["session_start", "prompt", "progress"]
+    assert {e["machine"] for e in fake.events} == {"LAB"}  # 名乗りではなく鍵の持ち主の名
+
+    out = relay.pull(conn, home)
+    assert out["accepted"] == 3
+    row = store.list_sessions(conn)[0]
+    assert (row["machine"], row["title"], row["phase_label"], row["progress"], row["human_next"]) == \
+        ("LAB", "統合", "試験中", 85, "ビルド")
+    assert row["project_id"] == pid
+    assert relay.pull(conn, home)["accepted"] == 0  # カーソルが進んでいる

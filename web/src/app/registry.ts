@@ -16,6 +16,7 @@ import { secretaryModule } from "../modules/secretary";
 import { rulesModule } from "../modules/rules";
 import { importsModule } from "../modules/imports";
 import { nightModule } from "../modules/night";
+import { sessionsModule } from "../modules/sessions";
 import { settingsModule } from "../modules/settings";
 import { loginModule } from "../modules/login";
 import { setupModule } from "../modules/setup";
@@ -24,6 +25,7 @@ import { extensionsModule } from "../modules/extensions";
 export function buildRegistry(readOnly: boolean): ModuleDefinition[] {
   return [
     dashboardModule,
+    sessionsModule,
     agentsModule,
     tasksModule(readOnly),
     ideasModule,
@@ -43,6 +45,7 @@ export function buildRegistry(readOnly: boolean): ModuleDefinition[] {
 
 export const MODULE_IDS = [
   "dashboard",
+  "sessions",
   "agents",
   "tasks",
   "ideas",

@@ -140,6 +140,13 @@ def _open_readable(home: Path) -> sqlite3.Connection | None:
 def session_start(payload: dict[str, object], home: Path) -> str:
     if _unattended(payload):
         return ""
+    # ADR-025: 他のPCのセッションを先に1回取り込む（中継に届かなくても起動は止めない）。
+    try:
+        from .remote import relay as remote_relay
+
+        remote_relay.try_pull(home, timeout=4.0)
+    except Exception:  # noqa: BLE001
+        pass
     conn = _open_readable(home)
     if conn is None:
         return ""

@@ -15,6 +15,7 @@ export type ModuleId =
   | "rules"
   | "imports"
   | "night"
+  | "sessions"
   | "settings"
   | "login"
   | "setup"
@@ -48,6 +49,7 @@ export interface ModuleDefinition {
 // modules/agents/index.tsx の行き先リンクが使う）。
 export const MODULE_TITLE_KEY: Record<ModuleId, TranslationKey> = {
   dashboard: "nav.dashboard",
+  sessions: "nav.sessions",
   agents: "nav.agents",
   tasks: "nav.tasks",
   ideas: "nav.ideas",
