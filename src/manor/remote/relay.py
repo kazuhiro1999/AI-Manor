@@ -244,14 +244,21 @@ def install_command(name: str, token: str) -> dict[str, str]:
     """他のPCで流す導入の手順（PowerShell と sh）。道具は中継から受け取る。"""
     url = endpoint() or ""
     body = json.dumps({"op": "client", "token": token})
+    # Python の見分け（2026-10-09 実測）: Windows には Microsoft Store を開くだけの偽の `python` が
+    # あり、Get-Command では本物と区別がつかない。`--version` が通るかで確かめる。Python が無ければ
+    # uv（無ければ公式の手順で入れる）が Python 3.12 を用意して動かす。
+    inst = f'install --endpoint "{url}" --token "{token}" --machine "{name}"'
     ps = (
         "$d=\"$HOME/.manor-report\"; New-Item -ItemType Directory -Force $d | Out-Null; "
         f"Invoke-WebRequest -UseBasicParsing -Method Post -ContentType 'text/plain' -Body '{body}' "
         f"\"{url}\" -OutFile \"$d/manor_report.py\"; "
-        "$py = if (Get-Command py -ErrorAction SilentlyContinue) { 'py' } "
-        "elseif (Get-Command python -ErrorAction SilentlyContinue) { 'python' } else { $null }; "
-        f"if ($py) {{ & $py \"$d/manor_report.py\" install --endpoint \"{url}\" --token \"{token}\" --machine \"{name}\" }} "
-        f"else {{ uv run --python 3.12 --no-project \"$d/manor_report.py\" install --endpoint \"{url}\" --token \"{token}\" --machine \"{name}\" }}"
+        "$py = $null; foreach ($c in 'py','python','python3') { if (Get-Command $c -ErrorAction SilentlyContinue) "
+        "{ & $c --version *> $null; if ($LASTEXITCODE -eq 0) { $py = $c; break } } }; "
+        "if (-not $py -and -not (Get-Command uv -ErrorAction SilentlyContinue)) "
+        "{ powershell -ExecutionPolicy ByPass -c \"irm https://astral.sh/uv/install.ps1 | iex\"; "
+        "$env:Path = \"$HOME/.local/bin;$env:Path\" }; "
+        f"if ($py) {{ & $py \"$d/manor_report.py\" {inst} }} "
+        f"else {{ uv run --python 3.12 --no-project \"$d/manor_report.py\" {inst} }}"
     )
     sh = (
         "mkdir -p ~/.manor-report && "

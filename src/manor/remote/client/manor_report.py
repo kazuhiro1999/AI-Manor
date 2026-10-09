@@ -648,8 +648,8 @@ def run_hook(event_name: str, stdin_text: str) -> int:
 
     # それ以外の合図は待たない（GAS は時々30秒かかる・実測）。手元に置いて裏で送る。
     _append_outbox([event])
-    key = git.get("key") if not state.get("injected") else None
-    spawn_flush(session_id, key)
+    # 紐づけ表の控えは毎回裏で取り直す（紐づけは後から足されるので、古い控えのまま案内しない）。
+    spawn_flush(session_id, git.get("key"))
     if event_name == "UserPromptSubmit":
         parts = []
         if not state.get("injected"):
