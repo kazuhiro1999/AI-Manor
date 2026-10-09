@@ -12,6 +12,7 @@ const base: RemoteSession = {
   progress: 75,
   human_next: "実機で動作確認",
   human_next_done: false,
+  held: false,
   next_action: "B 段に着手",
   note: "後半3動作まで",
   project_id: "P4",
@@ -30,7 +31,7 @@ describe("SessionCard", () => {
   it("見出し・段階・進捗・主人の次の一手を出す", () => {
     render(<SessionCard s={base} />);
     expect(screen.getByText("ダンス評価: onnx 統合")).toBeTruthy();
-    expect(screen.getByText("実装済")).toBeTruthy();
+    expect(screen.getByText("一区切り")).toBeTruthy();
     expect(screen.getByText("75%")).toBeTruthy();
     expect(screen.getByText("実機で動作確認")).toBeTruthy();
     expect(screen.getByText("確認待ち")).toBeTruthy();
@@ -53,9 +54,10 @@ describe("SessionCard", () => {
 describe("完了", () => {
   it("押すとそのセッションの番号で呼ぶ・済みなら取り消し線と印", () => {
     const calls: string[] = [];
-    const { unmount } = render(<SessionCard s={base} onAck={(id) => calls.push(id)} />);
+    const { unmount } = render(<SessionCard s={base} onAck={(id, a) => calls.push(`${id}:${a}`)} />);
     fireEvent.click(screen.getByText("完了"));
-    expect(calls).toEqual(["s1"]);
+    fireEvent.click(screen.getByText("保留"));
+    expect(calls).toEqual(["s1:done", "s1:hold"]);
     unmount();
     render(<SessionCard s={{ ...base, human_next_done: true }} onAck={() => undefined} />);
     expect(screen.queryByText("完了")).toBeNull();
@@ -71,6 +73,15 @@ describe("全文の表示", () => {
     fireEvent.click(container.querySelector("article")!);
     expect(container.querySelector("article")!.className).toContain("is-expanded");
     expect(screen.getByText("dance-eval (main)")).toBeTruthy();
+  });
+});
+
+describe("保留", () => {
+  it("保留中は「戻す」で解ける", () => {
+    const calls: string[] = [];
+    render(<SessionCard s={{ ...base, activity: "hold", held: true }} onAck={(id, a) => calls.push(a)} />);
+    fireEvent.click(screen.getByText("戻す"));
+    expect(calls).toEqual(["unhold"]);
   });
 });
 

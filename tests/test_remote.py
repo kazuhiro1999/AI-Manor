@@ -173,7 +173,7 @@ def test_link_directory_and_task_reflection(conn, monkeypatch) -> None:
     assert out["phase_changes"] == [("s1", tid, "", "implemented")]
     assert relay.reflect_tasks(conn, out["phase_changes"]) == [tid]
     now = conn.execute("SELECT now FROM task WHERE id=?", (tid,)).fetchone()["now"]
-    assert "[LAB] 統合：実装済（75%）" in now and "実機で確認" in now
+    assert "[LAB] 統合：一区切り（75%）" in now and "実機で確認" in now
     row = store.list_sessions(conn)[0]
     assert row["project_id"] == pid and row["linked"] and row["task_title"] == "onnx を統合"
     # 同じ段階の数字だけの変化では書かない
@@ -357,3 +357,30 @@ def test_hooks_return_without_waiting_for_relay(monkeypatch, tmp_path) -> None:
     mr.save_state("S", {"injected": True})
     assert mr.run_hook("Stop", json.dumps({"session_id": "S", "cwd": str(tmp_path)})) == 0
     assert [e["kind"] for e in mr._read_outbox()] == ["stop"]
+
+
+def test_hold_parks_review_until_unheld_or_new_human_next(conn, monkeypatch) -> None:
+    monkeypatch.setenv("MANOR_NOW", "2026-10-09T12:10:00")
+    store.ingest(conn, [
+        _ev("progress", "2026-10-09T12:00:00+09:00", report={"title": "a", "phase": "implemented",
+                                                            "human_next": "方針を判断"}),
+        _ev("stop", "2026-10-09T12:01:00+09:00"),
+    ])
+    assert store.list_sessions(conn)[0]["activity"] == "review"
+    assert store.ack(conn, "s1", kind="hold") == "方針を判断"
+    row = store.list_sessions(conn)[0]
+    assert (row["activity"], row["held"], row["human_next_done"]) == ("hold", True, False)
+    monkeypatch.setenv("MANOR_NOW", "2026-10-09T18:00:00")
+    assert store.list_sessions(conn)[0]["activity"] == "hold"  # 時間が経っても保留のまま
+    assert store.unhold(conn, "s1") == 1
+    assert store.list_sessions(conn)[0]["activity"] == "review"
+    store.ack(conn, "s1", kind="hold")
+    store.ingest(conn, [_ev("progress", "2026-10-09T17:59:00+09:00", report={"human_next": "別の確認"})])
+    assert store.list_sessions(conn)[0]["activity"] == "review"  # 新しい確認事項が来れば外れる
+
+
+def test_same_ack_is_told_once() -> None:
+    state: dict = {}
+    acks = [{"text": "X", "done_at": f"2026-10-09T12:0{i}:00"} for i in range(4)]
+    assert mr.new_acks(state, acks) == ["X"]
+    assert mr.new_acks(state, acks) == []

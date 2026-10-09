@@ -12,7 +12,7 @@ import { api } from "../../app/api";
 import { ScreenHeader } from "../../components/ScreenHeader";
 import { useT, type TranslationKey } from "../../app/i18n";
 
-export type Activity = "review" | "working" | "waiting" | "idle" | "ended";
+export type Activity = "review" | "working" | "waiting" | "hold" | "idle" | "ended";
 
 export interface RemoteSession {
   session_id: string;
@@ -24,6 +24,7 @@ export interface RemoteSession {
   progress: number | null;
   human_next: string;
   human_next_done: boolean;
+  held: boolean;
   next_action: string;
   note: string;
   project_id: string | null;
@@ -49,6 +50,7 @@ const ACTIVITY_KEY: Record<Activity, TranslationKey> = {
   review: "sessions.activity.review",
   working: "sessions.activity.working",
   waiting: "sessions.activity.waiting",
+  hold: "sessions.activity.hold",
   idle: "sessions.activity.idle",
   ended: "sessions.activity.ended",
 };
@@ -83,7 +85,9 @@ function useAgo() {
   };
 }
 
-export function SessionCard({ s, onAck }: { s: RemoteSession; onAck?: (id: string) => void }) {
+export type CardAction = "done" | "hold" | "unhold";
+
+export function SessionCard({ s, onAck }: { s: RemoteSession; onAck?: (id: string, action: CardAction) => void }) {
   const t = useT();
   const ago = useAgo();
   const pct = s.progress ?? null;
@@ -144,16 +148,28 @@ export function SessionCard({ s, onAck }: { s: RemoteSession; onAck?: (id: strin
               {s.human_next || t("sessions.next.none")}
             </span>
             {s.human_next && !s.human_next_done && onAck && (
-              <button
-                className="session-ack"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onAck(s.session_id);
-                }}
-                title={t("sessions.next.doneHint")}
-              >
-                {t("sessions.next.done")}
-              </button>
+              <span className="session-actions">
+                <button
+                  className="session-ack"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onAck(s.session_id, "done");
+                  }}
+                  title={t("sessions.next.doneHint")}
+                >
+                  {t("sessions.next.done")}
+                </button>
+                <button
+                  className="session-hold"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onAck(s.session_id, s.held ? "unhold" : "hold");
+                  }}
+                  title={t(s.held ? "sessions.next.unholdHint" : "sessions.next.holdHint")}
+                >
+                  {t(s.held ? "sessions.next.unhold" : "sessions.next.hold")}
+                </button>
+              </span>
             )}
             {s.human_next_done && <span className="session-done-mark">{t("sessions.next.doneMark")}</span>}
           </div>
@@ -184,9 +200,11 @@ export function SessionsScreen() {
   const machines = useMemo(() => Array.from(new Set(items.map((s) => s.machine))).sort(), [items]);
   const shown = machine ? items.filter((s) => s.machine === machine) : items;
   const yourTurn = items.filter((s) => s.activity === "review").length;
-  const ack = async (id: string) => {
+  const ack = async (id: string, action: CardAction) => {
+    const base = `/sessions/${encodeURIComponent(id)}`;
     try {
-      await api(`/sessions/${encodeURIComponent(id)}/ack`, { method: "POST" });
+      if (action === "done") await api(`${base}/ack`, { method: "POST" });
+      else await api(`${base}/hold`, { method: action === "hold" ? "POST" : "DELETE" });
     } finally {
       await reload();
     }

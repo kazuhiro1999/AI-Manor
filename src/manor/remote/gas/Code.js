@@ -16,8 +16,8 @@ var DIRECTORY_COLUMNS = ['key', 'json', 'updated_at'];
 // 主人がダッシュボードで「済んだ」を押した「あなたの次」。送る側が次の発言のときに受け取り、Claude に伝える。
 var ACK_COLUMNS = ['session_id', 'text', 'done_at'];
 var PHASE_LABELS = {
-  investigating: '調査中', designing: '設計中', implementing: '実装中', fixing: '修正中',
-  implemented: '実装済', testing: '試験中', blocked: '止まっている', done: '完了'
+  investigating: '調査中', designing: '計画中', implementing: '進行中', fixing: '修正中',
+  implemented: '一区切り', testing: '試験中', blocked: '停滞', done: '完了'
 };
 var ACTIVITY_LABELS = { session_start: '開始', prompt: '作業中', stop: '待ち', session_end: '終了' };
 var EVENT_RETENTION_DAYS = 30;
@@ -266,7 +266,12 @@ function cleanupIfDue_() {
 
 function addAck_(req) {
   if (!req.session_id || !req.text) return { ok: false, error: 'session_and_text_required' };
-  sheet_('acks', ACK_COLUMNS).appendRow([req.session_id, req.text, req.done_at || nowIso_()]);
+  var sh = sheet_('acks', ACK_COLUMNS);
+  var rows = sh.getDataRange().getValues();
+  for (var i = 1; i < rows.length; i++) {
+    if (rows[i][0] === req.session_id && rows[i][1] === req.text) return { ok: true, duplicate: true };
+  }
+  sh.appendRow([req.session_id, req.text, req.done_at || nowIso_()]);
   return { ok: true };
 }
 

@@ -27,7 +27,8 @@ STALE_HOURS = 72
 
 #: 確認待ち（Claude が一区切りついて主人の確認が要る）→ 作業中 → 指示待ち（確認が要るものが無い・
 #: 主人が「完了」を押した）→ 休止 → 終了（2026-10-09 主人「完了を押したのに『あなたの番』のままは紛らわしい」）。
-ACTIVITY_ORDER = {"review": 0, "working": 1, "waiting": 2, "idle": 3, "ended": 4}
+#: 保留は主人が「今は気にしない」と決めたもの。指示待ちの後ろに静かに並べる。
+ACTIVITY_ORDER = {"review": 0, "working": 1, "waiting": 2, "hold": 3, "idle": 4, "ended": 5}
 
 PHASES = protocol.PHASES
 PHASE_LABELS_JA = protocol.PHASE_LABELS_JA
@@ -225,32 +226,45 @@ def _clip(text: object, limit: int) -> str:
     return flat if len(flat) <= limit else flat[: limit - 1] + "…"
 
 
-def ack(conn: sqlite3.Connection, session_id: str) -> str | None:
-    """そのセッションのいまの「あなたの次」を済みにする。戻り値は済みにした文（無ければ None）。"""
+def ack(conn: sqlite3.Connection, session_id: str, kind: str = "done") -> str | None:
+    """そのセッションのいまの「あなたの次」を完了（done）か保留（hold）にする。
+
+    戻り値は対象にした文（無ければ None）。同じ文に押し直したら新しい方で上書きする。
+    """
+    if kind not in ("done", "hold"):
+        raise ValueError(kind)
     row = conn.execute("SELECT human_next FROM remote_session WHERE session_id=?", (session_id,)).fetchone()
     if not row or not row["human_next"]:
         return None
-    conn.execute("INSERT OR REPLACE INTO remote_ack(session_id, human_next, done_at) VALUES (?,?,?)",
-                 (session_id, row["human_next"], util.now()))
+    conn.execute("INSERT OR REPLACE INTO remote_ack(session_id, human_next, done_at, kind) VALUES (?,?,?,?)",
+                 (session_id, row["human_next"], util.now(), kind))
     return str(row["human_next"])
 
 
-def _acked(conn: sqlite3.Connection) -> set[tuple[str, str]]:
+def unhold(conn: sqlite3.Connection, session_id: str) -> int:
+    """保留を解く（確認待ちへ戻す）。"""
+    return conn.execute("DELETE FROM remote_ack WHERE session_id=? AND kind='hold'", (session_id,)).rowcount
+
+
+def _acked(conn: sqlite3.Connection) -> dict[tuple[str, str], str]:
     try:
-        return {(r["session_id"], r["human_next"]) for r in conn.execute("SELECT session_id, human_next FROM remote_ack")}
+        return {(r["session_id"], r["human_next"]): r["kind"]
+                for r in conn.execute("SELECT session_id, human_next, kind FROM remote_ack")}
     except sqlite3.OperationalError:
-        return set()
+        return {}
 
 
 # --- 読む ----------------------------------------------------------------------------------
 
 
-def activity(row: dict[str, Any], now: datetime | None = None, *, human_next_done: bool = False) -> str:
+def activity(row: dict[str, Any], now: datetime | None = None, *, human_next_done: bool = False,
+             held: bool = False) -> str:
     """活動の状態（§4.2 改）。合図は hook 由来なので、申告が古くても「動いているか」は正しい。
 
     - 作業中: 主人の発言（prompt）の後、まだターンが終わっていない
     - 確認待ち: ターンが終わり、主人の次の一手がまだ済んでいない（時間が経っても休止にしない）
     - 指示待ち: ターンが終わり、主人の確認が要るものが無い／主人が「完了」を押した。開いただけも同じ
+    - 保留: 主人が「保留」を押した（話しかけるか、新しい確認事項が来れば外れる）
     - 休止: 作業中・指示待ちのまま30分合図が無い
     """
     now = now or _now()
@@ -260,6 +274,8 @@ def activity(row: dict[str, Any], now: datetime | None = None, *, human_next_don
     stale = last is None or now - last > timedelta(minutes=IDLE_MINUTES)
     if row.get("last_kind") == "prompt":
         return "idle" if stale else "working"
+    if held:
+        return "hold"
     if row.get("human_next") and not human_next_done:
         return "review"
     return "idle" if stale else "waiting"
@@ -276,8 +292,10 @@ def list_sessions(conn: sqlite3.Connection, *, include_ended: bool = False,
     out = []
     for r in conn.execute("SELECT * FROM remote_session"):
         row = dict(r)
-        done = (row["session_id"], row.get("human_next") or "") in acked
-        act = activity(row, now, human_next_done=done)
+        mark = acked.get((row["session_id"], row.get("human_next") or ""))
+        done = mark == "done"
+        held = mark == "hold"
+        act = activity(row, now, human_next_done=done, held=held)
         last = _parse(row.get("last_event_at"))
         if act == "ended":
             ended = _parse(row.get("ended_at"))
@@ -312,6 +330,7 @@ def list_sessions(conn: sqlite3.Connection, *, include_ended: bool = False,
             "progress": progress,
             "human_next": row.get("human_next") or "",
             "human_next_done": done,
+            "held": held,
             "next_action": row.get("next_action") or "",
             "note": row.get("note") or "",
             "project_id": project_id,
@@ -367,7 +386,8 @@ def format_active(conn: sqlite3.Connection) -> list[str]:
     for s in list_sessions(conn):
         if s["activity"] == "ended":
             continue
-        label = {"review": "確認待ち", "working": "作業中", "waiting": "指示待ち", "idle": "休止"}[s["activity"]]
+        label = {"review": "確認待ち", "working": "作業中", "waiting": "指示待ち", "hold": "保留",
+                 "idle": "休止"}[s["activity"]]
         head = s["title"] or f"{s['repo_name']}（報告待ち）"
         where = s["task_id"] or s["project_id"] or (s["project_title"] if s["linked"] else "未紐づけ")
         phase = s["phase_label"] or "—"

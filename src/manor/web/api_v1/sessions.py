@@ -48,3 +48,20 @@ def register(app: FastAPI, ctx: WebContext) -> None:
             except relay.RelayError:
                 relayed = False
         return {"ok": True, "text": text, "relayed": relayed}
+
+    @app.post("/api/v1/sessions/{session_id}/hold")
+    def sessions_hold(session_id: str) -> dict[str, object]:
+        """「あなたの次」を保留にする（ダッシュボード上の整理。セッションには伝えない）。"""
+        require_writable(ctx)
+        with open_conn(ctx) as conn:
+            text = store.ack(conn, session_id, kind="hold")
+            conn.commit()
+        return {"ok": text is not None, "text": text}
+
+    @app.delete("/api/v1/sessions/{session_id}/hold")
+    def sessions_unhold(session_id: str) -> dict[str, object]:
+        require_writable(ctx)
+        with open_conn(ctx) as conn:
+            n = store.unhold(conn, session_id)
+            conn.commit()
+        return {"ok": True, "removed": n}

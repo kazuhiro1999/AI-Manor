@@ -394,5 +394,6 @@ CREATE TABLE IF NOT EXISTS remote_ack (
   session_id TEXT NOT NULL,
   human_next TEXT NOT NULL,
   done_at    TEXT NOT NULL,
+  kind       TEXT NOT NULL DEFAULT 'done',  -- done=完了 / hold=保留（2026-10-09 主人「すぐやらないものは保留に」）
   PRIMARY KEY (session_id, human_next)
 );

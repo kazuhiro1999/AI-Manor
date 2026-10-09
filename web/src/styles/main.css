@@ -791,3 +791,13 @@ table.grid td.col-wide, table.grid th.col-wide { min-width: 220px; }
   background: var(--bg-panel-2); border: 1px dashed var(--info); color: var(--text); font-weight: 600;
   border-radius: 6px; padding: 4px 8px; margin: 0 -4px;
 }
+.session-actions { margin-left: auto; display: inline-flex; gap: 6px; flex: 0 0 auto; }
+.session-actions .session-ack { margin-left: 0; }
+.session-hold {
+  font-size: 11px; padding: 2px 10px; border-radius: 999px; cursor: pointer;
+  border: 1px solid var(--border); color: var(--text-dim); background: transparent;
+}
+.session-hold:hover { background: var(--bg-panel-2); }
+.session-card.act-hold { border-left-color: var(--text-faint); opacity: 0.8; }
+.session-activity.act-hold { color: var(--text-faint); }
+.act-hold .session-next.has-next { background: none; color: var(--text-dim); padding: 0; margin: 0; }

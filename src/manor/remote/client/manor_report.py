@@ -46,16 +46,24 @@ PHASES: dict[str, int | None] = {
     "blocked": None,
     "done": 100,
 }
+#: キーは互換のため英語の開発寄りのまま、表示は調査・日常業務にも合う語にする（2026-10-09 主人）。
 PHASE_LABELS_JA: dict[str, str] = {
     "investigating": "調査中",
-    "designing": "設計中",
-    "implementing": "実装中",
+    "designing": "計画中",
+    "implementing": "進行中",
     "fixing": "修正中",
-    "implemented": "実装済",
+    "implemented": "一区切り",
     "testing": "試験中",
-    "blocked": "止まっている",
+    "blocked": "停滞",
     "done": "完了",
 }
+#: 注入する説明（どの段階を選ぶか。開発以外の仕事でも迷わないように）。
+PHASE_GUIDE_JA = (
+    "investigating=調査中（調べている・読んでいる） / designing=計画中（方針・設計・段取り） / "
+    "implementing=進行中（作る・書く・作業を進めている） / fixing=修正中（指摘や不具合の手直し） / "
+    "implemented=一区切り（成果物・調査結果・作業の一通りができ、主人の確認を待つ） / "
+    "testing=試験中（動かして確かめている） / blocked=停滞（何かを待って進めない） / done=完了"
+)
 
 TITLE_MAX = 40
 HUMAN_NEXT_MAX = 30
@@ -451,7 +459,7 @@ def injection_text(cfg: dict[str, Any], session_id: str, git: dict[str, str | No
         lines.append(f"このリポジトリ（{where}）は manor でまだどのプロジェクトにも紐づいていません"
                      "（--project・--task は付けずに報告してください。紐づけは執事が主人に伺います）。")
     cmd = self_command(cfg)
-    phases = " / ".join(f"{k}={v}" for k, v in PHASE_LABELS_JA.items())
+    phases = PHASE_GUIDE_JA
     lines += [
         "",
         "作業の区切り（段階が変わったとき・作業をしたターンを終える前）に、次を1回実行してください:",
@@ -470,7 +478,7 @@ def injection_text(cfg: dict[str, Any], session_id: str, git: dict[str, str | No
 def new_acks(state: dict[str, Any], acks: object) -> list[str]:
     """主人がダッシュボードで「済んだ」を押した「あなたの次」のうち、まだ伝えていないもの。"""
     seen = set(state.get("acks_seen") or [])
-    fresh = []
+    fresh: list[str] = []
     for a in acks if isinstance(acks, list) else []:
         if not isinstance(a, dict):
             continue
@@ -480,7 +488,8 @@ def new_acks(state: dict[str, Any], acks: object) -> list[str]:
         seen.add(key)
         fresh.append(str(a.get("text") or ""))
     state["acks_seen"] = sorted(seen)[-50:]
-    return [t for t in fresh if t]
+    # 押し直しで同じ文が何度も来ても、伝えるのは1回（2026-10-09 実測: 同じ文が4つ並んだ）。
+    return list(dict.fromkeys(t for t in fresh if t))
 
 
 def ack_text(texts: list[str]) -> str:
