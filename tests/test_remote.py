@@ -289,3 +289,15 @@ def test_round_trip_through_fake_relay(conn, home, fake_relay, monkeypatch, caps
         ("LAB", "統合", "試験中", 85, "ビルド")
     assert row["project_id"] == pid
     assert relay.pull(conn, home)["accepted"] == 0  # カーソルが進んでいる
+
+
+def test_headless_runs_are_not_reported(monkeypatch, capsys) -> None:
+    monkeypatch.setenv("CLAUDE_CODE_ENTRYPOINT", "sdk-cli")
+    sent = []
+    monkeypatch.setattr(mr, "send_events", lambda *a, **k: sent.append(a) or (True, {}))
+    assert mr.run_hook("SessionStart", json.dumps({"session_id": "x", "cwd": "."})) == 0
+    assert sent == [] and capsys.readouterr().out == ""
+    monkeypatch.setenv("CLAUDE_CODE_ENTRYPOINT", "claude-desktop")
+    assert not mr.is_headless()
+    monkeypatch.setenv("MANOR_REPORT_DISABLE", "1")
+    assert mr.is_headless()

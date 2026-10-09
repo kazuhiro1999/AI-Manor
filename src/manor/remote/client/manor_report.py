@@ -79,6 +79,14 @@ TRANSCRIPT_TAIL_BYTES = 4 * 1024 * 1024
 #: `progress` で session を省いたとき、同じフォルダのセッションをこの時間まで遡って探す。
 SESSION_GUESS_HOURS = 12
 
+#: 人が開いたのではないセッション（`claude -p`・Agent SDK）。起動元の印 `CLAUDE_CODE_ENTRYPOINT` が
+#: `sdk-` で始まる（デスクトップは `claude-desktop`、ターミナルは `cli`、VS Code は `claude-vscode`）。
+#: manor の夜勤・関門・通話などの裏の実行がダッシュボードを埋めないよう、送らない
+#: （2026-10-09 実測: 関門の試験4本がカードになった）。
+HEADLESS_ENTRYPOINT_PREFIX = "sdk-"
+#: これが立っていれば何も送らない（裏で claude を起動する道具が明示的に外すための口）。
+DISABLE_ENV = "MANOR_REPORT_DISABLE"
+
 HOOK_EVENTS = ("SessionStart", "UserPromptSubmit", "Stop", "SessionEnd")
 KIND_OF_HOOK = {
     "SessionStart": "session_start",
@@ -251,6 +259,7 @@ def make_event(kind: str, cfg: dict[str, Any], session_id: str, cwd: str,
         "cwd": cwd,
         "repo": {"remote": git.get("remote"), "branch": git.get("branch"), "key": git.get("key")},
         "report": report,
+        "client": {"entrypoint": entrypoint()},
     }
 
 
@@ -542,7 +551,19 @@ def nudge_text(cfg: dict[str, Any], session_id: str) -> str:
 # --- hook ----------------------------------------------------------------------------------
 
 
+def entrypoint() -> str:
+    return os.environ.get("CLAUDE_CODE_ENTRYPOINT", "").strip()
+
+
+def is_headless() -> bool:
+    if os.environ.get(DISABLE_ENV, "").strip() not in ("", "0"):
+        return True
+    return entrypoint().startswith(HEADLESS_ENTRYPOINT_PREFIX)
+
+
 def run_hook(event_name: str, stdin_text: str) -> int:
+    if is_headless():
+        return 0
     cfg = load_config()
     try:
         data = json.loads(stdin_text or "{}")
@@ -631,7 +652,7 @@ def build_report(args: argparse.Namespace, previous: dict[str, Any] | None) -> d
 def cmd_progress(args: argparse.Namespace) -> int:
     cfg = load_config()
     cwd = os.getcwd()
-    session_id = args.session or guess_session(cwd)
+    session_id = args.session or os.environ.get("CLAUDE_CODE_SESSION_ID", "").strip() or guess_session(cwd)
     if not session_id:
         print("セッション番号が分かりません。--session <番号> を付けてください"
               "（番号はセッション開始時の【manor への進捗報告】にあります）。", file=sys.stderr)
