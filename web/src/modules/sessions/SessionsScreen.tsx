@@ -85,8 +85,20 @@ export function SessionCard({ s, onAck }: { s: RemoteSession; onAck?: (id: strin
   const t = useT();
   const ago = useAgo();
   const pct = s.progress ?? null;
+  // 見切れた文字は、マウスを乗せると title で全文、カードを押すと折り返して全文を出す。
+  const [expanded, setExpanded] = useState(false);
+  const linkText = s.linked
+    ? [[s.project_id, s.project_title].filter(Boolean).join(" "), s.task_id ? `${s.task_id}${s.task_title ? ` ${s.task_title}` : ""}` : ""]
+        .filter(Boolean)
+        .join(" › ")
+    : t("sessions.unlinked", { repo: s.repo_name });
   return (
-    <article className={`session-card act-${s.activity} phase-${s.phase || "none"}`} data-session={s.session_id}>
+    <article
+      className={`session-card act-${s.activity} phase-${s.phase || "none"}${expanded ? " is-expanded" : ""}`}
+      data-session={s.session_id}
+      onClick={() => setExpanded((v) => !v)}
+      title={expanded ? undefined : t("sessions.expandHint")}
+    >
       <header className="session-top">
         <span className="session-machine">{s.machine || "?"}</span>
         <span className={`session-activity act-${s.activity}`}>
@@ -98,31 +110,26 @@ export function SessionCard({ s, onAck }: { s: RemoteSession; onAck?: (id: strin
         </span>
       </header>
 
-      <h3 className="session-title">{s.title || s.repo_name}</h3>
-      <div className="session-link">
-        {s.linked ? (
-          <>
-            <span>{[s.project_id, s.project_title].filter(Boolean).join(" ")}</span>
-            {s.task_id && (
-              <span className="session-task">
-                {" › "}
-                {s.task_id}
-                {s.task_title ? ` ${s.task_title}` : ""}
-              </span>
-            )}
-          </>
-        ) : (
-          <span className="session-unlinked">{t("sessions.unlinked", { repo: s.repo_name })}</span>
-        )}
+      <h3 className="session-title" title={s.title || s.repo_name}>{s.title || s.repo_name}</h3>
+      <div className={`session-link${s.linked ? "" : " session-unlinked"}`} title={linkText}>
+        {linkText}
       </div>
 
+      {expanded && (
+        <dl className="session-detail" onClick={(e) => e.stopPropagation()}>
+          <dt>{t("sessions.detail.repo")}</dt>
+          <dd>{s.repo_name}{s.branch ? ` (${s.branch})` : ""}</dd>
+          <dt>{t("sessions.detail.session")}</dt>
+          <dd>{s.session_id}</dd>
+        </dl>
+      )}
       {s.reported ? (
         <>
           <div className="session-doing">
             <span className={`session-phase phase-${s.phase || "none"}`}>
               {s.phase ? t(PHASE_KEY[s.phase] ?? "sessions.phase.unknown") : "—"}
             </span>
-            {s.note && <span className="session-note">{s.note}</span>}
+            {s.note && <span className="session-note" title={s.note}>{s.note}</span>}
           </div>
           <div className="session-progress" role="progressbar" aria-valuemin={0} aria-valuemax={100}
                aria-valuenow={pct ?? undefined}>
@@ -131,9 +138,18 @@ export function SessionCard({ s, onAck }: { s: RemoteSession; onAck?: (id: strin
           </div>
           <div className={`session-next${s.human_next && !s.human_next_done ? " has-next" : ""}${s.human_next_done ? " is-done" : ""}`}>
             <span className="session-next-label">{t("sessions.next.label")}</span>
-            <span className="session-next-text">{s.human_next || t("sessions.next.none")}</span>
+            <span className="session-next-text" title={s.human_next || undefined}>
+              {s.human_next || t("sessions.next.none")}
+            </span>
             {s.human_next && !s.human_next_done && onAck && (
-              <button className="session-ack" onClick={() => onAck(s.session_id)} title={t("sessions.next.doneHint")}>
+              <button
+                className="session-ack"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onAck(s.session_id);
+                }}
+                title={t("sessions.next.doneHint")}
+              >
                 {t("sessions.next.done")}
               </button>
             )}

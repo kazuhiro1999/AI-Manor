@@ -49,16 +49,27 @@ describe("SessionCard", () => {
   });
 });
 
-describe("済んだ", () => {
+describe("完了", () => {
   it("押すとそのセッションの番号で呼ぶ・済みなら取り消し線と印", () => {
     const calls: string[] = [];
     const { unmount } = render(<SessionCard s={base} onAck={(id) => calls.push(id)} />);
-    fireEvent.click(screen.getByText("済んだ"));
+    fireEvent.click(screen.getByText("完了"));
     expect(calls).toEqual(["s1"]);
     unmount();
     render(<SessionCard s={{ ...base, human_next_done: true }} onAck={() => undefined} />);
-    expect(screen.queryByText("済んだ")).toBeNull();
-    expect(screen.getByText("✓ 済み")).toBeTruthy();
+    expect(screen.queryByText("完了")).toBeNull();
+    expect(screen.getByText("✓ 完了")).toBeTruthy();
+  });
+});
+
+describe("全文の表示", () => {
+  it("見切れる文に title を付け、押すと全文と詳細を出す", () => {
+    const long = { ...base, note: "とても長い一言".repeat(10) };
+    const { container } = render(<SessionCard s={long} />);
+    expect(screen.getByText(long.note).getAttribute("title")).toBe(long.note);
+    fireEvent.click(container.querySelector("article")!);
+    expect(container.querySelector("article")!.className).toContain("is-expanded");
+    expect(screen.getByText("dance-eval (main)")).toBeTruthy();
   });
 });
 
