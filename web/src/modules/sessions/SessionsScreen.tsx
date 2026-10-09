@@ -12,7 +12,7 @@ import { api } from "../../app/api";
 import { ScreenHeader } from "../../components/ScreenHeader";
 import { useT, type TranslationKey } from "../../app/i18n";
 
-export type Activity = "review" | "working" | "waiting" | "hold" | "idle" | "ended";
+export type Activity = "review" | "waiting" | "working" | "hold" | "idle" | "closed" | "ended";
 
 export interface RemoteSession {
   session_id: string;
@@ -25,6 +25,7 @@ export interface RemoteSession {
   human_next: string;
   human_next_done: boolean;
   held: boolean;
+  closed: boolean;
   next_action: string;
   note: string;
   project_id: string | null;
@@ -51,6 +52,7 @@ const ACTIVITY_KEY: Record<Activity, TranslationKey> = {
   working: "sessions.activity.working",
   waiting: "sessions.activity.waiting",
   hold: "sessions.activity.hold",
+  closed: "sessions.activity.ended",
   idle: "sessions.activity.idle",
   ended: "sessions.activity.ended",
 };
@@ -85,7 +87,7 @@ function useAgo() {
   };
 }
 
-export type CardAction = "done" | "hold" | "unhold";
+export type CardAction = "done" | "hold" | "unhold" | "close" | "reopen";
 
 export function SessionCard({ s, onAck }: { s: RemoteSession; onAck?: (id: string, action: CardAction) => void }) {
   const t = useT();
@@ -114,6 +116,18 @@ export function SessionCard({ s, onAck }: { s: RemoteSession; onAck?: (id: strin
         <span className="session-ago" title={s.last_event_at || ""}>
           {ago(s.last_event_at)}
         </span>
+        {onAck && s.activity !== "ended" && (
+          <button
+            className="session-close"
+            onClick={(e) => {
+              e.stopPropagation();
+              onAck(s.session_id, s.closed ? "reopen" : "close");
+            }}
+            title={t(s.closed ? "sessions.close.reopenHint" : "sessions.close.hint")}
+          >
+            {t(s.closed ? "sessions.close.reopen" : "sessions.close.label")}
+          </button>
+        )}
       </header>
 
       <h3 className="session-title" title={s.title || s.repo_name}>{s.title || s.repo_name}</h3>
@@ -188,23 +202,102 @@ export function SessionCard({ s, onAck }: { s: RemoteSession; onAck?: (id: strin
   );
 }
 
+/** 状態ごとの並び（主人の指定 2026-10-09）。終了には「終了にする」を押したもの（closed）も入れる。 */
+export const ACTIVITY_GROUPS: Activity[] = ["review", "waiting", "working", "hold", "idle", "ended"];
+const ACTIVITY_RANK: Record<Activity, number> = {
+  review: 0, waiting: 1, working: 2, hold: 3, idle: 4, closed: 5, ended: 5,
+};
+
+export type GroupMode = "activity" | "machine";
+
+export interface Group {
+  key: string;
+  label: string;
+  items: RemoteSession[];
+}
+
+function newestFirst(a: RemoteSession, b: RemoteSession): number {
+  return (Date.parse(b.last_event_at || "") || 0) - (Date.parse(a.last_event_at || "") || 0);
+}
+
+/** 並べ方に応じてまとまりを作る（空のまとまりは出さない）。 */
+export function groupSessions(items: RemoteSession[], mode: GroupMode, label: (a: Activity) => string): Group[] {
+  if (mode === "machine") {
+    const machines = Array.from(new Set(items.map((s) => s.machine))).sort();
+    return machines.map((m) => ({
+      key: `machine:${m}`,
+      label: m,
+      items: items
+        .filter((s) => s.machine === m)
+        .sort((a, b) => ACTIVITY_RANK[a.activity] - ACTIVITY_RANK[b.activity] || newestFirst(a, b)),
+    }));
+  }
+  return ACTIVITY_GROUPS.map((g) => ({
+    key: `activity:${g}`,
+    label: label(g),
+    items: items.filter((s) => (s.activity === "closed" ? "ended" : s.activity) === g).sort(newestFirst),
+  })).filter((g) => g.items.length > 0);
+}
+
+const PREFS_KEY = "manor.sessions.view";
+
+interface ViewPrefs {
+  mode: GroupMode;
+  hidden: string[];
+}
+
+function loadPrefs(): ViewPrefs {
+  try {
+    const raw = window.localStorage.getItem(PREFS_KEY);
+    if (raw) {
+      const v = JSON.parse(raw) as Partial<ViewPrefs>;
+      return { mode: v.mode === "machine" ? "machine" : "activity", hidden: Array.isArray(v.hidden) ? v.hidden : [] };
+    }
+  } catch {
+    /* 保存できない環境では毎回既定で開く */
+  }
+  return { mode: "activity", hidden: [] };
+}
+
+function savePrefs(p: ViewPrefs): void {
+  try {
+    window.localStorage.setItem(PREFS_KEY, JSON.stringify(p));
+  } catch {
+    /* 同上 */
+  }
+}
+
 export function SessionsScreen() {
   const t = useT();
   const [showEnded, setShowEnded] = useState(false);
-  const [machine, setMachine] = useState<string | null>(null);
+  const [prefs, setPrefs] = useState<ViewPrefs>(loadPrefs);
   const { data, error, loading, reload } = usePolling<SessionsResponse>(
     `/sessions?include_ended=${showEnded ? 1 : 0}`,
     POLL_MS
   );
   const items = data?.items ?? [];
-  const machines = useMemo(() => Array.from(new Set(items.map((s) => s.machine))).sort(), [items]);
-  const shown = machine ? items.filter((s) => s.machine === machine) : items;
-  const yourTurn = items.filter((s) => s.activity === "review").length;
+  const groups = useMemo(
+    () => groupSessions(items, prefs.mode, (a) => t(ACTIVITY_KEY[a])),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [items, prefs.mode]
+  );
+  const reviewCount = items.filter((s) => s.activity === "review").length;
+  const update = (next: ViewPrefs) => {
+    setPrefs(next);
+    savePrefs(next);
+  };
+  const toggle = (key: string) =>
+    update({
+      ...prefs,
+      hidden: prefs.hidden.includes(key) ? prefs.hidden.filter((k) => k !== key) : [...prefs.hidden, key],
+    });
   const ack = async (id: string, action: CardAction) => {
     const base = `/sessions/${encodeURIComponent(id)}`;
     try {
       if (action === "done") await api(`${base}/ack`, { method: "POST" });
-      else await api(`${base}/hold`, { method: action === "hold" ? "POST" : "DELETE" });
+      else if (action === "hold" || action === "unhold")
+        await api(`${base}/hold`, { method: action === "hold" ? "POST" : "DELETE" });
+      else await api(`${base}/close`, { method: action === "close" ? "POST" : "DELETE" });
     } finally {
       await reload();
     }
@@ -214,16 +307,22 @@ export function SessionsScreen() {
     <div className="view" id="view-sessions">
       <ScreenHeader title={t("nav.sessions")} description={t("sessions.description")} />
       <div className="sessions-toolbar">
-        <button className={`chip${machine === null ? " active" : ""}`} onClick={() => setMachine(null)}>
-          {t("sessions.filter.all", { n: items.length })}
-        </button>
-        {machines.map((m) => (
-          <button key={m} className={`chip${machine === m ? " active" : ""}`} onClick={() => setMachine(m)}>
-            {m}
+        <span className="sessions-mode" role="group" aria-label={t("sessions.mode.label")}>
+          <button
+            className={`chip${prefs.mode === "activity" ? " active" : ""}`}
+            onClick={() => update({ ...prefs, mode: "activity" })}
+          >
+            {t("sessions.mode.activity")}
           </button>
-        ))}
+          <button
+            className={`chip${prefs.mode === "machine" ? " active" : ""}`}
+            onClick={() => update({ ...prefs, mode: "machine" })}
+          >
+            {t("sessions.mode.machine")}
+          </button>
+        </span>
         <span className="sessions-spacer" />
-        {yourTurn > 0 && <span className="sessions-yourturn">{t("sessions.yourTurnCount", { n: yourTurn })}</span>}
+        {reviewCount > 0 && <span className="sessions-yourturn">{t("sessions.yourTurnCount", { n: reviewCount })}</span>}
         <label className="sessions-ended">
           <input type="checkbox" checked={showEnded} onChange={(e) => setShowEnded(e.target.checked)} />
           {t("sessions.showEnded")}
@@ -234,12 +333,26 @@ export function SessionsScreen() {
         <p className="panel-note is-warn">{t("sessions.relay.error", { error: data.relay.error || "" })}</p>
       )}
       {error && <p className="panel-note is-warn">{error}</p>}
-      {!loading && shown.length === 0 && <p className="panel-note">{t("sessions.empty")}</p>}
-      <div className="sessions-grid">
-        {shown.map((s) => (
-          <SessionCard key={s.session_id} s={s} onAck={ack} />
-        ))}
-      </div>
+      {!loading && items.length === 0 && <p className="panel-note">{t("sessions.empty")}</p>}
+      {groups.map((g) => {
+        const hidden = prefs.hidden.includes(g.key);
+        return (
+          <section key={g.key} className={`sessions-group${hidden ? " is-hidden" : ""}`} data-group={g.key}>
+            <button className="sessions-group-head" onClick={() => toggle(g.key)} aria-expanded={!hidden}>
+              <span className="sessions-group-caret" aria-hidden="true">{hidden ? "▸" : "▾"}</span>
+              <span className="sessions-group-label">{g.label}</span>
+              <span className="sessions-group-count">{g.items.length}</span>
+            </button>
+            {!hidden && (
+              <div className="sessions-grid">
+                {g.items.map((s) => (
+                  <SessionCard key={s.session_id} s={s} onAck={ack} />
+                ))}
+              </div>
+            )}
+          </section>
+        );
+      })}
     </div>
   );
 }

@@ -397,3 +397,10 @@ CREATE TABLE IF NOT EXISTS remote_ack (
   kind       TEXT NOT NULL DEFAULT 'done',  -- done=完了 / hold=保留（2026-10-09 主人「すぐやらないものは保留に」）
   PRIMARY KEY (session_id, human_next)
 );
+
+-- ADR-025 追補（2026-10-09 主人「今の段階では完了。続きを思いついたらやる」）: 主人がカードで
+-- 「終了にする」を押したセッション。その後に主人の発言（prompt）が来れば自然に外れる。
+CREATE TABLE IF NOT EXISTS remote_session_close (
+  session_id TEXT PRIMARY KEY,
+  closed_at  TEXT NOT NULL
+);

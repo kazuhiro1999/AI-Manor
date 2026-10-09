@@ -801,3 +801,23 @@ table.grid td.col-wide, table.grid th.col-wide { min-width: 220px; }
 .session-card.act-hold { border-left-color: var(--text-faint); opacity: 0.8; }
 .session-activity.act-hold { color: var(--text-faint); }
 .act-hold .session-next.has-next { background: none; color: var(--text-dim); padding: 0; margin: 0; }
+.sessions-mode { display: inline-flex; gap: 6px; }
+.sessions-group { margin: 0 0 18px; }
+.sessions-group-head {
+  display: flex; align-items: center; gap: 8px; width: 100%; background: none; border: none; padding: 4px 0 8px;
+  color: var(--text); font-size: 14px; font-weight: 600; cursor: pointer; text-align: left;
+  border-bottom: 1px solid var(--border); margin-bottom: 10px;
+}
+.sessions-group.is-hidden .sessions-group-head { color: var(--text-faint); margin-bottom: 0; }
+.sessions-group-caret { width: 12px; color: var(--text-faint); }
+.sessions-group-count {
+  font-size: 11px; font-weight: 600; color: var(--text-dim); background: var(--bg-panel-2);
+  border: 1px solid var(--border); border-radius: 999px; padding: 0 8px;
+}
+.session-close {
+  font-size: 11px; padding: 1px 8px; border-radius: 999px; cursor: pointer; flex: 0 0 auto;
+  border: 1px solid var(--border); color: var(--text-faint); background: transparent;
+}
+.session-close:hover { color: var(--text); background: var(--bg-panel-2); }
+.session-card.act-closed { opacity: 0.6; border-left-color: var(--text-faint); }
+.session-activity.act-closed { color: var(--text-faint); }

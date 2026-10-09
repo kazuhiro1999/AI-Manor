@@ -688,21 +688,36 @@ def _remember_acks(state: dict[str, Any], acks: object) -> None:
 
 def spawn_flush(session_id: str, directory_key: str | None) -> None:
     """裏で `flush` を走らせて戻る（hook を待たせない）。失敗しても溜まりは次の機会に送られる。"""
-    args = [sys.executable, str(Path(__file__).resolve()), "flush", "--quiet", "--acks-for", session_id]
+    exe = sys.executable
+    if os.name == "nt":
+        # 窓を持たない pythonw があればそれで（2026-10-09 実測: 発言のたびにコマンドプロンプトが一瞬開いた。
+        # DETACHED_PROCESS で起動すると、venv の python.exe（中継ぎ）が呼ぶ本物の python に
+        # 新しいコンソールが作られる）。
+        w = Path(sys.executable).with_name("pythonw.exe")
+        if w.is_file():
+            exe = str(w)
+    args = [exe, str(Path(__file__).resolve()), "flush", "--quiet", "--acks-for", session_id]
     if directory_key:
         args += ["--directory-key", directory_key]
     kwargs: dict[str, Any] = {"stdin": subprocess.DEVNULL, "stdout": subprocess.DEVNULL,
                               "stderr": subprocess.DEVNULL, "close_fds": True}
-    if os.name == "nt":
-        kwargs["creationflags"] = (getattr(subprocess, "DETACHED_PROCESS", 0)
-                                   | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
-                                   | getattr(subprocess, "CREATE_NO_WINDOW", 0))
-    else:
+    if os.name != "nt":
         kwargs["start_new_session"] = True
-    try:
-        subprocess.Popen(args, **kwargs)  # noqa: S603 - 自分自身を呼ぶだけ
-    except OSError as exc:
-        _log_error(f"裏の送信を起動できません: {exc}")
+        try:
+            subprocess.Popen(args, **kwargs)  # noqa: S603 - 自分自身を呼ぶだけ
+        except OSError as exc:
+            _log_error(f"裏の送信を起動できません: {exc}")
+        return
+    # DETACHED_PROCESS は使わない（上の理由）。CREATE_NO_WINDOW は孫まで窓を隠す。
+    # hook の親が job に入っていても裏の送信が道連れにならないよう、抜けられるなら抜ける。
+    base = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0) | getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    for flags in (base | 0x01000000, base):  # 0x01000000 = CREATE_BREAKAWAY_FROM_JOB
+        try:
+            subprocess.Popen(args, creationflags=flags, **kwargs)  # noqa: S603 - 自分自身を呼ぶだけ
+            return
+        except OSError as exc:
+            last = exc
+    _log_error(f"裏の送信を起動できません: {last}")
 
 
 # --- progress ------------------------------------------------------------------------------
@@ -835,7 +850,14 @@ def cmd_flush(args: argparse.Namespace) -> int:
     before = len(_read_outbox())
     acks_for = getattr(args, "acks_for", None)
     key = getattr(args, "directory_key", None)
-    ok, out = send_events(cfg, [], PROGRESS_TIMEOUT * 5, directory_key=key, acks_for=acks_for)
+    # GAS は時々遅い・時々失敗する（実測）。裏の送信は急がないので、間を置いて3回まで試す。
+    attempts = 3 if getattr(args, "quiet", False) else 1
+    for i in range(attempts):
+        ok, out = send_events(cfg, [], PROGRESS_TIMEOUT * 5, directory_key=key, acks_for=acks_for)
+        if ok:
+            break
+        if i + 1 < attempts:
+            time.sleep(5 * (i + 1))
     if ok and key:
         entry = out.get("directory")
         cache_directory(key, entry if isinstance(entry, dict) else None)

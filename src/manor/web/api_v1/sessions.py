@@ -65,3 +65,20 @@ def register(app: FastAPI, ctx: WebContext) -> None:
             n = store.unhold(conn, session_id)
             conn.commit()
         return {"ok": True, "removed": n}
+
+    @app.post("/api/v1/sessions/{session_id}/close")
+    def sessions_close(session_id: str) -> dict[str, object]:
+        """「終了にする」（主人の発言が来れば自然に外れる）。"""
+        require_writable(ctx)
+        with open_conn(ctx) as conn:
+            ok = store.close(conn, session_id)
+            conn.commit()
+        return {"ok": ok}
+
+    @app.delete("/api/v1/sessions/{session_id}/close")
+    def sessions_reopen(session_id: str) -> dict[str, object]:
+        require_writable(ctx)
+        with open_conn(ctx) as conn:
+            n = store.reopen(conn, session_id)
+            conn.commit()
+        return {"ok": True, "removed": n}

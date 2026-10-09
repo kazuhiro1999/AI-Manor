@@ -148,7 +148,7 @@ def test_review_comes_first_then_waiting_after_ack(conn, monkeypatch) -> None:
         _ev("stop", "2026-10-09T11:01:00+09:00", sid="b"),
     ])
     rows = store.list_sessions(conn)
-    assert [(r["session_id"], r["activity"]) for r in rows] == [("b", "review"), ("a", "working")]
+    assert [(r["session_id"], r["activity"]) for r in rows] == [("b", "review"), ("a", "working")]  # 確認待ちが先
     assert rows[0]["next_action"] == "B 段に着手"  # 確認待ちは時間が経っても休止にしない
     store.ack(conn, "b")
     b = [r for r in store.list_sessions(conn) if r["session_id"] == "b"][0]
@@ -262,6 +262,7 @@ def fake_relay(monkeypatch, tmp_path):
     monkeypatch.setenv("MANOR_REPORT_ENDPOINT", url)
     monkeypatch.setenv("MANOR_REPORT_TOKEN", "MTOKEN")
     monkeypatch.setenv("MANOR_REPORT_MACHINE", "名乗りの名")
+    monkeypatch.setattr(mr.time, "sleep", lambda s: None)  # 裏の送信のやり直しを待たない
     yield fake, url
     server.shutdown()
 
@@ -384,3 +385,40 @@ def test_same_ack_is_told_once() -> None:
     acks = [{"text": "X", "done_at": f"2026-10-09T12:0{i}:00"} for i in range(4)]
     assert mr.new_acks(state, acks) == ["X"]
     assert mr.new_acks(state, acks) == []
+
+
+def test_close_until_next_prompt(conn, monkeypatch) -> None:
+    monkeypatch.setenv("MANOR_NOW", "2026-10-09T12:10:00")
+    store.ingest(conn, [_ev("prompt", "2026-10-09T12:00:00+09:00"), _ev("stop", "2026-10-09T12:05:00+09:00")])
+    assert store.list_sessions(conn)[0]["activity"] == "waiting"
+    assert store.close(conn, "s1") and not store.close(conn, "nope")
+    row = store.list_sessions(conn)[0]
+    assert (row["activity"], row["closed"]) == ("closed", True)
+    assert store.format_active(conn) == []  # 起動時の射影には出さない
+    monkeypatch.setenv("MANOR_NOW", "2026-10-20T12:00:00")
+    assert store.list_sessions(conn) == []  # 7日を過ぎたら「古いものも出す」でだけ
+    assert store.list_sessions(conn, include_ended=True)[0]["activity"] == "closed"
+    monkeypatch.setenv("MANOR_NOW", "2026-10-21T09:00:30")
+    store.ingest(conn, [_ev("prompt", "2026-10-21T09:00:00+09:00")])  # 続きを話しかけたら自然に戻る
+    assert store.list_sessions(conn)[0]["activity"] == "working"
+    store.ingest(conn, [_ev("stop", "2026-10-21T09:00:20+09:00")])
+    assert store.list_sessions(conn)[0]["activity"] == "waiting"
+
+
+def test_reopen_restores_previous_state(conn, monkeypatch) -> None:
+    monkeypatch.setenv("MANOR_NOW", "2026-10-09T12:10:00")
+    store.ingest(conn, [_ev("progress", "2026-10-09T12:00:00+09:00", report={"human_next": "確認"}),
+                        _ev("stop", "2026-10-09T12:01:00+09:00")])
+    store.close(conn, "s1")
+    assert store.reopen(conn, "s1") == 1
+    assert store.list_sessions(conn)[0]["activity"] == "review"
+
+
+def test_spawn_flush_never_opens_a_console(monkeypatch) -> None:
+    seen = {}
+    monkeypatch.setattr(mr.os, "name", "nt")
+    monkeypatch.setattr(mr.subprocess, "Popen", lambda args, **kw: seen.update(args=args, **kw))
+    mr.spawn_flush("S", "dir:x")
+    flags = seen["creationflags"]
+    assert not flags & 0x00000008  # DETACHED_PROCESS（venv の中継ぎ越しに窓が開く）を使わない
+    assert flags & 0x08000000  # CREATE_NO_WINDOW

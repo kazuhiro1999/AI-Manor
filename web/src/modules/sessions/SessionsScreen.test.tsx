@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
-import { SessionCard, minutesAgo, type RemoteSession } from "./SessionsScreen";
+import { SessionCard, groupSessions, minutesAgo, type RemoteSession } from "./SessionsScreen";
 
 const base: RemoteSession = {
   session_id: "s1",
@@ -13,6 +13,7 @@ const base: RemoteSession = {
   human_next: "実機で動作確認",
   human_next_done: false,
   held: false,
+  closed: false,
   next_action: "B 段に着手",
   note: "後半3動作まで",
   project_id: "P4",
@@ -94,6 +95,36 @@ describe("推奨の次", () => {
     const done = render(<SessionCard s={{ ...base, activity: "waiting", human_next_done: true }} />);
     expect(done.container.querySelector(".session-recommend.is-now")).not.toBeNull();
     expect(screen.getByText("指示待ち")).toBeTruthy();
+  });
+});
+
+describe("並べ方", () => {
+  const mk = (id: string, activity: RemoteSession["activity"], machine: string): RemoteSession => ({
+    ...base, session_id: id, activity, machine,
+  });
+  const items = [mk("w", "working", "B"), mk("c", "closed", "A"), mk("r", "review", "B"), mk("q", "waiting", "A")];
+
+  it("状態ごと: 確認待ち → 指示待ち → 作業中 …、終了にしたものは終了へ", () => {
+    const g = groupSessions(items, "activity", (a) => a);
+    expect(g.map((x) => x.key)).toEqual(["activity:review", "activity:waiting", "activity:working", "activity:ended"]);
+    expect(g[3].items.map((s) => s.session_id)).toEqual(["c"]);
+  });
+
+  it("PCごと: PC名の順、中は状態の順", () => {
+    const g = groupSessions(items, "machine", (a) => a);
+    expect(g.map((x) => x.label)).toEqual(["A", "B"]);
+    expect(g[0].items.map((s) => s.session_id)).toEqual(["q", "c"]);
+    expect(g[1].items.map((s) => s.session_id)).toEqual(["r", "w"]);
+  });
+
+  it("終了にする／再開のボタン", () => {
+    const calls: string[] = [];
+    const { unmount } = render(<SessionCard s={base} onAck={(_, a) => calls.push(a)} />);
+    fireEvent.click(screen.getByText("終了にする"));
+    unmount();
+    render(<SessionCard s={{ ...base, activity: "closed", closed: true }} onAck={(_, a) => calls.push(a)} />);
+    fireEvent.click(screen.getByText("再開"));
+    expect(calls).toEqual(["close", "reopen"]);
   });
 });
 

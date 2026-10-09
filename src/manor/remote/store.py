@@ -27,8 +27,11 @@ STALE_HOURS = 72
 
 #: 確認待ち（Claude が一区切りついて主人の確認が要る）→ 作業中 → 指示待ち（確認が要るものが無い・
 #: 主人が「完了」を押した）→ 休止 → 終了（2026-10-09 主人「完了を押したのに『あなたの番』のままは紛らわしい」）。
-#: 保留は主人が「今は気にしない」と決めたもの。指示待ちの後ろに静かに並べる。
-ACTIVITY_ORDER = {"review": 0, "working": 1, "waiting": 2, "hold": 3, "idle": 4, "ended": 5}
+#: 主人の指定の並び（2026-10-09）: 確認待ち → 指示待ち → 作業中 → 保留 → 休止 → 終了。
+#: 保留は主人が「今は気にしない」と決めたもの。終了には主人が「終了にする」を押したもの（closed）を含む。
+ACTIVITY_ORDER = {"review": 0, "waiting": 1, "working": 2, "hold": 3, "idle": 4, "closed": 5, "ended": 6}
+#: 主人が「終了にする」を押したセッションを一覧に残す日数（それより古いものは「古いものも出す」で）。
+CLOSED_KEEP_DAYS = 7
 
 PHASES = protocol.PHASES
 PHASE_LABELS_JA = protocol.PHASE_LABELS_JA
@@ -241,6 +244,37 @@ def ack(conn: sqlite3.Connection, session_id: str, kind: str = "done") -> str | 
     return str(row["human_next"])
 
 
+def close(conn: sqlite3.Connection, session_id: str) -> bool:
+    """「終了にする」。以後に主人の発言が来れば自然に外れる（続きをやるとき何もしなくてよい）。"""
+    if not conn.execute("SELECT 1 FROM remote_session WHERE session_id=?", (session_id,)).fetchone():
+        return False
+    conn.execute("INSERT OR REPLACE INTO remote_session_close(session_id, closed_at) VALUES (?,?)",
+                 (session_id, util.now()))
+    return True
+
+
+def reopen(conn: sqlite3.Connection, session_id: str) -> int:
+    return conn.execute("DELETE FROM remote_session_close WHERE session_id=?", (session_id,)).rowcount
+
+
+def _closed(conn: sqlite3.Connection) -> dict[str, datetime]:
+    """今も効いている「終了にする」: 押した後に主人の発言が無いもの → 押した時刻。"""
+    out: dict[str, datetime] = {}
+    try:
+        rows = conn.execute(
+            "SELECT c.session_id, c.closed_at, (SELECT MAX(at) FROM remote_event e"
+            " WHERE e.session_id = c.session_id AND e.kind = 'prompt') AS last_prompt"
+            " FROM remote_session_close c").fetchall()
+    except sqlite3.OperationalError:
+        return out
+    for r in rows:
+        closed = _parse(r["closed_at"])
+        prompt = _parse(r["last_prompt"])
+        if closed and (prompt is None or prompt <= closed):
+            out[r["session_id"]] = closed
+    return out
+
+
 def unhold(conn: sqlite3.Connection, session_id: str) -> int:
     """保留を解く（確認待ちへ戻す）。"""
     return conn.execute("DELETE FROM remote_ack WHERE session_id=? AND kind='hold'", (session_id,)).rowcount
@@ -283,10 +317,11 @@ def activity(row: dict[str, Any], now: datetime | None = None, *, human_next_don
 
 def list_sessions(conn: sqlite3.Connection, *, include_ended: bool = False,
                   now: datetime | None = None) -> list[dict[str, Any]]:
-    """ダッシュボードの並び（§10）: 確認待ち → 作業中 → 指示待ち → 休止 → 終了。同じ状態の中は新しい順。"""
+    """ダッシュボードの並び（§10）: 確認待ち → 指示待ち → 作業中 → 保留 → 休止 → 終了。同じ状態の中は新しい順。"""
     now = now or _now()
     linked = links(conn)
     acked = _acked(conn)
+    closed = _closed(conn)
     titles = {r["id"]: r["title"] for r in conn.execute(
         "SELECT p.id, n.title FROM project p JOIN node n ON n.id=p.id")}
     out = []
@@ -297,7 +332,12 @@ def list_sessions(conn: sqlite3.Connection, *, include_ended: bool = False,
         held = mark == "hold"
         act = activity(row, now, human_next_done=done, held=held)
         last = _parse(row.get("last_event_at"))
-        if act == "ended":
+        closed_at = closed.get(row["session_id"])
+        if closed_at is not None and act != "working":
+            act = "closed"
+            if not include_ended and now - closed_at > timedelta(days=CLOSED_KEEP_DAYS):
+                continue
+        elif act == "ended":
             ended = _parse(row.get("ended_at"))
             if not include_ended and (ended is None or now - ended > timedelta(hours=ENDED_KEEP_HOURS)):
                 continue
@@ -331,6 +371,7 @@ def list_sessions(conn: sqlite3.Connection, *, include_ended: bool = False,
             "human_next": row.get("human_next") or "",
             "human_next_done": done,
             "held": held,
+            "closed": act == "closed",
             "next_action": row.get("next_action") or "",
             "note": row.get("note") or "",
             "project_id": project_id,
@@ -374,7 +415,7 @@ def unlinked_repos(conn: sqlite3.Connection) -> list[dict[str, Any]]:
     seen: dict[str, dict[str, Any]] = {}
     for s in list_sessions(conn):
         key = s.get("repo_key")
-        if not key or key in linked or s.get("project_id"):
+        if not key or key in linked or s.get("project_id") or s["activity"] in ("ended", "closed"):
             continue
         seen.setdefault(key, {"repo_key": key, "machine": s["machine"], "cwd": s["cwd"]})
     return list(seen.values())
@@ -384,7 +425,7 @@ def format_active(conn: sqlite3.Connection) -> list[str]:
     """`manor active` の「■ 他のPCのセッション」の行。"""
     lines = []
     for s in list_sessions(conn):
-        if s["activity"] == "ended":
+        if s["activity"] in ("ended", "closed"):
             continue
         label = {"review": "確認待ち", "working": "作業中", "waiting": "指示待ち", "hold": "保留",
                  "idle": "休止"}[s["activity"]]
