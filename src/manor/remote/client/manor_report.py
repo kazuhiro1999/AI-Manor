@@ -63,6 +63,7 @@ NOTE_MAX = 120
 
 #: hook で待つ時間（秒）。SessionStart は紐づけ表も受け取るので少し長い。
 HOOK_TIMEOUT = 2.5
+PROMPT_TIMEOUT = 4.0
 START_TIMEOUT = 5.0
 PROGRESS_TIMEOUT = 6.0
 
@@ -365,7 +366,7 @@ def _append_outbox(events: list[dict[str, Any]]) -> None:
 
 
 def send_events(cfg: dict[str, Any], events: list[dict[str, Any]], timeout: float,
-                directory_key: str | None = None) -> tuple[bool, dict[str, Any]]:
+                directory_key: str | None = None, acks_for: str | None = None) -> tuple[bool, dict[str, Any]]:
     """`events` と手元の溜まりを一緒に送る。送れなければ `events` を溜まりへ足す。
 
     戻り値: (送れたか, 中継の応答)。
@@ -376,6 +377,8 @@ def send_events(cfg: dict[str, Any], events: list[dict[str, Any]], timeout: floa
         payload: dict[str, Any] = {"op": "events", "events": batch}
         if directory_key:
             payload["directory_key"] = directory_key
+        if acks_for:
+            payload["acks_for"] = acks_for
         try:
             out = call(cfg, payload, timeout)
         except (OSError, RuntimeError, urllib.error.URLError, ValueError) as exc:
@@ -460,6 +463,29 @@ def injection_text(cfg: dict[str, Any], session_id: str, git: dict[str, str | No
         "主人への返答の代わりにはなりません。",
     ]
     return "\n".join(lines)
+
+
+def new_acks(state: dict[str, Any], acks: object) -> list[str]:
+    """主人がダッシュボードで「済んだ」を押した「あなたの次」のうち、まだ伝えていないもの。"""
+    seen = set(state.get("acks_seen") or [])
+    fresh = []
+    for a in acks if isinstance(acks, list) else []:
+        if not isinstance(a, dict):
+            continue
+        key = f"{a.get('done_at')}|{a.get('text')}"
+        if key in seen:
+            continue
+        seen.add(key)
+        fresh.append(str(a.get("text") or ""))
+    state["acks_seen"] = sorted(seen)[-50:]
+    return [t for t in fresh if t]
+
+
+def ack_text(texts: list[str]) -> str:
+    items = "・".join(f"「{t}」" for t in texts)
+    return (f"【manor から】主人はダッシュボードで{items}を済ませたと記録しました。"
+            "済んだ前提で進め、次に報告するときは --human-next を今の状況に合わせて書き直してください"
+            "（無ければ空）。")
 
 
 # --- Stop の催促 --------------------------------------------------------------------------
@@ -603,19 +629,68 @@ def run_hook(event_name: str, stdin_text: str) -> int:
 
     event = make_event(kind, cfg, session_id, cwd, git)
     if event_name == "SessionStart":
+        # 開いたときだけは待つ（報告の作法とリポジトリの紐づけを確実に渡したい）。
         key = git.get("key")
-        ok, out = send_events(cfg, [event], START_TIMEOUT, directory_key=key)
+        ok, out = send_events(cfg, [event], START_TIMEOUT, directory_key=key, acks_for=session_id)
         entry = out.get("directory") if ok else None
         if ok and key:
             cache_directory(key, entry if isinstance(entry, dict) else None)
         elif key:
             entry = cached_directory(key)
+        if ok:
+            _remember_acks(state, out.get("acks"))
         ctx = injection_text(cfg, session_id, git, entry if isinstance(entry, dict) else None)
+        state["injected"] = True
+        save_state(session_id, state)
         print(json.dumps({"hookSpecificOutput": {"hookEventName": "SessionStart",
                                                  "additionalContext": ctx}}, ensure_ascii=False))
-    else:
-        send_events(cfg, [event], HOOK_TIMEOUT)
+        return 0
+
+    # それ以外の合図は待たない（GAS は時々30秒かかる・実測）。手元に置いて裏で送る。
+    _append_outbox([event])
+    key = git.get("key") if not state.get("injected") else None
+    spawn_flush(session_id, key)
+    if event_name == "UserPromptSubmit":
+        parts = []
+        if not state.get("injected"):
+            # 導入より前に開いていたセッションにも、最初の発言で報告の作法を伝える（紐づけは控えから）。
+            entry = cached_directory(git.get("key") or "") if git.get("key") else None
+            parts.append(injection_text(cfg, session_id, git, entry))
+            state["injected"] = True
+        fresh = new_acks(state, state.get("acks_inbox"))
+        if fresh:
+            parts.append(ack_text(fresh))
+        save_state(session_id, state)
+        if parts:
+            print(json.dumps({"hookSpecificOutput": {"hookEventName": "UserPromptSubmit",
+                                                     "additionalContext": "\n\n".join(parts)}},
+                             ensure_ascii=False))
     return 0
+
+
+def _remember_acks(state: dict[str, Any], acks: object) -> None:
+    """中継から受け取った「済んだ」を控えに置く（伝えるのは次の発言のとき）。"""
+    if isinstance(acks, list):
+        state["acks_inbox"] = [a for a in acks if isinstance(a, dict)][-50:]
+
+
+def spawn_flush(session_id: str, directory_key: str | None) -> None:
+    """裏で `flush` を走らせて戻る（hook を待たせない）。失敗しても溜まりは次の機会に送られる。"""
+    args = [sys.executable, str(Path(__file__).resolve()), "flush", "--quiet", "--acks-for", session_id]
+    if directory_key:
+        args += ["--directory-key", directory_key]
+    kwargs: dict[str, Any] = {"stdin": subprocess.DEVNULL, "stdout": subprocess.DEVNULL,
+                              "stderr": subprocess.DEVNULL, "close_fds": True}
+    if os.name == "nt":
+        kwargs["creationflags"] = (getattr(subprocess, "DETACHED_PROCESS", 0)
+                                   | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+                                   | getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    else:
+        kwargs["start_new_session"] = True
+    try:
+        subprocess.Popen(args, **kwargs)  # noqa: S603 - 自分自身を呼ぶだけ
+    except OSError as exc:
+        _log_error(f"裏の送信を起動できません: {exc}")
 
 
 # --- progress ------------------------------------------------------------------------------
@@ -741,12 +816,22 @@ def cmd_ping(_args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_flush(_args: argparse.Namespace) -> int:
+def cmd_flush(args: argparse.Namespace) -> int:
     cfg = load_config()
     before = len(_read_outbox())
-    ok, _ = send_events(cfg, [], PROGRESS_TIMEOUT)
+    acks_for = getattr(args, "acks_for", None)
+    key = getattr(args, "directory_key", None)
+    ok, out = send_events(cfg, [], PROGRESS_TIMEOUT * 5, directory_key=key, acks_for=acks_for)
+    if ok and key:
+        entry = out.get("directory")
+        cache_directory(key, entry if isinstance(entry, dict) else None)
+    if ok and acks_for:
+        state = load_state(acks_for)
+        _remember_acks(state, out.get("acks"))
+        save_state(acks_for, state)
     after = len(_read_outbox())
-    print(f"溜まり {before} 件 → {after} 件" + ("" if ok else "（送れませんでした）"))
+    if not getattr(args, "quiet", False):
+        print(f"溜まり {before} 件 → {after} 件" + ("" if ok else "（送れませんでした）"))
     return 0 if ok else 1
 
 
@@ -783,7 +868,10 @@ def build_parser() -> argparse.ArgumentParser:
     i.add_argument("--claude-settings", dest="claude_settings")
 
     sub.add_parser("ping")
-    sub.add_parser("flush")
+    f = sub.add_parser("flush")
+    f.add_argument("--quiet", action="store_true")
+    f.add_argument("--acks-for", dest="acks_for")
+    f.add_argument("--directory-key", dest="directory_key")
     sub.add_parser("status")
     return parser
 

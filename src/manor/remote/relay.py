@@ -206,6 +206,11 @@ def push_directory_if_changed(conn: sqlite3.Connection, home: Path) -> str:
     return f"pushed {len(safe)}" + (f"（禁止語で {skipped} 件を外しました）" if skipped else "")
 
 
+def push_ack(session_id: str, text: str) -> None:
+    """「済んだ」を中継へ。そのセッションの次の発言のときに送る側が受け取り、Claude へ伝える。"""
+    call({"op": "ack", "session_id": session_id, "text": text, "done_at": util.now()})
+
+
 # --- 鍵 ------------------------------------------------------------------------------------
 
 

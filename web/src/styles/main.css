@@ -769,3 +769,11 @@ table.grid td.col-wide, table.grid th.col-wide { min-width: 220px; }
 .session-foot { font-size: 11px; color: var(--text-faint); }
 .session-waiting { font-size: 12px; color: var(--text-faint); padding: 6px 0; }
 .panel-note.is-warn { color: var(--warn); }
+.session-next-text { min-width: 0; overflow-wrap: anywhere; }
+.session-ack {
+  margin-left: auto; flex: 0 0 auto; font-size: 11px; padding: 2px 10px; border-radius: 999px; cursor: pointer;
+  border: 1px solid var(--ok); color: var(--ok); background: transparent;
+}
+.session-ack:hover { background: var(--ok-bg); }
+.session-next.is-done .session-next-text { text-decoration: line-through; color: var(--text-faint); }
+.session-done-mark { margin-left: auto; font-size: 11px; color: var(--ok); }

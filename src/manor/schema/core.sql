@@ -386,3 +386,12 @@ CREATE TABLE IF NOT EXISTS remote_machine (
   created_at TEXT NOT NULL,
   revoked_at TEXT
 );
+
+-- ADR-025 追補（2026-10-09 主人「済ませたことを伝えるのが面倒」）: ダッシュボードで「済んだ」を押した
+-- 「あなたの次」。中継の acks シートにも送り、そのセッションの次の発言のときに Claude へ伝える。
+CREATE TABLE IF NOT EXISTS remote_ack (
+  session_id TEXT NOT NULL,
+  human_next TEXT NOT NULL,
+  done_at    TEXT NOT NULL,
+  PRIMARY KEY (session_id, human_next)
+);

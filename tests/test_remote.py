@@ -271,10 +271,13 @@ def test_round_trip_through_fake_relay(conn, home, fake_relay, monkeypatch, caps
     injected = json.loads(capsys.readouterr().out)["hookSpecificOutput"]["additionalContext"]
     assert "S-1" in injected and pid in injected
 
-    # 中継が落ちている間は手元に溜まり、次の合図で一緒に届く
+    # hook は待たずに手元へ置き、裏の flush が送る（試験ではその場で走らせる）
+    flushes = []
+    monkeypatch.setattr(mr, "spawn_flush", lambda sid, key: flushes.append(
+        mr.cmd_flush(argparse.Namespace(quiet=True, acks_for=sid, directory_key=key))))
     fake.down = True
     mr.run_hook("UserPromptSubmit", hook_in)
-    assert len(mr._read_outbox()) == 1
+    assert flushes == [1] and len(mr._read_outbox()) == 1  # 落ちている間は溜まる
     fake.down = False
     rc = mr.cmd_progress(argparse.Namespace(session="S-1", title="統合", phase="testing", progress=None,
                                             human_next="ビルド", project=None, task=None, note=None))
@@ -301,3 +304,43 @@ def test_headless_runs_are_not_reported(monkeypatch, capsys) -> None:
     assert not mr.is_headless()
     monkeypatch.setenv("MANOR_REPORT_DISABLE", "1")
     assert mr.is_headless()
+
+
+def test_ack_marks_human_next_done_until_it_changes(conn, monkeypatch) -> None:
+    monkeypatch.setenv("MANOR_NOW", "2026-10-09T12:10:00")
+    store.ingest(conn, [_ev("progress", "2026-10-09T12:05:00+09:00",
+                            report={"title": "a", "phase": "implemented", "human_next": "Drive を掃除"})])
+    assert store.ack(conn, "s1") == "Drive を掃除"
+    assert store.list_sessions(conn)[0]["human_next_done"] is True
+    store.ingest(conn, [_ev("progress", "2026-10-09T12:08:00+09:00", report={"human_next": "ビルド"})])
+    assert store.list_sessions(conn)[0]["human_next_done"] is False
+    assert store.ack(conn, "nope") is None
+
+
+def test_first_prompt_injects_and_delivers_acks(monkeypatch, capsys, tmp_path) -> None:
+    monkeypatch.setenv("MANOR_REPORT_HOME", str(tmp_path / "c"))
+    monkeypatch.setenv("CLAUDE_CODE_ENTRYPOINT", "claude-desktop")
+    monkeypatch.setattr(mr, "git_info", lambda cwd: {"remote": None, "branch": None, "key": "dir:x"})
+    acks = [{"text": "Drive を掃除", "done_at": "2026-10-09T12:00:00"}]
+    spawned = []
+    monkeypatch.setattr(mr, "spawn_flush", lambda sid, key: spawned.append((sid, key)))
+    # 裏の送信が前回受け取った「済んだ」が控えにある状態
+    mr.save_state("S", {"acks_inbox": acks})
+    payload = json.dumps({"session_id": "S", "cwd": str(tmp_path)})
+    mr.run_hook("UserPromptSubmit", payload)
+    assert spawned == [("S", "dir:x")] and len(mr._read_outbox()) == 1  # 待たずに手元へ置いて裏で送る
+    ctx = json.loads(capsys.readouterr().out)["hookSpecificOutput"]["additionalContext"]
+    assert "【manor への進捗報告】" in ctx and "「Drive を掃除」を済ませた" in ctx
+    mr.run_hook("UserPromptSubmit", payload)  # 2度目: 作法も同じ「済んだ」も繰り返さない
+    assert capsys.readouterr().out == ""
+
+
+def test_hooks_return_without_waiting_for_relay(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("MANOR_REPORT_HOME", str(tmp_path / "c"))
+    monkeypatch.setenv("CLAUDE_CODE_ENTRYPOINT", "cli")
+    monkeypatch.setattr(mr, "git_info", lambda cwd: {"remote": None, "branch": None, "key": "dir:x"})
+    monkeypatch.setattr(mr, "send_events", lambda *a, **k: pytest.fail("Stop で中継を待ってはいけない"))
+    monkeypatch.setattr(mr, "spawn_flush", lambda sid, key: None)
+    mr.save_state("S", {"injected": True})
+    assert mr.run_hook("Stop", json.dumps({"session_id": "S", "cwd": str(tmp_path)})) == 0
+    assert [e["kind"] for e in mr._read_outbox()] == ["stop"]

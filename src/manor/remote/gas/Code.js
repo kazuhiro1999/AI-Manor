@@ -13,6 +13,8 @@ var SESSION_COLUMNS = ['session_id', 'machine', '状態', '見出し', '段階',
   'プロジェクト', '一言', 'リポジトリ', 'ブランチ', '最終の合図', '最終の報告', '開始', '終了', 'cwd'];
 var MACHINE_COLUMNS = ['name', 'token_sha256', 'created_at', 'revoked_at'];
 var DIRECTORY_COLUMNS = ['key', 'json', 'updated_at'];
+// 主人がダッシュボードで「済んだ」を押した「あなたの次」。送る側が次の発言のときに受け取り、Claude に伝える。
+var ACK_COLUMNS = ['session_id', 'text', 'done_at'];
 var PHASE_LABELS = {
   investigating: '調査中', designing: '設計中', implementing: '実装中', fixing: '修正中',
   implemented: '実装済', testing: '試験中', blocked: '止まっている', done: '完了'
@@ -61,6 +63,7 @@ function route_(req) {
   if (op === 'events') return withLock_(function () { return acceptEvents_(req, machine); });
   if (!admin) return { ok: false, error: 'forbidden' };
   if (op === 'pull') return pull_(req);
+  if (op === 'ack') return withLock_(function () { return addAck_(req); });
   if (op === 'set_directory') return withLock_(function () { return setDirectory_(req); });
   if (op === 'add_machine') return withLock_(function () { return addMachine_(req); });
   if (op === 'revoke_machine') return withLock_(function () { return revokeMachine_(req); });
@@ -164,6 +167,7 @@ function acceptEvents_(req, machine) {
   }
   var out = { ok: true, accepted: rows.length, duplicates: dup, seq: seq };
   if (req.directory_key) out.directory = directoryFor_(req.directory_key);
+  if (req.acks_for) out.acks = acksFor_(req.acks_for);
   return out;
 }
 
@@ -253,6 +257,24 @@ function cleanupIfDue_() {
   var drop = 0;
   while (drop < recv.length && String(recv[drop][0]) < cutoff) drop++;
   if (drop > 0) sh.deleteRows(2, drop);
+}
+
+function addAck_(req) {
+  if (!req.session_id || !req.text) return { ok: false, error: 'session_and_text_required' };
+  sheet_('acks', ACK_COLUMNS).appendRow([req.session_id, req.text, req.done_at || nowIso_()]);
+  return { ok: true };
+}
+
+function acksFor_(sessionId) {
+  var sh = sheet_('acks', ACK_COLUMNS);
+  var last = sh.getLastRow();
+  if (last < 2) return [];
+  var rows = sh.getRange(Math.max(2, last - 500), 1, Math.min(last - 1, 501), 3).getValues();
+  var out = [];
+  for (var i = 0; i < rows.length; i++) {
+    if (rows[i][0] === sessionId) out.push({ text: String(rows[i][1]), done_at: String(rows[i][2]) });
+  }
+  return out;
 }
 
 // --- 紐づけ表 --------------------------------------------------------------------------------

@@ -8,6 +8,7 @@
  */
 import { useMemo, useState } from "react";
 import { usePolling } from "../../app/polling";
+import { api } from "../../app/api";
 import { ScreenHeader } from "../../components/ScreenHeader";
 import { useT, type TranslationKey } from "../../app/i18n";
 
@@ -22,6 +23,7 @@ export interface RemoteSession {
   phase_label: string;
   progress: number | null;
   human_next: string;
+  human_next_done: boolean;
   note: string;
   project_id: string | null;
   project_title: string | null;
@@ -79,7 +81,7 @@ function useAgo() {
   };
 }
 
-export function SessionCard({ s }: { s: RemoteSession }) {
+export function SessionCard({ s, onAck }: { s: RemoteSession; onAck?: (id: string) => void }) {
   const t = useT();
   const ago = useAgo();
   const pct = s.progress ?? null;
@@ -127,9 +129,15 @@ export function SessionCard({ s }: { s: RemoteSession }) {
             <div className="session-bar" style={{ width: `${pct ?? 0}%` }} />
             <span className="session-pct">{pct === null ? "—" : `${pct}%`}</span>
           </div>
-          <div className={`session-next${s.human_next ? " has-next" : ""}`}>
+          <div className={`session-next${s.human_next && !s.human_next_done ? " has-next" : ""}${s.human_next_done ? " is-done" : ""}`}>
             <span className="session-next-label">{t("sessions.next.label")}</span>
-            <span>{s.human_next || t("sessions.next.none")}</span>
+            <span className="session-next-text">{s.human_next || t("sessions.next.none")}</span>
+            {s.human_next && !s.human_next_done && onAck && (
+              <button className="session-ack" onClick={() => onAck(s.session_id)} title={t("sessions.next.doneHint")}>
+                {t("sessions.next.done")}
+              </button>
+            )}
+            {s.human_next_done && <span className="session-done-mark">{t("sessions.next.doneMark")}</span>}
           </div>
           <footer className="session-foot">{t("sessions.reportedAgo", { ago: ago(s.last_report_at) })}</footer>
         </>
@@ -144,7 +152,7 @@ export function SessionsScreen() {
   const t = useT();
   const [showEnded, setShowEnded] = useState(false);
   const [machine, setMachine] = useState<string | null>(null);
-  const { data, error, loading } = usePolling<SessionsResponse>(
+  const { data, error, loading, reload } = usePolling<SessionsResponse>(
     `/sessions?include_ended=${showEnded ? 1 : 0}`,
     POLL_MS
   );
@@ -152,6 +160,13 @@ export function SessionsScreen() {
   const machines = useMemo(() => Array.from(new Set(items.map((s) => s.machine))).sort(), [items]);
   const shown = machine ? items.filter((s) => s.machine === machine) : items;
   const yourTurn = items.filter((s) => s.activity === "your_turn").length;
+  const ack = async (id: string) => {
+    try {
+      await api(`/sessions/${encodeURIComponent(id)}/ack`, { method: "POST" });
+    } finally {
+      await reload();
+    }
+  };
 
   return (
     <div className="view" id="view-sessions">
@@ -180,7 +195,7 @@ export function SessionsScreen() {
       {!loading && shown.length === 0 && <p className="panel-note">{t("sessions.empty")}</p>}
       <div className="sessions-grid">
         {shown.map((s) => (
-          <SessionCard key={s.session_id} s={s} />
+          <SessionCard key={s.session_id} s={s} onAck={ack} />
         ))}
       </div>
     </div>

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { SessionCard, minutesAgo, type RemoteSession } from "./SessionsScreen";
 
 const base: RemoteSession = {
@@ -11,6 +11,7 @@ const base: RemoteSession = {
   phase_label: "実装済",
   progress: 75,
   human_next: "実機で動作確認",
+  human_next_done: false,
   note: "後半3動作まで",
   project_id: "P4",
   project_title: "XR Dance Academy",
@@ -45,6 +46,19 @@ describe("SessionCard", () => {
   it("主人の次が空なら「なし」", () => {
     render(<SessionCard s={{ ...base, human_next: "" }} />);
     expect(screen.getByText("なし")).toBeTruthy();
+  });
+});
+
+describe("済んだ", () => {
+  it("押すとそのセッションの番号で呼ぶ・済みなら取り消し線と印", () => {
+    const calls: string[] = [];
+    const { unmount } = render(<SessionCard s={base} onAck={(id) => calls.push(id)} />);
+    fireEvent.click(screen.getByText("済んだ"));
+    expect(calls).toEqual(["s1"]);
+    unmount();
+    render(<SessionCard s={{ ...base, human_next_done: true }} onAck={() => undefined} />);
+    expect(screen.queryByText("済んだ")).toBeNull();
+    expect(screen.getByText("✓ 済み")).toBeTruthy();
   });
 });
 

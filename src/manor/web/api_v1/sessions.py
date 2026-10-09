@@ -10,7 +10,7 @@ from __future__ import annotations
 from fastapi import FastAPI
 
 from ...remote import relay, store
-from .._common import WebContext, open_conn, table_exists
+from .._common import WebContext, open_conn, require_writable, table_exists
 
 
 def register(app: FastAPI, ctx: WebContext) -> None:
@@ -30,3 +30,21 @@ def register(app: FastAPI, ctx: WebContext) -> None:
             state = relay.load_state(ctx.home)
             status["last_pull_ts"] = state.get("last_pull_ts")
             return {"items": items, "relay": status}
+
+    @app.post("/api/v1/sessions/{session_id}/ack")
+    def sessions_ack(session_id: str) -> dict[str, object]:
+        """「あなたの次」を済みにする（主人がカードの「済んだ」を押した）。中継に届かなくても
+        manor 側の記録は残す（`relayed=false`）——セッションへの伝達だけが遅れる。"""
+        require_writable(ctx)
+        with open_conn(ctx) as conn:
+            text = store.ack(conn, session_id)
+            conn.commit()
+        if text is None:
+            return {"ok": False, "error": "no_human_next"}
+        relayed = True
+        if relay.configured():
+            try:
+                relay.push_ack(session_id, text)
+            except relay.RelayError:
+                relayed = False
+        return {"ok": True, "text": text, "relayed": relayed}

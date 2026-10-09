@@ -221,6 +221,23 @@ def _clip(text: object, limit: int) -> str:
     return flat if len(flat) <= limit else flat[: limit - 1] + "…"
 
 
+def ack(conn: sqlite3.Connection, session_id: str) -> str | None:
+    """そのセッションのいまの「あなたの次」を済みにする。戻り値は済みにした文（無ければ None）。"""
+    row = conn.execute("SELECT human_next FROM remote_session WHERE session_id=?", (session_id,)).fetchone()
+    if not row or not row["human_next"]:
+        return None
+    conn.execute("INSERT OR REPLACE INTO remote_ack(session_id, human_next, done_at) VALUES (?,?,?)",
+                 (session_id, row["human_next"], util.now()))
+    return str(row["human_next"])
+
+
+def _acked(conn: sqlite3.Connection) -> set[tuple[str, str]]:
+    try:
+        return {(r["session_id"], r["human_next"]) for r in conn.execute("SELECT session_id, human_next FROM remote_ack")}
+    except sqlite3.OperationalError:
+        return set()
+
+
 # --- 読む ----------------------------------------------------------------------------------
 
 
@@ -240,6 +257,7 @@ def list_sessions(conn: sqlite3.Connection, *, include_ended: bool = False,
     """ダッシュボードの並び（§10）: あなたの番 → 作業中 → 休止 → 終了。同じ状態の中は新しい順。"""
     now = now or _now()
     linked = links(conn)
+    acked = _acked(conn)
     titles = {r["id"]: r["title"] for r in conn.execute(
         "SELECT p.id, n.title FROM project p JOIN node n ON n.id=p.id")}
     out = []
@@ -279,6 +297,7 @@ def list_sessions(conn: sqlite3.Connection, *, include_ended: bool = False,
             "phase_label": PHASE_LABELS_JA.get(phase, phase),
             "progress": progress,
             "human_next": row.get("human_next") or "",
+            "human_next_done": (row["session_id"], row.get("human_next") or "") in acked,
             "note": row.get("note") or "",
             "project_id": project_id,
             "project_title": project_title,
@@ -338,7 +357,8 @@ def format_active(conn: sqlite3.Connection) -> list[str]:
         where = s["task_id"] or s["project_id"] or (s["project_title"] if s["linked"] else "未紐づけ")
         phase = s["phase_label"] or "—"
         pct = "" if s["progress"] is None else f" {s['progress']}%"
-        nxt = f"｜主人の次: {s['human_next']}" if s["human_next"] else ""
+        done = "（済）" if s["human_next_done"] else ""
+        nxt = f"｜主人の次: {s['human_next']}{done}" if s["human_next"] else ""
         lines.append(f"  {s['machine']}｜{head}（{where}）｜{phase}{pct}｜{label}{nxt}")
     for r in unlinked_repos(conn):
         lines.append(f"  ⚠ 未紐づけのリポジトリ: {r['repo_key']}（{r['machine']}）— "
