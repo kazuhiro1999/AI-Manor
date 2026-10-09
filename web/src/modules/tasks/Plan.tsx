@@ -235,7 +235,7 @@ function PlanProjects() {
   if (error) return <p className="panel-note">{t("errors.loadFailed", { reason: error })}</p>;
   if (!board) return <p className="panel-note">{t("common.loading")}</p>;
   const allRows = board.projects || [];
-  //: 畳んだ project（done）は既定で隠し、末尾に「完了 N 件を表示」で開く。終わった予備審査が
+  //: 畳んだ project（done）は既定で隠し、末尾に「完了 N 件を表示」で開く。終わった発表が
   //: 俯瞰で「超過11日」と目立っていた（主人 2026-09-20「もう終わっているのに目立つのは避けたい」）。
   const doneRows = allRows.filter((p) => p.status === "done");
   const liveRows = allRows.filter((p) => p.status !== "done");

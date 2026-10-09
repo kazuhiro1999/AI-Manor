@@ -767,7 +767,7 @@ def test_project_status_only_done_when_text_starts_with_done():
     assert _project_status("完了") == "done"
     assert _project_status("**完了**（2026-08-30）") == "done"
     assert _project_status("評価モデル 9/11軸完了・残2軸") == "active"
-    assert _project_status("同期収録の主要機能は完了・2台実機で確認済み") == "active"
+    assert _project_status("主要機能は完了・実機で確認済み") == "active"
     assert _project_status("設計完了・手順書あり") == "active"
     assert _project_status("") == "active"
 

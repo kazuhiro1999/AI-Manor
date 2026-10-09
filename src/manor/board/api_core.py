@@ -255,7 +255,7 @@ def get_board(conn: sqlite3.Connection, user_id: str | None = None) -> dict[str,
     projects = []
     for p in project_mod.list_projects(conn, user_id=user_id):
         p2 = dict(p)
-        # 畳んだ project（done）に「超過N日」を出さない——予備審査（P3）が終わったあとも
+        # 畳んだ project（done）に「超過N日」を出さない——発表（P3）が終わったあとも
         # 俯瞰で「超過11日」と目立っていた（主人 2026-09-20）。期限は残す（記録）、残日数だけ空。
         p2["days_left"] = None if p.get("status") == "done" else _days_left(p.get("due"), today)
         projects.append(p2)

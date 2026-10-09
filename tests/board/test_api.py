@@ -86,7 +86,7 @@ def test_board_empty_home_returns_200_with_shape(home: Path):
 
 
 def test_board_done_project_has_no_days_left(conn, home: Path):
-    """畳んだ project（done）に「超過N日」を出さない（主人 2026-09-20: 終わった予備審査が
+    """畳んだ project（done）に「超過N日」を出さない（主人 2026-09-20: 終わった発表が
     俯瞰で目立っていた）。期限は残す、残日数だけ空。active は従来どおり。"""
     project_mod.add(conn, "old", "終わった計画", priority=1, due="2026-01-01")
     project_mod.set(conn, "old", status="done")

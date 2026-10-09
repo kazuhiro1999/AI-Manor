@@ -167,12 +167,12 @@ def test_task_message_guesses_the_project_from_its_title(
     """D16: 本文にプロジェクトのタイトルの語が出てきたら project_id を埋める。"""
     from manor import project as project_mod
 
-    project_mod.add(conn, "vra", "VRAcademy 2台同期収録（会社）", kind="会社")
+    project_mod.add(conn, "shop", "SampleShop サイト改修（会社）", kind="会社")
     conn.commit()  # `intake()` は別接続を開くので、見えるように書き終える
 
     posted = _setup(
         home, monkeypatch, leak_terms,
-        [{"ts": "1000.0011", "text": "#task VRAcademyの収録日程を確認する"}],
+        [{"ts": "1000.0011", "text": "#task SampleShopの公開日程を確認する"}],
     )
 
     result = slack_mod.intake(home)
@@ -182,7 +182,7 @@ def test_task_message_guesses_the_project_from_its_title(
         "SELECT project_id FROM task WHERE id = ?", (task_id,)
     ).fetchone()
     project_row = conn.execute(
-        "SELECT id FROM project WHERE code = 'vra'"
+        "SELECT id FROM project WHERE code = 'shop'"
     ).fetchone()
     assert row["project_id"] == project_row["id"]
     assert task_id in str(posted[0]["text"])
@@ -194,7 +194,7 @@ def test_task_message_leaves_project_unset_when_nothing_matches(
     """当たらなければ `None` のまま——**無理に決めつけない**。"""
     from manor import project as project_mod
 
-    project_mod.add(conn, "vra", "VRAcademy 2台同期収録（会社）", kind="会社")
+    project_mod.add(conn, "shop", "SampleShop サイト改修（会社）", kind="会社")
     conn.commit()
 
     _setup(
@@ -417,7 +417,7 @@ def test_cal_creates_an_event_and_answers_with_the_resolved_date(
     monkeypatch.setenv("MANOR_TODAY", "2026-09-06")
     posted = _setup(
         home, monkeypatch, leak_terms,
-        [{"ts": "2000.0001", "text": "#cal 9/9 14:00 予備審査"}],
+        [{"ts": "2000.0001", "text": "#cal 9/9 14:00 打ち合わせ"}],
     )
 
     result = slack_mod.intake(home)
@@ -425,7 +425,7 @@ def test_cal_creates_an_event_and_answers_with_the_resolved_date(
     assert result["taken"][0]["kind"] == "cal"
     row = conn.execute("SELECT start, title, source FROM secretary_event").fetchone()
     assert row["start"] == "2026-09-09T14:00"
-    assert row["title"] == "予備審査"
+    assert row["title"] == "打ち合わせ"
     assert row["source"] == "slack"
     text = str(posted[0]["text"])
     assert "2026-09-09 14:00" in text  # 解いた日付をそのまま返す
@@ -450,7 +450,7 @@ def test_cal_reply_carries_a_google_calendar_link(
     追加できるリンクを添える（v1 の退避と同じ形）。
     """
     monkeypatch.setenv("MANOR_TODAY", "2026-09-06")
-    posted = _setup(home, monkeypatch, leak_terms, [{"ts": "2000.0003", "text": "#cal 9/9 14:00 予備審査"}])
+    posted = _setup(home, monkeypatch, leak_terms, [{"ts": "2000.0003", "text": "#cal 9/9 14:00 打ち合わせ"}])
 
     slack_mod.intake(home)
 
@@ -525,7 +525,7 @@ def test_cal_reply_carries_the_edit_link_when_registered(
     monkeypatch.setenv("MANOR_TODAY", "2026-09-06")
     link = "https://www.google.com/calendar/event?eid=abc123XYZ"
     posted = _setup(
-        home, monkeypatch, leak_terms, [{"ts": "3000.0001", "text": "#cal 9/9 14:00 予備審査"}],
+        home, monkeypatch, leak_terms, [{"ts": "3000.0001", "text": "#cal 9/9 14:00 打ち合わせ"}],
         push={"ok": True, "html_link": link, "reason": ""},
     )
 
@@ -544,7 +544,7 @@ def test_cal_falls_back_to_a_link_when_the_push_fails(
     """登録できなくても**予定は手元に入っている**。理由を言い、退避のリンクを添える。"""
     monkeypatch.setenv("MANOR_TODAY", "2026-09-06")
     posted = _setup(
-        home, monkeypatch, leak_terms, [{"ts": "3000.0002", "text": "#cal 9/9 14:00 予備審査"}],
+        home, monkeypatch, leak_terms, [{"ts": "3000.0002", "text": "#cal 9/9 14:00 打ち合わせ"}],
         push={"ok": False, "html_link": "", "reason": "claude が見つかりません"},
     )
 
@@ -595,11 +595,11 @@ def test_the_prompt_never_carries_the_raw_slack_text() -> None:
     from manor import calendar as calendar_mod
 
     prompt = calendar_mod.build_push_prompt(
-        calendar_id="C", start="S", end="E", title="予備審査", tool="T"
+        calendar_id="C", start="S", end="E", title="打ち合わせ", tool="T"
     )
 
     assert "#cal" not in prompt          # 接頭辞ごと渡していない
-    assert "予備審査" in prompt           # 題名は値として入る
+    assert "打ち合わせ" in prompt           # 題名は値として入る
     assert "文字どおりのデータ" in prompt  # 指示として読むなと明示している
 
 
@@ -708,26 +708,26 @@ def test_free_text_is_accepted_when_the_strict_parse_fails(
 ) -> None:
     """**自由文も受ける**（v1 の `#cal <自由文（日時を含む）>`）。
 
-    主人のご質問（2026-09-06）:「`#cal 9/9の14時から対面で予備審査` というと
+    主人のご質問（2026-09-06）:「`#cal 9/9の14時から対面で打ち合わせ` というと
     カレンダーに登録されますか？」——決め打ちでは読めない形なので、読み取りへ落ちる。
     """
     monkeypatch.setenv("MANOR_TODAY", "2026-09-06")
     posted = _setup(
         home, monkeypatch, leak_terms,
-        [{"ts": "4000.0001", "text": "#cal 9/9の14時から対面で予備審査"}],
+        [{"ts": "4000.0001", "text": "#cal 9/9の14時から対面で打ち合わせ"}],
         push={"ok": True, "html_link": "https://www.google.com/calendar/event?eid=zz", "reason": ""},
     )
     monkeypatch.setattr(
         slack_mod, "_extract_when",
         lambda body: {"ok": True, "on": "2026-09-09", "at": "14:00", "end_on": None,
-                      "end_at": None, "place": "対面", "text": "予備審査", "freeform": True},
+                      "end_at": None, "place": "対面", "text": "打ち合わせ", "freeform": True},
     )
 
     result = slack_mod.intake(home)
 
     assert result["taken"][0]["kind"] == "cal"
     row = conn.execute("SELECT start, title FROM secretary_event").fetchone()
-    assert (row["start"], row["title"]) == ("2026-09-09T14:00", "予備審査")
+    assert (row["start"], row["title"]) == ("2026-09-09T14:00", "打ち合わせ")
     assert "対面" in str(posted[0]["text"])
 
 
@@ -758,7 +758,7 @@ def test_the_reply_says_how_it_was_interpreted_and_which_calendar(
     monkeypatch.setenv("MANOR_TODAY", "2026-09-06")
     link = "https://www.google.com/calendar/event?eid=qq"
     posted = _setup(
-        home, monkeypatch, leak_terms, [{"ts": "4000.0003", "text": "#cal 9/9 14:00 予備審査"}],
+        home, monkeypatch, leak_terms, [{"ts": "4000.0003", "text": "#cal 9/9 14:00 打ち合わせ"}],
         push={"ok": True, "html_link": link, "reason": ""},
     )
 
@@ -797,13 +797,13 @@ def test_the_extractor_verifies_the_shape(home: Path, monkeypatch: pytest.Monkey
 @pytest.mark.parametrize(
     ("text", "should_fall_through"),
     [
-        ("9/9 14:00 予備審査", False),        # 決め打ちで完全に読めている
+        ("9/9 14:00 打ち合わせ", False),        # 決め打ちで完全に読めている
         ("10/1 東京出張", False),             # 時刻の匂いが無い＝終日でよい
         ("明日", False),                      # 本文が無いだけ（読み取りに回しても生えない）
         ("9/3 18時半 歯医者", True),          # ⚠ 読めたつもりで時刻を取りこぼしている
         ("9/9 14時から打ち合わせ", True),      # 同上
         ("そのうち 打ち合わせ", True),          # 日付が読めない
-        ("9/9の14時から対面で予備審査", True),  # 自由文
+        ("9/9の14時から対面で打ち合わせ", True),  # 自由文
     ],
 )
 def test_when_to_fall_through_to_the_extractor(text: str, should_fall_through: bool) -> None:

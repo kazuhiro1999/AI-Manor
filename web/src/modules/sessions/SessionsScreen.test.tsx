@@ -4,9 +4,9 @@ import { SessionCard, groupSessions, minutesAgo, type RemoteSession } from "./Se
 
 const base: RemoteSession = {
   session_id: "s1",
-  machine: "LAB-PC",
+  machine: "WORK-PC",
   activity: "review",
-  title: "ダンス評価: onnx 統合",
+  title: "サンプルアプリ: ログイン画面",
   phase: "implemented",
   phase_label: "実装済",
   progress: 75,
@@ -17,11 +17,11 @@ const base: RemoteSession = {
   next_action: "B 段に着手",
   note: "後半3動作まで",
   project_id: "P4",
-  project_title: "XR Dance Academy",
+  project_title: "サンプルアプリ",
   linked: true,
   task_id: "T80",
   task_title: "10 動作の onnx",
-  repo_name: "dance-eval",
+  repo_name: "sample-app",
   branch: "main",
   reported: true,
   last_event_at: new Date().toISOString(),
@@ -31,7 +31,7 @@ const base: RemoteSession = {
 describe("SessionCard", () => {
   it("見出し・段階・進捗・主人の次の一手を出す", () => {
     render(<SessionCard s={base} />);
-    expect(screen.getByText("ダンス評価: onnx 統合")).toBeTruthy();
+    expect(screen.getByText("サンプルアプリ: ログイン画面")).toBeTruthy();
     expect(screen.getByText("一区切り")).toBeTruthy();
     expect(screen.getByText("75%")).toBeTruthy();
     expect(screen.getByText("実機で動作確認")).toBeTruthy();
@@ -41,7 +41,7 @@ describe("SessionCard", () => {
 
   it("未紐づけはリポジトリ名で、報告がまだなら報告待ちを出す", () => {
     render(<SessionCard s={{ ...base, linked: false, project_id: null, reported: false, title: "" }} />);
-    expect(screen.getByText("dance-eval（未紐づけ）")).toBeTruthy();
+    expect(screen.getByText("sample-app（未紐づけ）")).toBeTruthy();
     expect(screen.getByText(/報告待ち/)).toBeTruthy();
     expect(screen.queryByRole("progressbar")).toBeNull();
   });
@@ -73,7 +73,7 @@ describe("全文の表示", () => {
     expect(screen.getByText(long.note).getAttribute("title")).toBe(long.note);
     fireEvent.click(container.querySelector("article")!);
     expect(container.querySelector("article")!.className).toContain("is-expanded");
-    expect(screen.getByText("dance-eval (main)")).toBeTruthy();
+    expect(screen.getByText("sample-app (main)")).toBeTruthy();
   });
 });
 

@@ -53,16 +53,16 @@ def test_idea_guesses_the_project_from_its_title(home_path: Path) -> None:
 
     assert cli.main(["init"]) == 0
     conn = db.connect(home_path)
-    project_mod.add(conn, "vra", "VRAcademy 2台同期収録（会社）", kind="会社")
+    project_mod.add(conn, "shop", "SampleShop サイト改修（会社）", kind="会社")
     conn.commit()
 
     task_id = slack_mod._create_from_intake(
-        conn, kind="idea", body="VRAcademyの意見箱への導線を増やしてほしい"
+        conn, kind="idea", body="SampleShopの問い合わせ導線を増やしてほしい"
     )
     conn.commit()
 
     row = conn.execute("SELECT project_id FROM task WHERE id = ?", (task_id,)).fetchone()
-    project_row = conn.execute("SELECT id FROM project WHERE code = 'vra'").fetchone()
+    project_row = conn.execute("SELECT id FROM project WHERE code = 'shop'").fetchone()
     assert row["project_id"] == project_row["id"]
 
 

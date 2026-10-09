@@ -45,14 +45,14 @@
 {"v": 1, "event_id": "uuid4", "kind": "session_start|prompt|stop|progress|session_end",
  "at": "2026-10-09T14:03:11+09:00",
  "machine": "LAB-PC", "session_id": "<Claude Code の session_id>",
- "cwd": "C:/…/dance-eval", "repo": {"remote": "github.com/owner/dance-eval", "branch": "feat/onnx"},
+ "cwd": "C:/…/sample-app", "repo": {"remote": "github.com/owner/sample-app", "branch": "feat/login"},
  "report": null}
 ```
 
 `kind = "progress"` のときだけ `report` が入る:
 
 ```json
-{"title": "ダンス評価: 10動作の onnx を統合", "project": "p4", "task": "T80",
+{"title": "サンプルアプリ: ログイン画面を実装", "project": "p4", "task": "T80",
  "phase": "implementing", "progress": 60,
  "human_next": "実機で動作確認", "note": "後半3動作の推論まで通った"}
 ```
@@ -109,7 +109,7 @@
 - manor は取り込みのたびに中継の **`directory`** シートを書き直す: 紐づけ（remote → project）・
   プロジェクトの名前・**未完了タスクの番号と題名と現在地**。
 - 送る側は SessionStart でそのリポジトリの行を受け取り、注入に含める
-  （「このリポジトリは p4 XR Dance Academy。未完了: T80 10動作の onnx を導入…」）。
+  （「このリポジトリは p4 サンプルアプリ。未完了: T80 ログイン画面を実装…」）。
   これで Claude が `task` を**選んで**報告できる（manor が推測で結ばない）。
 - 1つのリポジトリが複数のプロジェクトに当たる場合は `remote_repo_link` を複数行にし、注入で候補を全部出す。
 
@@ -132,14 +132,14 @@
 - **リアルタイム**: `GET /api/v1/sessions` は、前回の取り込みから 10 秒以上経っていれば先に pull してから返す
   （背景のスレッドを持たない。画面が開いている間だけ中継を叩く）。画面は 10 秒おきに読む。
 - 起動時の hook（`manor active`）でも1回 pull し、「■ 他のPCのセッション」の欄を足す
-  （`LAB-PC｜XR Dance: 10動作の onnx 統合｜実装中 60%｜あなたの番: 実機で動作確認`。終了・24時間以上前は出さない）。
+  （`WORK-PC｜サンプルアプリ: ログイン画面｜実装中 60%｜あなたの番: 実機で動作確認`。終了・24時間以上前は出さない）。
 
 ### 7.3 タスクへの反映
 
 - `task` 付きの `progress` で **phase が変わったとき**だけ、そのタスクの「現在地」を1文で書き直す
   （`manor task set <id> --now "[LAB-PC] <title>：実装中（60%）。主人の次: 実機で動作確認"`）。同じ段階の
   進捗の数字だけの変化では書かない（記録が騒がしくならないように）。
-- `phase = done` は**自動で完了にしない**。`manor active` に「LAB-PC が T80 を完了と報告——検分して閉じる」を
+- `phase = done` は**自動で完了にしない**。`manor active` に「WORK-PC が T80 を完了と報告——検分して閉じる」を
   出し、執事が確かめてから `manor task status done`（委譲の報告と同じ扱い）。
 
 ### 7.4 鍵
@@ -178,7 +178,7 @@
 - 経路 `/sessions`、上の帯に「セッション」。API は `GET /api/v1/sessions?include_ended=0`。
 - **グリッド**（幅に応じて 1〜4 列のカード）。1枚のカード:
   - 上段: PC名のチップ・活動の状態（§4.2 の点と語）・最終更新（「3分前」）
-  - **見出し**（大きく）／その下に紐づけ（`p4 XR Dance Academy › T80`。未紐づけなら「未紐づけ」）
+  - **見出し**（大きく）／その下に紐づけ（`p4 サンプルアプリ › T80`。未紐づけなら「未紐づけ」）
   - **今やっていること**: 段階のチップ（色分け）＋ `note`（1行で切る）
   - **進捗**: プログレスバーと %
   - **あなたの次**: `human_next`（空なら「なし」）。`your_turn` のカードはここを強調

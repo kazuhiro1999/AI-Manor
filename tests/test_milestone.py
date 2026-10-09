@@ -20,7 +20,7 @@ from manor import project as project_mod
 def test_milestone_done_does_not_touch_the_date(home_path: Path) -> None:
     """済みにしても**日付は書き換えない**。
 
-    主人「予備審査の発表練習は終わったので完了に」——節目に状態が無かったので、C8 を
+    主人「発表練習は終わったので完了に」——節目に状態が無かったので、C8 を
     黙らせる唯一の道が「日付を書き換える」（履歴を偽る）だった。表せない事実があるなら
     機構のほうを直す、という判断でこの列を足した。
     """

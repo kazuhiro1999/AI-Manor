@@ -34,7 +34,7 @@ def test_normalize_remote_folds_spellings(url: str) -> None:
 
 
 def test_repo_key_falls_back_to_folder() -> None:
-    assert mr.repo_key(None, "C:/work/Dance-Eval") == "dir:dance-eval"
+    assert mr.repo_key(None, "C:/work/Sample-App") == "dir:sample-app"
     assert mr.normalize_remote("C:/local/path") is None
 
 

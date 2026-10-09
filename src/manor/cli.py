@@ -538,7 +538,7 @@ def cmd_milestone_list(conn, home, args) -> object:
 
 def cmd_milestone_done(conn, home, args) -> object:
     """節目を「済んだ」にする。**日付は書き換えない**——「その日に予定し、済んだ」を
-    そのまま残す（執事の裁定 2026-09-05。主人「予備審査の発表練習は終わったので完了に」）。
+    そのまま残す（執事の裁定 2026-09-05。主人「発表練習は終わったので完了に」）。
     """
     changed = graph.milestone_done(conn, args.id)
     if args.json:
