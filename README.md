@@ -7,7 +7,7 @@
 
 執事に話しかけると、タスクを預かり、段取りを決め、必要なら部下に振ります。部下は台所・家事・家計・予定を
 それぞれ担当し、献立を考え、買い物リストを作り、消耗品の残量を見て、支出を記録し、今日の予定を並べます。
-やり取りはすべて手元のデータベースに残り、Web アプリからも見られます。**外部のサービスへは何も送りません。**
+やり取りはすべて手元のデータベースに残り、Web アプリからも見られます。**既定では外部のサービスへ何も送りません。**
 
 ![ダッシュボード](docs/screenshots/dashboard.png)
 
@@ -71,7 +71,7 @@ git config core.hooksPath .githooks   # git 管理下に置くなら（漏れを
 | 誰 | 頼めること（例） | CLI グループ |
 |---|---|---|
 | 執事 butler | タスク・プロジェクトの管理、判断待ちの裁定、部下への委譲、整合検査、文脈の組み立て | `manor task` `project` `decision` `handoff` `check` `ctx` |
-| 料理長 chef | 在庫、献立の提案・記録、買い物リスト、好み・アレルギー | `manor chef` |
+| 料理長 chef | 在庫、献立の提案・記録、買い物リスト、好み・アレルギー、**レシピ帳**（URL・YouTube から取り込み、栄養の計算、主菜に合う副菜の提案） | `manor chef` |
 | 家政婦 housekeeper | 家事当番、消耗品の残量、設備の手入れ周期、ゴミの日 | `manor house` |
 | 家令 steward | 支出・収入、定期支払いの期日、予算との差、月別の傾向、**レシートの読み取り**（撮る→自動登録→あとで直す） | `manor money` |
 | 秘書 secretary | 予定・控え、日次一覧、inbox の仕分け、相対日付の解決 | `manor sec` |
@@ -93,6 +93,7 @@ git config core.hooksPath .githooks   # git 管理下に置くなら（漏れを
 | **起動ショートカット** `manor shortcut create` | デスクトップに作る。開くと止めて→ビルド→起動→ブラウザ | [`docs/shortcut.md`](docs/shortcut.md) |
 | **家庭のルール** `manor rule` | 門限・来客対応などを scope と tag つきで置く | [`docs/rules.md`](docs/rules.md) |
 | **利用者の切り替え** | 同居の相手を「設定 → 利用者」で足し、右上の 👤 から切り替える。タスク・予定・Slack・カレンダーは人ごと、台所などは共通。執事自身の件は「執事」の机に | [ADR-014](docs/design/ADR-014_users.md) |
+| **セッション同期** `manor remote` | 複数の PC で動かしている Claude Code のセッションの進捗を、Web の「セッション」頁に並べる。中継は**自分の** Google Apps Script（任意・既定オフ） | [ADR-025](docs/design/ADR-025_remote_session_sync.md) |
 | **日本語 / 英語** | 画面もコマンドも切り替えられます（「設定 → 言語」） | [ADR-012](docs/design/ADR-012_calendar_and_i18n.md) |
 
 声（VOICEVOX）・Slack・Notion は任意の拡張機能です。**1つも入れなくても完全に動きます**
@@ -100,7 +101,8 @@ git config core.hooksPath .githooks   # git 管理下に置くなら（漏れを
 
 ## データとプライバシー
 
-- **外部へ送りません。** 手元の SQLite を読み書きするだけで、外へ出る操作は必ず承認待ちになります
+- **既定では外部へ送りません。** 手元の SQLite を読み書きするだけで、外へ出る操作は必ず承認待ちになります。
+  例外は自分で有効にした拡張機能（Slack・Notion・セッション同期）だけで、宛先は自分で設定した先に限られます
 - **あなたのデータは git に入りません。** `home/`（DB・呼び名・タスク・予定・家計）は既定で追跡外です
 - **コミット前に漏れを止めます。** `~/.manor/git-leak-terms.txt`（人名・案件名など。**リポジトリの外**）に
   載せた語が混ざっていると、pre-commit がコミットを止めます

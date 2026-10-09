@@ -8,7 +8,7 @@
 Talk to the butler and they take the task, work out the order of things, and hand it to the right member of
 staff. The staff cover the kitchen, the chores, the money, and the calendar: they plan meals, keep the
 shopping list, watch what's running low, record what you spend, and lay out your day. Everything is kept in a
-database on your machine and shown in a local web app. **Nothing is sent anywhere.**
+database on your machine and shown in a local web app. **By default, nothing is sent anywhere.**
 
 ![Dashboard](docs/screenshots/dashboard.png)
 
@@ -74,7 +74,7 @@ Pantry by expiry, shopping list by aisle, meals kept as a log. More screens in
 | Who | Ask them for (examples) | CLI group |
 |---|---|---|
 | Butler | Tasks & projects, ruling on pending approvals, delegating to staff, consistency checks, assembling context | `manor task` `project` `decision` `handoff` `check` `ctx` |
-| Chef | Pantry, meal suggestions & logging, shopping lists, tastes and allergies | `manor chef` |
+| Chef | Pantry, meal suggestions & logging, shopping lists, tastes and allergies, **recipe book** (import from a URL or YouTube, nutrition, side dishes that suit a main) | `manor chef` |
 | Housekeeper | Chore rotation, supply levels, maintenance cycles, bin day | `manor house` |
 | Steward | Spending & income, recurring due dates, budget variance, monthly trends, **receipt scanning** (shoot → auto-register → fix later) | `manor money` |
 | Secretary | Calendar, daily agenda, inbox triage, resolving relative dates | `manor sec` |
@@ -96,6 +96,7 @@ asked; `manor talk <name>` talks to one directly, without the butler.
 | **Desktop shortcut** `manor shortcut create` | Stops any running server, rebuilds, starts, opens the browser | [`docs/shortcut.md`](docs/shortcut.md) |
 | **Switching users** | Add a housemate under Settings → Users and switch from the 👤 chip at the top right. Tasks, events, Slack and calendar are per person; kitchen and the like are shared. The butler's own work lives on the "butler" desk | [ADR-014](docs/design/ADR-014_users.md) |
 | **House rules** `manor rule` | Curfews, how to handle visitors, and so on, with scope and tags | [`docs/rules.md`](docs/rules.md) |
+| **Session sync** `manor remote` | Shows the progress of Claude Code sessions running on your other PCs on the web app's Sessions page. Relayed through **your own** Google Apps Script (optional, off by default) | [ADR-025](docs/design/ADR-025_remote_session_sync.md) |
 | **English / Japanese** | Both the app and the CLI (Settings → Language) | [ADR-012](docs/design/ADR-012_calendar_and_i18n.md) |
 
 Voice (VOICEVOX), Slack and Notion are optional extensions. **Install none and it still works completely**
@@ -103,8 +104,9 @@ Voice (VOICEVOX), Slack and Notion are optional extensions. **Install none and i
 
 ## Data and privacy
 
-- **Nothing leaves your machine.** It reads and writes a local SQLite database, and anything outbound waits
-  for your approval
+- **Nothing leaves your machine by default.** It reads and writes a local SQLite database, and anything outbound
+  waits for your approval. The only exceptions are extensions you turn on yourself (Slack, Notion, session sync),
+  and they send only to destinations you configure
 - **Your data is not in git.** `home/` — the database, what to call you, tasks, calendar, finances — is
   untracked by default
 - **Leaks are stopped before they're committed.** Put names and other sensitive terms in
