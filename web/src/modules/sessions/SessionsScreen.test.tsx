@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
-import { SessionCard, groupSessions, minutesAgo, type RemoteSession } from "./SessionsScreen";
+import { SessionCard, groupSessions, minutesAgo, optimistic, type RemoteSession } from "./SessionsScreen";
 
 const base: RemoteSession = {
   session_id: "s1",
@@ -125,6 +125,16 @@ describe("並べ方", () => {
     render(<SessionCard s={{ ...base, activity: "closed", closed: true }} onAck={(_, a) => calls.push(a)} />);
     fireEvent.click(screen.getByText("再開"));
     expect(calls).toEqual(["close", "reopen"]);
+  });
+});
+
+describe("押した瞬間の見かけ", () => {
+  it("完了・保留・終了・戻すを、裏の返事を待たずに当てる", () => {
+    expect(optimistic(base, "done")).toMatchObject({ human_next_done: true, activity: "waiting" });
+    expect(optimistic(base, "hold")).toMatchObject({ held: true, activity: "hold" });
+    expect(optimistic({ ...base, held: true }, "unhold")).toMatchObject({ held: false, activity: "review" });
+    expect(optimistic(base, "close")).toMatchObject({ closed: true, activity: "closed" });
+    expect(optimistic({ ...base, human_next_done: true }, "reopen")).toMatchObject({ activity: "waiting" });
   });
 });
 

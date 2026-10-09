@@ -422,3 +422,26 @@ def test_spawn_flush_never_opens_a_console(monkeypatch) -> None:
     flags = seen["creationflags"]
     assert not flags & 0x00000008  # DETACHED_PROCESS（venv の中継ぎ越しに窓が開く）を使わない
     assert flags & 0x08000000  # CREATE_NO_WINDOW
+
+
+def test_ack_is_queued_and_sent_in_background(conn, home, fake_relay, monkeypatch) -> None:
+    fake, url = fake_relay
+    secrets_mod.set("remote", "endpoint", url)
+    secrets_mod.set("remote", "admin_token", "ADMIN")
+    monkeypatch.setattr("manor.slack.scan_for_leak_terms", lambda text: {"ok": True})
+    acked = []
+    orig = fake.handle
+    fake.handle = lambda req: (acked.append(req["text"]) or {"ok": True}) if req.get("op") == "ack" else orig(req)
+    fake.down = True
+    relay.queue_ack(home, "S", "Drive を掃除")
+    assert relay.flush_acks(home, timeout=2) == 0  # 届かなければ待ち行列に残る
+    assert relay.load_state(home)["pending_acks"] == [["S", "Drive を掃除"]]
+    fake.down = False
+    assert relay.pull_in_background(home, force=True)
+    import time as _t
+    deadline = _t.monotonic() + 10  # time.sleep は fixture が空にしているので、時計で待つ
+    while relay._PULL_RUNNING.locked() and _t.monotonic() < deadline:
+        pass
+    assert acked == ["Drive を掃除"], relay.LAST_BACKGROUND
+    assert relay.load_state(home)["pending_acks"] == []
+    assert relay.LAST_BACKGROUND["ok"]

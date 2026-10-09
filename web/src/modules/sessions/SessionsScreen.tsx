@@ -267,15 +267,35 @@ function savePrefs(p: ViewPrefs): void {
   }
 }
 
+/** 押した瞬間にカードへ当てる見かけの変化（裏の要求が返るまでの間）。 */
+export function optimistic(s: RemoteSession, action: CardAction): Partial<RemoteSession> {
+  switch (action) {
+    case "done":
+      return { human_next_done: true, held: false, activity: "waiting" };
+    case "hold":
+      return { held: true, activity: "hold" };
+    case "unhold":
+      return { held: false, activity: s.human_next && !s.human_next_done ? "review" : "waiting" };
+    case "close":
+      return { closed: true, activity: "closed" };
+    case "reopen":
+      return { closed: false, activity: s.human_next && !s.human_next_done ? "review" : "waiting" };
+  }
+}
+
 export function SessionsScreen() {
   const t = useT();
   const [showEnded, setShowEnded] = useState(false);
   const [prefs, setPrefs] = useState<ViewPrefs>(loadPrefs);
+  const [overrides, setOverrides] = useState<Record<string, Partial<RemoteSession>>>({});
   const { data, error, loading, reload } = usePolling<SessionsResponse>(
     `/sessions?include_ended=${showEnded ? 1 : 0}`,
     POLL_MS
   );
-  const items = data?.items ?? [];
+  const items = useMemo(
+    () => (data?.items ?? []).map((s) => (overrides[s.session_id] ? { ...s, ...overrides[s.session_id] } : s)),
+    [data, overrides]
+  );
   const groups = useMemo(
     () => groupSessions(items, prefs.mode, (a) => t(ACTIVITY_KEY[a])),
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -293,6 +313,8 @@ export function SessionsScreen() {
     });
   const ack = async (id: string, action: CardAction) => {
     const base = `/sessions/${encodeURIComponent(id)}`;
+    const current = items.find((s) => s.session_id === id);
+    if (current) setOverrides((o) => ({ ...o, [id]: { ...o[id], ...optimistic(current, action) } }));
     try {
       if (action === "done") await api(`${base}/ack`, { method: "POST" });
       else if (action === "hold" || action === "unhold")
@@ -300,6 +322,11 @@ export function SessionsScreen() {
       else await api(`${base}/close`, { method: action === "close" ? "POST" : "DELETE" });
     } finally {
       await reload();
+      setOverrides((o) => {
+        const next = { ...o };
+        delete next[id];
+        return next;
+      });
     }
   };
 

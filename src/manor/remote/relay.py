@@ -16,6 +16,7 @@ import secrets as pysecrets
 import shutil
 import sqlite3
 import subprocess
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -59,6 +60,7 @@ def load_state(home: Path) -> dict[str, Any]:
 
 
 def save_state(home: Path, state: dict[str, Any]) -> None:
+    # 裏の取り込みと画面の要求が同じファイルを書くので、名前を変えて置き換える前に書き終える。
     path = _state_path(home)
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(".tmp")
@@ -105,11 +107,12 @@ def call(payload: dict[str, Any], *, timeout: float = 20.0) -> dict[str, Any]:
 def pull(conn: sqlite3.Connection, home: Path, *, min_interval: float = 0.0,
          push_directory: bool = True, timeout: float = 20.0) -> dict[str, Any]:
     """中継から取り込む。`min_interval` 秒以内に前回があれば何もしない（画面から呼ぶとき）。"""
-    state = load_state(home)
-    if min_interval and time.time() - float(state.get("last_pull_ts") or 0) < min_interval:
-        return {"skipped": True}
-    state["last_pull_ts"] = time.time()
-    save_state(home, state)
+    with _STATE_LOCK:
+        state = load_state(home)
+        if min_interval and time.time() - float(state.get("last_pull_ts") or 0) < min_interval:
+            return {"skipped": True}
+        state["last_pull_ts"] = time.time()
+        save_state(home, state)
     since = int(state.get("cursor") or 0)
     total = {"accepted": 0, "duplicates": 0, "sessions": [], "phase_changes": []}
     for _ in range(PULL_MAX_ROUNDS):
@@ -122,8 +125,10 @@ def pull(conn: sqlite3.Connection, home: Path, *, min_interval: float = 0.0,
         total["phase_changes"] += result["phase_changes"]
         since = int(out.get("last_seq") or since)
         conn.commit()
-        state["cursor"] = since
-        save_state(home, state)
+        with _STATE_LOCK:
+            state = load_state(home)
+            state["cursor"] = since
+            save_state(home, state)
         if not out.get("more"):
             break
     total["reflected"] = reflect_tasks(conn, total["phase_changes"])
@@ -197,18 +202,89 @@ def push_directory_if_changed(conn: sqlite3.Connection, home: Path) -> str:
         else:
             skipped += 1
     digest = hashlib.sha256(json.dumps(safe, ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest()
-    state = load_state(home)
-    if state.get("directory_digest") == digest:
+    if load_state(home).get("directory_digest") == digest:
         return "unchanged"
     call({"op": "set_directory", "entries": safe})
-    state["directory_digest"] = digest
-    save_state(home, state)
+    with _STATE_LOCK:
+        state = load_state(home)
+        state["directory_digest"] = digest
+        save_state(home, state)
     return f"pushed {len(safe)}" + (f"（禁止語で {skipped} 件を外しました）" if skipped else "")
 
 
 def push_ack(session_id: str, text: str) -> None:
-    """「済んだ」を中継へ。そのセッションの次の発言のときに送る側が受け取り、Claude へ伝える。"""
+    """「完了」を中継へ。そのセッションの次の発言のときに送る側が受け取り、Claude へ伝える。"""
     call({"op": "ack", "session_id": session_id, "text": text, "done_at": util.now()})
+
+
+def queue_ack(home: Path, session_id: str, text: str) -> None:
+    """「完了」を送り出しの待ち行列へ（画面を待たせない。裏の取り込みが送る）。"""
+    with _STATE_LOCK:
+        state = load_state(home)
+        pending = [p for p in state.get("pending_acks") or [] if p != [session_id, text]]
+        pending.append([session_id, text])
+        state["pending_acks"] = pending[-200:]
+        save_state(home, state)
+
+
+def flush_acks(home: Path, *, timeout: float = 20.0) -> int:
+    """待ち行列の「完了」を中継へ送る。送れた分だけ外す（失敗した分は次の機会に）。"""
+    with _STATE_LOCK:
+        pending = list(load_state(home).get("pending_acks") or [])
+    sent = []
+    for item in pending:
+        try:
+            call({"op": "ack", "session_id": item[0], "text": item[1], "done_at": util.now()}, timeout=timeout)
+        except RelayError:
+            break
+        sent.append(item)
+    if sent:
+        with _STATE_LOCK:
+            state = load_state(home)
+            state["pending_acks"] = [p for p in state.get("pending_acks") or [] if p not in sent]
+            save_state(home, state)
+    return len(sent)
+
+
+#: 裏の取り込みは同時に1本だけ（画面の10秒おきの読み込みが重なっても中継を二重に叩かない）。
+_PULL_RUNNING = threading.Lock()
+_STATE_LOCK = threading.RLock()
+#: 直近の裏の取り込みの結果（画面に「中継に届かない」を出すため）。
+LAST_BACKGROUND: dict[str, Any] = {"ok": True, "error": None}
+
+
+def pull_in_background(home: Path, *, force: bool = False) -> bool:
+    """取り込みを裏のスレッドで走らせて、すぐ戻る（画面を中継の遅さに付き合わせない）。
+
+    戻り値は「新しく走らせたか」。既に走っている・間隔が詰まっている（force でない）なら何もしない。
+    """
+    if not configured():
+        return False
+    if not force and time.time() - float(load_state(home).get("last_pull_ts") or 0) < PULL_MIN_INTERVAL:
+        return False
+    if not _PULL_RUNNING.acquire(blocking=False):
+        return False
+
+    def run() -> None:
+        from .. import db as db_mod
+
+        try:
+            flush_acks(home)
+            conn = db_mod.connect(home)
+            try:
+                pull(conn, home)
+                conn.commit()
+                LAST_BACKGROUND.update(ok=True, error=None)
+            except Exception as exc:  # noqa: BLE001 - 裏の失敗は画面に出すだけ
+                conn.rollback()
+                LAST_BACKGROUND.update(ok=False, error=str(exc))
+            finally:
+                conn.close()
+        finally:
+            _PULL_RUNNING.release()
+
+    threading.Thread(target=run, name="manor-remote-pull", daemon=True).start()
+    return True
 
 
 # --- 鍵 ------------------------------------------------------------------------------------
