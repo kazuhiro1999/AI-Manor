@@ -5,13 +5,14 @@ import { SessionCard, minutesAgo, type RemoteSession } from "./SessionsScreen";
 const base: RemoteSession = {
   session_id: "s1",
   machine: "LAB-PC",
-  activity: "your_turn",
+  activity: "review",
   title: "ダンス評価: onnx 統合",
   phase: "implemented",
   phase_label: "実装済",
   progress: 75,
   human_next: "実機で動作確認",
   human_next_done: false,
+  next_action: "B 段に着手",
   note: "後半3動作まで",
   project_id: "P4",
   project_title: "XR Dance Academy",
@@ -32,7 +33,7 @@ describe("SessionCard", () => {
     expect(screen.getByText("実装済")).toBeTruthy();
     expect(screen.getByText("75%")).toBeTruthy();
     expect(screen.getByText("実機で動作確認")).toBeTruthy();
-    expect(screen.getByText("あなたの番")).toBeTruthy();
+    expect(screen.getByText("確認待ち")).toBeTruthy();
     expect(screen.getByRole("progressbar").getAttribute("aria-valuenow")).toBe("75");
   });
 
@@ -70,6 +71,18 @@ describe("全文の表示", () => {
     fireEvent.click(container.querySelector("article")!);
     expect(container.querySelector("article")!.className).toContain("is-expanded");
     expect(screen.getByText("dance-eval (main)")).toBeTruthy();
+  });
+});
+
+describe("推奨の次", () => {
+  it("確認待ちの間は控えめに、完了後は目立たせる", () => {
+    const { container, unmount } = render(<SessionCard s={base} />);
+    expect(screen.getByText("B 段に着手")).toBeTruthy();
+    expect(container.querySelector(".session-recommend.is-now")).toBeNull();
+    unmount();
+    const done = render(<SessionCard s={{ ...base, activity: "waiting", human_next_done: true }} />);
+    expect(done.container.querySelector(".session-recommend.is-now")).not.toBeNull();
+    expect(screen.getByText("指示待ち")).toBeTruthy();
   });
 });
 

@@ -723,7 +723,7 @@ table.grid td.col-wide, table.grid th.col-wide { min-width: 220px; }
   padding: 14px 16px 12px; display: flex; flex-direction: column; gap: 8px; min-width: 0;
   box-shadow: var(--shadow); border-left: 4px solid var(--border);
 }
-.session-card.act-your_turn { border-left-color: var(--warn); }
+.session-card.act-review { border-left-color: var(--warn); }
 .session-card.act-working { border-left-color: var(--ok); }
 .session-card.act-idle, .session-card.act-ended { opacity: 0.72; }
 .session-top { display: flex; align-items: center; gap: 8px; font-size: 12px; }
@@ -732,7 +732,7 @@ table.grid td.col-wide, table.grid th.col-wide { min-width: 220px; }
   padding: 1px 9px; font-weight: 600; color: var(--text);
 }
 .session-activity { display: inline-flex; align-items: center; gap: 5px; color: var(--text-dim); }
-.session-activity.act-your_turn { color: var(--warn); font-weight: 600; }
+.session-activity.act-review { color: var(--warn); font-weight: 600; }
 .session-activity.act-working { color: var(--ok); }
 .session-dot { width: 8px; height: 8px; border-radius: 50%; background: currentColor; display: inline-block; }
 .session-activity.act-working .session-dot { animation: session-pulse 1.4s ease-in-out infinite; }
@@ -763,7 +763,7 @@ table.grid td.col-wide, table.grid th.col-wide { min-width: 220px; }
 .session-next { display: flex; gap: 8px; font-size: 13px; align-items: baseline; }
 .session-next-label { flex: 0 0 auto; font-size: 11px; color: var(--text-faint); }
 .session-next.has-next { color: var(--text); font-weight: 600; }
-.act-your_turn .session-next.has-next {
+.act-review .session-next.has-next {
   background: var(--warn-bg); color: var(--warn); border-radius: 6px; padding: 4px 8px; margin: 0 -4px;
 }
 .session-foot { font-size: 11px; color: var(--text-faint); }
@@ -784,3 +784,10 @@ table.grid td.col-wide, table.grid th.col-wide { min-width: 220px; }
 .session-detail { display: grid; grid-template-columns: auto 1fr; gap: 2px 10px; margin: 0; font-size: 11px; color: var(--text-dim); cursor: default; }
 .session-detail dt { color: var(--text-faint); }
 .session-detail dd { margin: 0; overflow-wrap: anywhere; }
+.session-card.act-waiting { border-left-color: var(--info); }
+.session-activity.act-waiting { color: var(--info); }
+.session-recommend { display: flex; gap: 8px; font-size: 12px; align-items: baseline; color: var(--text-dim); }
+.session-recommend.is-now {
+  background: var(--bg-panel-2); border: 1px dashed var(--info); color: var(--text); font-weight: 600;
+  border-radius: 6px; padding: 4px 8px; margin: 0 -4px;
+}

@@ -134,16 +134,29 @@ def test_ingest_folds_activity_and_report(conn, monkeypatch) -> None:
     rows = store.list_sessions(conn)
     assert rows[0]["activity"] == "working" and rows[0]["progress"] == 40 and rows[0]["title"] == "評価の統合"
     store.ingest(conn, [_ev("stop", "2026-10-09T12:06:00+09:00")])
-    assert store.list_sessions(conn)[0]["activity"] == "your_turn"
+    assert store.list_sessions(conn)[0]["activity"] == "waiting"  # 主人の確認が要るものが無い
     monkeypatch.setenv("MANOR_NOW", "2026-10-09T13:00:00")
     assert store.list_sessions(conn)[0]["activity"] == "idle"
 
 
-def test_ordering_puts_your_turn_first(conn, monkeypatch) -> None:
+def test_review_comes_first_then_waiting_after_ack(conn, monkeypatch) -> None:
     monkeypatch.setenv("MANOR_NOW", "2026-10-09T12:10:00")
-    store.ingest(conn, [_ev("prompt", "2026-10-09T12:09:00+09:00", sid="a"),
-                        _ev("stop", "2026-10-09T12:00:00+09:00", sid="b")])
-    assert [r["session_id"] for r in store.list_sessions(conn)] == ["b", "a"]
+    store.ingest(conn, [
+        _ev("prompt", "2026-10-09T12:09:00+09:00", sid="a"),
+        _ev("progress", "2026-10-09T11:00:00+09:00", sid="b",
+            report={"title": "A 段", "phase": "implemented", "human_next": "実機で確認", "next_action": "B 段に着手"}),
+        _ev("stop", "2026-10-09T11:01:00+09:00", sid="b"),
+    ])
+    rows = store.list_sessions(conn)
+    assert [(r["session_id"], r["activity"]) for r in rows] == [("b", "review"), ("a", "working")]
+    assert rows[0]["next_action"] == "B 段に着手"  # 確認待ちは時間が経っても休止にしない
+    store.ack(conn, "b")
+    b = [r for r in store.list_sessions(conn) if r["session_id"] == "b"][0]
+    assert b["activity"] == "idle" and b["human_next_done"]  # 完了後は指示待ち（古ければ休止）
+    store.ingest(conn, [_ev("stop", "2026-10-09T12:09:30+09:00", sid="b")])
+    b = [r for r in store.list_sessions(conn) if r["session_id"] == "b"][0]
+    assert b["activity"] == "waiting"
+    assert any("推奨の次: B 段に着手" in line for line in store.format_active(conn))
 
 
 def test_link_directory_and_task_reflection(conn, monkeypatch) -> None:

@@ -1,7 +1,7 @@
 /* manor web — セッションの一覧（ADR-025 §10）。
  * 他のPCを含む Claude Code のセッションを、1枚1セッションのカードでグリッドに並べる。
  * 主人が見たいのは4つ: 見出し（何関連か）・今やっていること（段階）・その進捗・主人の次の一手。
- * 活動の状態（作業中／あなたの番／休止）は hook の合図から機械的に決まる（申告ではない）。
+ * 活動の状態（作業中／確認待ち／指示待ち／休止）は hook の合図から機械的に決まる（申告ではない）。
  *
  * 見出し・一言・主人の次の一手は各セッションの Claude が書いた自由文なので訳さない
  * （NightPanel と同じ扱い）。
@@ -12,7 +12,7 @@ import { api } from "../../app/api";
 import { ScreenHeader } from "../../components/ScreenHeader";
 import { useT, type TranslationKey } from "../../app/i18n";
 
-export type Activity = "your_turn" | "working" | "idle" | "ended";
+export type Activity = "review" | "working" | "waiting" | "idle" | "ended";
 
 export interface RemoteSession {
   session_id: string;
@@ -24,6 +24,7 @@ export interface RemoteSession {
   progress: number | null;
   human_next: string;
   human_next_done: boolean;
+  next_action: string;
   note: string;
   project_id: string | null;
   project_title: string | null;
@@ -45,8 +46,9 @@ export interface SessionsResponse {
 const POLL_MS = 10000;
 
 const ACTIVITY_KEY: Record<Activity, TranslationKey> = {
-  your_turn: "sessions.activity.yourTurn",
+  review: "sessions.activity.review",
   working: "sessions.activity.working",
+  waiting: "sessions.activity.waiting",
   idle: "sessions.activity.idle",
   ended: "sessions.activity.ended",
 };
@@ -155,6 +157,12 @@ export function SessionCard({ s, onAck }: { s: RemoteSession; onAck?: (id: strin
             )}
             {s.human_next_done && <span className="session-done-mark">{t("sessions.next.doneMark")}</span>}
           </div>
+          {s.next_action && (
+            <div className={`session-recommend${s.human_next_done || !s.human_next ? " is-now" : ""}`}>
+              <span className="session-next-label">{t("sessions.recommend.label")}</span>
+              <span className="session-next-text" title={s.next_action}>{s.next_action}</span>
+            </div>
+          )}
           <footer className="session-foot">{t("sessions.reportedAgo", { ago: ago(s.last_report_at) })}</footer>
         </>
       ) : (
@@ -175,7 +183,7 @@ export function SessionsScreen() {
   const items = data?.items ?? [];
   const machines = useMemo(() => Array.from(new Set(items.map((s) => s.machine))).sort(), [items]);
   const shown = machine ? items.filter((s) => s.machine === machine) : items;
-  const yourTurn = items.filter((s) => s.activity === "your_turn").length;
+  const yourTurn = items.filter((s) => s.activity === "review").length;
   const ack = async (id: string) => {
     try {
       await api(`/sessions/${encodeURIComponent(id)}/ack`, { method: "POST" });

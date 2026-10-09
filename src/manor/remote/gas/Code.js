@@ -10,7 +10,7 @@
 
 var EVENT_COLUMNS = ['seq', 'event_id', 'at', 'received_at', 'machine', 'session_id', 'kind', 'payload'];
 var SESSION_COLUMNS = ['session_id', 'machine', '状態', '見出し', '段階', '進捗', '主人の次', 'タスク',
-  'プロジェクト', '一言', 'リポジトリ', 'ブランチ', '最終の合図', '最終の報告', '開始', '終了', 'cwd'];
+  'プロジェクト', '一言', 'リポジトリ', 'ブランチ', '最終の合図', '最終の報告', '開始', '終了', 'cwd', '推奨の次'];
 var MACHINE_COLUMNS = ['name', 'token_sha256', 'created_at', 'revoked_at'];
 var DIRECTORY_COLUMNS = ['key', 'json', 'updated_at'];
 // 主人がダッシュボードで「済んだ」を押した「あなたの次」。送る側が次の発言のときに受け取り、Claude に伝える。
@@ -19,7 +19,7 @@ var PHASE_LABELS = {
   investigating: '調査中', designing: '設計中', implementing: '実装中', fixing: '修正中',
   implemented: '実装済', testing: '試験中', blocked: '止まっている', done: '完了'
 };
-var ACTIVITY_LABELS = { session_start: '開始', prompt: '作業中', stop: 'あなたの番', session_end: '終了' };
+var ACTIVITY_LABELS = { session_start: '開始', prompt: '作業中', stop: '待ち', session_end: '終了' };
 var EVENT_RETENTION_DAYS = 30;
 var DEDUP_WINDOW = 3000;
 
@@ -208,8 +208,13 @@ function foldSessions_(events) {
       if (r.task) row[7] = r.task;
       if (r.project) row[8] = r.project;
       if (r.note !== undefined) row[9] = r.note;
+      if (r.next_action !== undefined) row[17] = r.next_action;
       row[13] = ev.at;
     }
+  }
+  values[0] = SESSION_COLUMNS.slice();  // 列が増えたときに見出しも追従させる
+  for (var k = 1; k < values.length; k++) {
+    while (values[k].length < SESSION_COLUMNS.length) values[k].push('');
   }
   sh.getRange(1, 1, values.length, SESSION_COLUMNS.length).setValues(values);
 }

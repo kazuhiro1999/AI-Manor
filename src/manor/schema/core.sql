@@ -366,6 +366,7 @@ CREATE TABLE IF NOT EXISTS remote_session (
   phase          TEXT NOT NULL DEFAULT '',
   progress       INTEGER,
   human_next     TEXT NOT NULL DEFAULT '',
+  next_action    TEXT NOT NULL DEFAULT '',-- 確認で問題が無ければ次にやること（Claude の推奨1つ）
   note           TEXT NOT NULL DEFAULT '',
   last_kind      TEXT NOT NULL DEFAULT '',-- 活動の状態の材料（progress 以外の最後の合図）
   started_at     TEXT,

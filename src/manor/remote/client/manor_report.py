@@ -59,6 +59,7 @@ PHASE_LABELS_JA: dict[str, str] = {
 
 TITLE_MAX = 40
 HUMAN_NEXT_MAX = 30
+NEXT_ACTION_MAX = 40
 NOTE_MAX = 120
 
 #: hook で待つ時間（秒）。SessionStart は紐づけ表も受け取るので少し長い。
@@ -456,7 +457,8 @@ def injection_text(cfg: dict[str, Any], session_id: str, git: dict[str, str | No
         "作業の区切り（段階が変わったとき・作業をしたターンを終える前）に、次を1回実行してください:",
         f'  {cmd} progress --session {session_id} --title "<何関連の作業か・{TITLE_MAX}字以内>" '
         '--phase <段階> --progress <0-100> --human-next "<主人が次にすること・'
-        f'{HUMAN_NEXT_MAX}字以内。無ければ空>" [--task <番号>] [--note "<一言>"]',
+        f'{HUMAN_NEXT_MAX}字以内。無ければ空>" --next-action "<主人の確認で問題が無ければ次にやること・'
+        f'推奨1つ・{NEXT_ACTION_MAX}字以内>" [--task <番号>] [--note "<一言>"]',
         f"段階: {phases}",
         "見出しは同じ作業の間は変えない。進捗はこの作業全体の到達度。主人の次の一手は、主人の手が要る"
         "こと（動作確認・ビルド・実機テスト・判断など）を具体的に。報告はダッシュボードに出るだけで、",
@@ -484,8 +486,9 @@ def new_acks(state: dict[str, Any], acks: object) -> list[str]:
 def ack_text(texts: list[str]) -> str:
     items = "・".join(f"「{t}」" for t in texts)
     return (f"【manor から】主人はダッシュボードで{items}を済ませたと記録しました。"
-            "済んだ前提で進め、次に報告するときは --human-next を今の状況に合わせて書き直してください"
-            "（無ければ空）。")
+            "確認は済み・問題なしとして扱い、主人が「進めて」等と言えば、前回の報告の推奨の次の一手"
+            "（--next-action）に着手してください。次に報告するときは --human-next と --next-action を"
+            "今の状況に合わせて書き直してください。")
 
 
 # --- Stop の催促 --------------------------------------------------------------------------
@@ -718,6 +721,8 @@ def build_report(args: argparse.Namespace, previous: dict[str, Any] | None) -> d
         "phase": phase or "",
         "progress": progress,
         "human_next": human_next or "",
+        "next_action": (_clip(args.next_action, NEXT_ACTION_MAX) if getattr(args, "next_action", None) is not None
+                        else prev.get("next_action", "")) or "",
         "project": args.project or prev.get("project"),
         "task": args.task or prev.get("task"),
         "note": _clip(args.note, NOTE_MAX) if args.note is not None else "",
@@ -857,6 +862,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--phase", choices=list(PHASES))
     p.add_argument("--progress", type=int)
     p.add_argument("--human-next", dest="human_next")
+    p.add_argument("--next-action", dest="next_action")
     p.add_argument("--project")
     p.add_argument("--task")
     p.add_argument("--note")
