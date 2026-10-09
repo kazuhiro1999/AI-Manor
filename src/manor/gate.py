@@ -86,7 +86,10 @@ _SKILLS_SCENARIOS = ("S1", "S8")
 #: （`layer1_files()`/`covered()` の検算がここを除外扱いにする）。
 #: - `butler/GROWTH.md`: 記録（ログ）であって規則ではない
 #: - `.claude/settings.local.json`: ④環境固有（CLAUDE.md の関心の分離表）
-_EXCLUDED: frozenset[str] = frozenset({"butler/GROWTH.md", ".claude/settings.local.json"})
+#: - `.claude/launch.json`: デスクトップ版のプレビュー起動設定（ポートは PC ごと。④）
+_EXCLUDED: frozenset[str] = frozenset(
+    {"butler/GROWTH.md", ".claude/settings.local.json", ".claude/launch.json"}
+)
 
 _OUT_DIR_RE = re.compile(r"結果一式:\s*(.+)\s*$")
 

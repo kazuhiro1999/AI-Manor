@@ -9,6 +9,7 @@ home/*
 
 # ── ④ 環境固有（PC・パス・サービスID・シークレット） ──
 .claude/settings.local.json
+.claude/launch.json
 **/config.local.toml
 
 # ── 生成物・キャッシュ ──
