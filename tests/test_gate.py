@@ -237,9 +237,9 @@ def test_every_layer1_file_is_covered_or_excluded():
 
 def test_file_map_keys_exist_on_disk():
     repo_root = Path(__file__).resolve().parents[1]
-    # `.claude/settings.local.json` は④環境固有で git 管理外（.gitignore）——
+    # `.claude/settings.local.json`・`.claude/launch.json` は④環境固有で git 管理外（.gitignore）——
     # このチェックアウトに実在しなくても改名の証拠にはならないので対象から外す。
-    optional = {".claude/settings.local.json"}
+    optional = {".claude/settings.local.json", ".claude/launch.json"}
     keys = [k for k in list(gate_mod._FILE_MAP) + list(gate_mod._EXCLUDED) if k not in optional]
     missing = [key for key in keys if not (repo_root / key).is_file()]
     assert not missing, f"_FILE_MAP / _EXCLUDED の鍵が実在しません（改名の疑い）: {missing}"
